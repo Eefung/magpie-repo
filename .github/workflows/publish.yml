@@ -38,12 +38,14 @@ jobs:
 
       - name: What is upstream at?
         id: upstream
+        env:
+          WANTED: ${{ inputs.version }}
         run: |
           set -euo pipefail
           python3 scripts/bump.py --check | tee /tmp/check.txt
           bump=0
-          if [ -n "${{ inputs.version }}" ]; then
-            echo "asked for ${{ inputs.version }}"; bump=1
+          if [ -n "$WANTED" ]; then
+            echo "asked for $WANTED"; bump=1
           else
             bump="$(sed -n 's/^bump=//p' /tmp/check.txt)"
           fi
@@ -51,11 +53,12 @@ jobs:
 
       - name: Render the PKGBUILDs
         if: steps.upstream.outputs.bump == '1'
+        env:
+          WANTED: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          version="${{ inputs.version }}"
-          if [ -n "$version" ]; then
-            python3 scripts/bump.py --render --version "$version"
+          if [ -n "$WANTED" ]; then
+            python3 scripts/bump.py --render --version "$WANTED"
           else
             python3 scripts/bump.py --render
           fi

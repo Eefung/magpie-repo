@@ -50,7 +50,7 @@ if [ "$(id -u)" -eq 0 ]; then
     mapfile -t deps < <(sed -n 's/^[[:space:]]*depends = //p' .SRCINFO)
     if [ "${#deps[@]}" -gt 0 ]; then
         echo "installing the package's own depends: ${deps[*]}"
-        pacman -Sy --noconfirm --needed "${deps[@]}" >/dev/null
+        pacman -Syu --noconfirm --needed "${deps[@]}" >/dev/null
     fi
 fi
 

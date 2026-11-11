@@ -78,21 +78,36 @@ def sha256_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split(".") if part.isdigit())
+
+
 def latest_version() -> str:
-    """Newest release with assets; the site API is the fallback."""
+    """Upstream's newest version, taking the higher of GitHub and the site API.
+
+    GitHub's /releases/latest skips prereleases, so a version upstream marks as
+    pre-release would otherwise be invisible; the site reports whatever it
+    ships. Either source alone can also be rate limited or stale.
+    """
+    candidates = []
     try:
         raw = fetch("https://api.github.com/repos/yetone/magpie-releases/releases/latest")
         tag = json.loads(raw or b"{}").get("tag_name", "")
-        if tag:
-            return tag.lstrip("v")
-        raise ValueError("no tag_name in the GitHub answer")
-    except (urllib.error.URLError, ValueError, json.JSONDecodeError) as exc:
+        if not tag:
+            raise ValueError("no tag_name in the GitHub answer")
+        candidates.append(tag.lstrip("v"))
+    except (urllib.error.URLError, OSError, ValueError) as exc:
         log(f"warning: GitHub API unusable ({exc}); asking {SITE_API}")
-        raw = fetch(SITE_API) or b"{}"
-        version = json.loads(raw).get("version", "")
-        if not version:
-            sys.exit("could not learn upstream's version")
-        return version.lstrip("v")
+    try:
+        raw = fetch(SITE_API)
+        site = json.loads(raw or b"{}").get("version", "")
+        if site:
+            candidates.append(site.lstrip("v"))
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        log(f"warning: {SITE_API} unusable ({exc})")
+    if not candidates:
+        sys.exit("could not learn upstream's version from GitHub or the site API")
+    return max(candidates, key=version_key)
 
 
 def release_sums(version: str) -> dict[str, str]:
@@ -181,7 +196,12 @@ def render(version: str) -> None:
     icon_bytes = fetch(ICON_URL, missing_ok=True)
     if icon_bytes is None:
         sys.exit(f"could not download {ICON_URL}")
-    license_sha = sha256_of(license_bytes) if license_bytes else stale_sha("magpie-bin", "license")
+    if license_bytes is None:
+        license_sha = stale_sha("magpie-bin", "license")
+        log(f"warning: no LICENSE at v{version}; reusing the checksum already in "
+            "packages/magpie-bin/PKGBUILD")
+    else:
+        license_sha = sha256_of(license_bytes)
     if not license_sha:
         sys.exit(f"no LICENSE at v{version} and none to reuse")
 

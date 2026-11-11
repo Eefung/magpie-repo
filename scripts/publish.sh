@@ -25,11 +25,15 @@ for dir in "$@"; do
     target="$WORKDIR/$pkg"
 
     rm -rf "$target"
-    if git clone --quiet "$AUR_BASE/$pkg.git" "$target" 2>/dev/null; then
+    clone_log="$(mktemp)"
+    if git clone --quiet "$AUR_BASE/$pkg.git" "$target" 2>"$clone_log"; then
         echo "$pkg: updating the existing AUR repository"
         rm -f "$target/PKGBUILD" "$target/.SRCINFO"
     else
-        echo "$pkg: creating a new AUR repository"
+        # The AUR creates a pkgbase on first push, so "nothing to clone" is the
+        # normal new-package path. Print what git said anyway: a dead network or
+        # a missing key looks identical here and only fails later on the push.
+        echo "$pkg: nothing to clone, creating it ($(tr '\n' ' ' < "$clone_log"))"
         mkdir -p "$target"
         git -C "$target" init --quiet --initial-branch=master
         git -C "$target" remote add origin "$AUR_BASE/$pkg.git"
