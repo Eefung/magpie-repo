@@ -66,11 +66,10 @@ jobs:
           set -euo pipefail
           for pkg in magpie-bin magpie-cli-bin; do
             echo "::group::$pkg"
-            docker run --rm --volume "$PWD:/src" --workdir /src \
+            docker run --rm --volume "$PWD:/src" --workdir /src --env CLEAN=1 \
               archlinux:base-devel ./scripts/build-check.sh "packages/$pkg"
             echo "::endgroup::"
           done
-          rm -rf packages/*/src packages/*/pkg packages/*/.srcdest packages/*/*.pkg.tar.*
           git status --short
 
       - name: Commit the rendered PKGBUILDs

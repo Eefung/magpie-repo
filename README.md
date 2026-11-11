@@ -30,7 +30,7 @@
 | `templates/*.PKGBUILD.in` | PKGBUILD 模板，`{{pkgver}}`、`{{sha_*}}` 由脚本填充；要改打包逻辑改这里 |
 | `packages/<包名>/` | 渲染结果，目录名就是 AUR pkgbase；`.SRCINFO` 由 `makepkg` 生成 |
 | `scripts/bump.py` | 查上游版本、取校验和、渲染 PKGBUILD（仅用标准库） |
-| `scripts/build-check.sh` | 构建一个包目录并验证产物（root 下自动降权到 builder，因为 makepkg 拒绝 root） |
+| `scripts/build-check.sh` | 构建一个包目录并验证产物（root 下自动降权到 builder，因为 makepkg 拒绝 root；装好 `depends` 再跑 `--version`，顺带验证依赖表是否完整） |
 | `scripts/publish.sh` | 推送到 AUR；`AUR_BASE` 可改远端，方便拿本地裸仓库做测试 |
 | `.github/workflows/aur.yml` | 定时与手动触发 |
 
