@@ -92,7 +92,8 @@ jobs:
             echo "PKGBUILDs are already at $ver, nothing to commit"
           else
             git commit -m "upgpkg: magpie $ver"
-            git push
+            # A hand push landing mid-run would otherwise reject this one.
+            git push || { git pull --rebase --autostash && git push; }
           fi
 
       - name: Publish the pacman repository to gh-pages
