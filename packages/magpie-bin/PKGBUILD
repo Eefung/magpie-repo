@@ -1,6 +1,6 @@
 # Maintainer: Eefung <eefung@tuta.io>
 pkgname=magpie-bin
-pkgver=0.1.3709
+pkgver=0.1.3711
 pkgrel=1
 pkgdesc="One place to pick every AI coding agent's model: Codex, Claude Code, Gemini CLI and more"
 arch=('x86_64' 'aarch64')
@@ -27,8 +27,8 @@ source_aarch64=(
 )
 sha256sums=('79d2c8444715d4bc453ec4f8a0aaf2051a4c1ee5ac08f5bd2e5848aef87c7572'
             '57437c6596e05a8fcfc42d4288c030aa00ed86b69fe35d464d69d7026150c704')
-sha256sums_x86_64=('4c089bb761cc82cd2f55fa45a55249de9434c5bec28ea05dbbd4744766c64852')
-sha256sums_aarch64=('7725d20b451f8a5a39b4780f4a66c258a2f284ca33bc51745dbeb264b0247b3c')
+sha256sums_x86_64=('8690b19440b334e33383278b7f74a64daf6c65044c15287b53411ce234ee1d52')
+sha256sums_aarch64=('e1bdf7f96b179545707e5b543c2cce8b2847da8c8f6c8782bb73a0dc0b553805')
 
 package() {
     local _suffix
@@ -52,7 +52,7 @@ Name=magpie
 Comment=Every agent's model. One place.
 Exec=/usr/bin/magpie app
 Icon=magpie
-Categories=Development;Utility;
+Categories=Development;
 Terminal=false
 EOF
 }
