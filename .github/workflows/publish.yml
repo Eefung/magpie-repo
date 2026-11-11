@@ -88,8 +88,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add packages
-          git commit -m "upgpkg: magpie $ver"
-          git push
+          if git diff --cached --quiet; then
+            echo "PKGBUILDs are already at $ver, nothing to commit"
+          else
+            git commit -m "upgpkg: magpie $ver"
+            git push
+          fi
 
       - name: Publish the pacman repository to gh-pages
         if: steps.upstream.outputs.bump == '1'
