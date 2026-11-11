@@ -8,3 +8,5 @@ packages/*/.srcdest/
 *.pkg.tar.xz
 __pycache__/
 *.pyc
+# the assembled pacman repository (built in CI, published on gh-pages)
+repo/
