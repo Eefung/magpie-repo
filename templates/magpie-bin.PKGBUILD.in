@@ -52,7 +52,7 @@ Name=magpie
 Comment=Every agent's model. One place.
 Exec=/usr/bin/magpie app
 Icon=magpie
-Categories=Development;Utility;
+Categories=Development;
 Terminal=false
 EOF
 }
