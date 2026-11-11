@@ -6,3 +6,5 @@ packages/*/magpie-*
 packages/*/.srcdest/
 *.pkg.tar.zst
 *.pkg.tar.xz
+__pycache__/
+*.pyc
