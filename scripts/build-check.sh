@@ -4,10 +4,13 @@
 #   ./scripts/build-check.sh packages/magpie-bin
 #
 # These are -bin packages: makepkg only downloads the release binaries and
-# repacks them, so no dependencies are installed (--nodeps) and nothing is
-# compiled. Works both as root inside the Arch container CI uses and as a
-# normal user on a dev machine -- makepkg refuses to run as root, so the root
-# case drops to an unprivileged builder account.
+# repacks them, so nothing is compiled. Works both as root inside the Arch
+# container CI uses and as a normal user on a dev machine -- makepkg refuses to
+# run as root, so the root case drops to an unprivileged builder account.
+#
+# As root it also installs the package's own `depends` before running the
+# binary: that is what turns "--version prints the new version" into a real
+# check that the dependency list is complete.
 set -euo pipefail
 
 dir="${1:?usage: build-check.sh <package dir>}"
@@ -37,9 +40,20 @@ run "makepkg --printsrcinfo > .SRCINFO"
 pkgfile="$(ls -1t ./*.pkg.tar.* | head -1)"
 bin="$(bsdtar -tf "$pkgfile" | grep -E '^usr/bin/magpie(-cli)?$' | head -1)"
 [ -n "$bin" ] || { echo "$pkgfile carries no magpie binary" >&2; exit 1; }
+echo "ok: $pkgfile ships $bin"
+
+# A bare container has no GTK/WebKit, so the desktop build cannot even load
+# without its runtime dependencies; installing them from the PKGBUILD is the
+# point of the check, not an inconvenience it works around.
+if [ "$(id -u)" -eq 0 ]; then
+    deps="$(sed -n 's/^[[:space:]]*depends = //p' .SRCINFO | tr '\n' ' ')"
+    if [ -n "${deps// /}" ]; then
+        echo "installing the package's own depends: $deps"
+        pacman -Sy --noconfirm --needed $deps >/dev/null
+    fi
+fi
 
 bsdtar -xOf "$pkgfile" "$bin" > /tmp/magpie-build-check
 chmod +x /tmp/magpie-build-check
-echo "ok: $pkgfile ships $bin"
-/tmp/magpie-build-check --version
+timeout 90 /tmp/magpie-build-check --version
 rm -f /tmp/magpie-build-check
