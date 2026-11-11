@@ -58,6 +58,7 @@ python3 scripts/bump.py --render --version 0.1.3702   # 指定版本
 ## 注意事项
 
 - 上游一天发几十个版本，`pkgver` 每次 bump 都是新值；本工作流只在版本变化时提交，不看时间。
+- `push` 触发也会跑一次：只有上游版本变了才会渲染与提交，否则只打印「packaged version already matches upstream」，所以手改完 PKGBUILD 推上来并不会自动重新验证——要验证就跑 `gh workflow run aur.yml` 并让上游确实有新版本，或在本机跑 `scripts/build-check.sh`。
 - GitHub 的 cron 只是尽力而为，可能延迟几分钟到几十小时；仓库 60 天没有任何活动时 GitHub 会停掉定时工作流（本仓库每次 bump 都在提交，正常情况下不会触发）。
 - `arch=('x86_64' 'aarch64')`，CI 只验证 x86_64；aarch64 那份靠上游的 SHA256SUMS 保证。
 - 桌面版 `provides`／`conflicts` 了同名包 `magpie`（IPv6 NDP 代理那个），两者不能共存；终端版装成 `magpie-cli`，可与桌面版并列。

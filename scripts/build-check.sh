@@ -37,6 +37,7 @@ run() {
 run "makepkg --noconfirm -f --nodeps --nocheck"
 run "makepkg --printsrcinfo > .SRCINFO"
 
+# shellcheck disable=SC2012  # names here are pkgname-pkgver-pkgrel-arch, no oddities
 pkgfile="$(ls -1t ./*.pkg.tar.* | head -1)"
 bin="$(bsdtar -tf "$pkgfile" | grep -E '^usr/bin/magpie(-cli)?$' | head -1)"
 [ -n "$bin" ] || { echo "$pkgfile carries no magpie binary" >&2; exit 1; }
@@ -46,10 +47,10 @@ echo "ok: $pkgfile ships $bin"
 # without its runtime dependencies; installing them from the PKGBUILD is the
 # point of the check, not an inconvenience it works around.
 if [ "$(id -u)" -eq 0 ]; then
-    deps="$(sed -n 's/^[[:space:]]*depends = //p' .SRCINFO | tr '\n' ' ')"
-    if [ -n "${deps// /}" ]; then
-        echo "installing the package's own depends: $deps"
-        pacman -Sy --noconfirm --needed $deps >/dev/null
+    mapfile -t deps < <(sed -n 's/^[[:space:]]*depends = //p' .SRCINFO)
+    if [ "${#deps[@]}" -gt 0 ]; then
+        echo "installing the package's own depends: ${deps[*]}"
+        pacman -Sy --noconfirm --needed "${deps[@]}" >/dev/null
     fi
 fi
 
