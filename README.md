@@ -69,7 +69,7 @@ cd /tmp/magpie-repo && python3 -m http.server 8765
 
 | 位置 | 内容 | 谁用 |
 |---|---|---|
-| `gh-pages` → `https://eefung.github.io/magpie-repo/x86_64` | `magpie.db`、`magpie.files`、最近 2 版 `.pkg.tar.zst` | `pacman -Syu` |
+| `gh-pages` → `https://eefung.github.io/magpie-repo/x86_64` | `magpie.db`、`magpie.files`、当前版 `.pkg.tar.zst`（外加上一版一个文件，见下） | `pacman -Syu` |
 | GitHub Releases `v<版本>` | 同一次构建的两个包 + `SHA256SUMS` | 手动 `pacman -U`、核对校验和 |
 | AUR `magpie-bin`／`magpie-cli-bin` | 配了 `AUR_SSH_PRIVATE_KEY` 才推 | 注册恢复、或成为共同维护者之后 |
 
@@ -78,7 +78,7 @@ cd /tmp/magpie-repo && python3 -m http.server 8765
 - 包**没有 GPG 签名**，所以仓库要 `SigLevel = Optional TrustAll`：完整性靠 db 里的 sha256 与 release 附带的 `SHA256SUMS`，信任对象是 GitHub 上的这个仓库。
 - 只构建并验证 `x86_64`。PKGBUILD 里 `arch=('x86_64' 'aarch64')` 仍然成立，aarch64 那份靠上游 `SHA256SUMS` 保证，但 CI 不验证。
 - 每天只发一次，最多滞后一天；上游一天几十个构建，逐版追也没有意义。
-- gh-pages 每次都是单提交力推（否则每版 60 MB 的包会把分支撑爆），历史不保留，站点上只有每包最近 2 个版本。
+- gh-pages 每次都是单提交力推（否则每版 65 MB 的包会把分支撑爆），历史不保留。站点上每包留 2 个版本的文件、约 127 MB，但 **`repo-add` 的 db 里每个包名只有一条记录（最新版）**——留着上一版文件是为了让「刚同步完旧 db 的客户端」仍能下完包，而不是让 pacman 能装旧版。
 - GitHub 单文件上限 100 MB：当前 `magpie-bin` 包约 31 MB、`magpie-cli-bin` 约 30 MB，还有余量；真超了就得换存储（对象存储或 Release 分片）。
 - `push` 到 main 也会触发一次运行，但只有上游版本变了才会真的发布，否则只打印 `nothing to publish`；要强制重发用 `gh workflow run publish.yml`（`version` 参数填**新**版本，填当前版本会因为无改动而在提交步骤失败）。
 - GitHub 的 cron 只是尽力而为，可能延迟；仓库 60 天无活动会被停掉定时工作流（本仓库每次发布都在提交，正常不会触发）。

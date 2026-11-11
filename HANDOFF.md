@@ -11,15 +11,15 @@
 | 项 | 值 |
 |---|---|
 | 代码仓库 | <https://github.com/Eefung/magpie-repo>，本地 `~/Projects/magpie-repo`，分支 `main`（写作时 tip `7a35fc3 upgpkg: magpie 0.1.3711`，本文档为其后的一个提交） |
-| 已发布版本 | `v0.1.3711`（gh-pages 的 `magpie.db` 里有 2 个包，Release 同名） |
+| 已发布版本 | `v0.1.3758`（gh-pages 的 `magpie.db` 只登记这一版；Release 同名，只含本版两个包） |
 | 上游最新 | `0.1.3758`（`bump.py --check` 输出，上游一天几十版，这个数字很快会变） |
-| 本机安装 | `magpie-bin 0.1.3711-1`、`magpie-cli-bin 0.1.3711-1`，来自仓库 `[magpie]`，`pacman -Qu` 为 0 |
+| 本机安装 | `magpie-bin 0.1.3711-1`、`magpie-cli-bin 0.1.3711-1`，来自仓库 `[magpie]`；本地 db 还是 15:00 那份，`sudo pacman -Syu` 即可升到 0.1.3758 |
 | 软件源 | `https://eefung.github.io/magpie-repo/x86_64`（`magpie.db` 200，`SHA256SUMS` 200） |
 | Pages | 源分支 `gh-pages`、路径 `/`、状态 `built` |
 | Actions | 计划 `17 4 * * *`（每天 04:17 UTC），另在 push 到 `main`（限 `templates/**`、`scripts/**`、workflow 本身）与手动 dispatch 时触发；最近 8 次运行全 success |
 | Secrets / Variables | **空**。`AUR_SSH_PRIVATE_KEY` 没配，所以 AUR 推送步骤始终跳过 |
-| 包体积 | `magpie-bin` 34,158,349 B / `magpie-cli-bin` 32,062,255 B（0.1.3711，x86_64，zstd） |
-| 保留策略 | 每个包保留最近 2 个版本（`KEEP=2`） |
+| 包体积 | `magpie-bin` 34,331,950 B / `magpie-cli-bin` 32,247,681 B（0.1.3758，x86_64，zstd） |
+| 保留策略 | 每个包留 2 个版本的文件（`KEEP=2`，站点约 127 MB）；`repo-add` 的 db 只登记最新版 |
 
 ## 为什么不是 AUR
 
@@ -101,7 +101,7 @@ python3 scripts/bump.py --render --version 0.1.3711
 | 决策 | 理由 |
 |---|---|
 | 每天一次而不是每版一次 | 上游一天 30+ 个构建；每版要重推 60 MB，逐版追没有价值 |
-| 每包保留 2 版 | 升级途中不至于 404；再多就是给 gh-pages 加负担 |
+| 每包保留 2 版文件 | `repo-add` 的 db 里每个 pkgname 只有一条记录（最新版），旧文件仅用于「客户端已同步旧 db、还没下完包」这段窗口；再多就是给 gh-pages 加负担 |
 | gh-pages 单提交力推 | 每版 60 MB，保留历史会把分支撑到几个 GB |
 | 未签名，`SigLevel = Optional TrustAll` | 签名要长期持有 GPG 私钥并做 `pacman-key` 分发；当前完整性靠 db 内 sha256 + Release 的 `SHA256SUMS`，信任对象是 GitHub 仓库 |
 | 只构建/验证 x86_64 | PKGBUILD 仍声明 aarch64，靠上游 `SHA256SUMS` 保证，但 CI 不跑 ARM |
@@ -112,7 +112,8 @@ python3 scripts/bump.py --render --version 0.1.3711
 ## 已知限制
 
 - **无签名**：`TrustAll` 是明示取舍，用户文档里写清楚了。
-- GitHub Pages 站点上限 1 GB、单文件 100 MB；当前每版 60 MB，理论上 3 版左右就见底，所以 `KEEP=2` 不能随便调大。
+- GitHub Pages 站点上限 1 GB、单文件 100 MB。两版文件已占 127 MB，而且每次发布是整站重推，所以 `KEEP` 别往上调；单包 34 MB，离 100 MB 还有三倍余量。
+- `repo-add` 每个 pkgname 只保留一条记录（最新版）：`pacman` 看到的永远是当前版，旧版文件只服务「已同步旧 db 的客户端」，不能指望用它降级安装。
 - 定时任务只是尽力而为；仓库 60 天无活动 GitHub 会停定时工作流（这里每次发布都有提交，正常不会触发）。
 - 上游个别 release 缺 `SHA256SUMS`（例如 `v0.1.3706`）——`bump.py` 现在会明确报错，需要换版本重试。
 - 本机 `pacman -Syu` 之外不要用 `-Sy` 单独装包（局部升级），除非只装这两个 `-bin` 包。
@@ -129,7 +130,8 @@ python3 scripts/bump.py --render --version 0.1.3711
 | 手动重发当前版本时任务挂在提交步骤 | 无改动 → 空提交失败 | `git diff --cached --quiet` 守卫（`c145904`） |
 | `--render --version 0.1.3706` 抛 traceback | 该 release 没有 `SHA256SUMS` | 明确报错并提示换版本（`8ef54e5`） |
 | 应用菜单可能出现两条 | `Categories=Development;Utility;` 两个主分类 | 改为 `Categories=Development;`（`33055b0`），已在 0.1.3711 包里生效 |
-| 每个 Release 里混进上一版的包 | 挂的是 `repo/x86_64/*.pkg.tar.zst`，而该目录按保留策略装着两版 | 只挂 `*-$ver-1-x86_64.pkg.tar.zst`，并为它单独生成 `SHA256SUMS`（本文档所在提交）。注意 `v0.1.3709`、`v0.1.3711` 两个旧 Release 仍带多余资产，不影响安装 |
+| 每个 Release 里混进上一版的包 | 挂的是 `repo/x86_64/*.pkg.tar.zst`，而该目录按保留策略装着两版 | 只挂 `*-$ver-1-x86_64.pkg.tar.zst`，并单独生成只含本版的 `SHA256SUMS`（`ca01ac6`）。`v0.1.3709`、`v0.1.3711` 两个旧 Release 仍带多余资产，`v0.1.3758` 的校验和文件因回退前命名成了 `release-SHA256SUMS`，内容无误，都不影响安装 |
+| 以为「留两版 = pacman 能装旧版」 | `repo-add` 对同一 pkgname 只登记一条，新条目顶掉旧的 | 不是 bug：文档已改成「旧文件只给已同步旧 db 的客户端兜底」 |
 
 ## 待办（按价值排序）
 

@@ -137,11 +137,12 @@ jobs:
           EOF
           # Only this version: repo/x86_64 also carries the previous build for
           # the retention window, and those do not belong in this release.
-          (cd repo/x86_64 && sha256sum -- *-"$ver"-1-x86_64.pkg.tar.zst > /tmp/release-SHA256SUMS)
+          mkdir -p /tmp/rel
+          (cd repo/x86_64 && sha256sum -- *-"$ver"-1-x86_64.pkg.tar.zst > /tmp/rel/SHA256SUMS)
           gh release create "v$ver" \
             --title "magpie $ver" \
             --notes-file /tmp/notes.md \
-            repo/x86_64/*-"$ver"-1-x86_64.pkg.tar.zst /tmp/release-SHA256SUMS
+            repo/x86_64/*-"$ver"-1-x86_64.pkg.tar.zst /tmp/rel/SHA256SUMS
           echo "release created: $(gh release view "v$ver" --json url -q .url)"
 
       - name: Push to the AUR
