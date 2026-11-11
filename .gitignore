@@ -1,0 +1,7 @@
+# makepkg's working directories and the packages it produces are never committed
+packages/*/src/
+packages/*/pkg/
+packages/*/*.pkg.tar.*
+packages/*/magpie-*
+*.pkg.tar.zst
+*.pkg.tar.xz

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Build one package directory and prove the payload runs.
+#
+#   ./scripts/build-check.sh packages/magpie-bin
+#
+# These are -bin packages: makepkg only downloads the release binaries and
+# repacks them, so no dependencies are installed (--nodeps) and nothing is
+# compiled. Works both as root inside the Arch container CI uses and as a
+# normal user on a dev machine -- makepkg refuses to run as root, so the root
+# case drops to an unprivileged builder account.
+set -euo pipefail
+
+dir="${1:?usage: build-check.sh <package dir>}"
+[ -d "$dir" ] || { echo "no such directory: $dir" >&2; exit 1; }
+cd "$dir"
+
+# Keep the downloaded release binaries out of the package directory: makepkg
+# would otherwise drop them next to PKGBUILD, where they would be committed.
+export SRCDEST="${SRCDEST:-$(mktemp -d /tmp/magpie-srcdest.XXXXXX)}"
+
+run() {
+    if [ "$(id -u)" -eq 0 ]; then
+        id builder >/dev/null 2>&1 || useradd -m builder
+        chown -R builder .
+        su builder -s /bin/bash -c "$*"
+    else
+        bash -c "$*"
+    fi
+}
+
+run "makepkg --noconfirm -f --nodeps --nocheck"
+run "makepkg --printsrcinfo > .SRCINFO"
+
+pkgfile="$(ls -1t ./*.pkg.tar.* | head -1)"
+bin="$(bsdtar -tf "$pkgfile" | grep -E '^usr/bin/magpie(-cli)?$' | head -1)"
+[ -n "$bin" ] || { echo "$pkgfile carries no magpie binary" >&2; exit 1; }
+
+bsdtar -xOf "$pkgfile" "$bin" > /tmp/magpie-build-check
+chmod +x /tmp/magpie-build-check
+echo "ok: $pkgfile ships $bin"
+/tmp/magpie-build-check --version
+rm -f /tmp/magpie-build-check
