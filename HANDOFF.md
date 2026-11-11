@@ -11,14 +11,14 @@
 | 项 | 值 |
 |---|---|
 | 代码仓库 | <https://github.com/Eefung/magpie-repo>，本地 `~/Projects/magpie-repo`，分支 `main`（写作时 tip `7a35fc3 upgpkg: magpie 0.1.3711`，本文档为其后的一个提交） |
-| 已发布版本 | `v0.1.3758`（gh-pages 的 `magpie.db` 只登记这一版；Release 同名，只含本版两个包） |
+| 已发布版本 | `v0.1.3759`（写作时；gh-pages 的 `magpie.db` 只登记这一版，Release 只含本版两个包 + `SHA256SUMS`） |
 | 上游最新 | `0.1.3758`（`bump.py --check` 输出，上游一天几十版，这个数字很快会变） |
 | 本机安装 | `magpie-bin 0.1.3711-1`、`magpie-cli-bin 0.1.3711-1`，来自仓库 `[magpie]`；本地 db 还是 15:00 那份，`sudo pacman -Syu` 即可升到 0.1.3758 |
 | 软件源 | `https://eefung.github.io/magpie-repo/x86_64`（`magpie.db` 200，`SHA256SUMS` 200） |
 | Pages | 源分支 `gh-pages`、路径 `/`、状态 `built` |
 | Actions | 计划 `17 4 * * *`（每天 04:17 UTC），另在 push 到 `main`（限 `templates/**`、`scripts/**`、workflow 本身）与手动 dispatch 时触发；最近 8 次运行全 success |
 | Secrets / Variables | **空**。`AUR_SSH_PRIVATE_KEY` 没配，所以 AUR 推送步骤始终跳过 |
-| 包体积 | `magpie-bin` 34,331,950 B / `magpie-cli-bin` 32,247,681 B（0.1.3758，x86_64，zstd） |
+| 包体积 | `magpie-bin` 34,332,977 B / `magpie-cli-bin` 32,247,957 B（0.1.3759，x86_64，zstd） |
 | 保留策略 | 每个包留 2 个版本的文件（`KEEP=2`，站点约 127 MB）；`repo-add` 的 db 只登记最新版 |
 
 ## 为什么不是 AUR
