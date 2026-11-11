@@ -89,7 +89,11 @@ def latest_version() -> str:
 def release_sums(version: str) -> dict[str, str]:
     """The release's SHA256SUMS, as {asset name: sha256}."""
     url = f"{RELEASES}/download/v{version}/SHA256SUMS"
-    body = (fetch(url) or b"").decode()
+    body = fetch(url, missing_ok=True)
+    if body is None:
+        sys.exit(f"v{version} publishes no {url.split('/')[-1]}; "
+                 "pick a version whose release carries it (or bump to the latest)")
+    body = body.decode()
     sums = {}
     for line in body.splitlines():
         parts = line.split()
