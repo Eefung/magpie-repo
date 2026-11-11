@@ -1,6 +1,6 @@
 # HANDOFF — magpie-repo（自托管 pacman 源）
 
-给下一个人（或下一次的我）接手用。写作时间 2026-11-11 15:20 CST，文中每个数字都是当时实测的，重跑方法见最后一节。
+给下一个人（或下一次的我）接手用。写作时间 2026-11-11 15:20 CST，同日 20:23 CST 按「验证清单」复核了「当前状态」表里的仓库、站点与本机几行；文中每个数字都是实测的，重跑方法见最后一节。
 
 ## 一句话
 
@@ -13,8 +13,8 @@
 | 代码仓库 | <https://github.com/Eefung/magpie-repo>，本地 `~/Projects/magpie-repo`，分支 `main`（写作时 tip `7a35fc3 upgpkg: magpie 0.1.3711`，本文档为其后的一个提交） |
 | 已发布版本 | `v0.1.3759`（写作时；gh-pages 的 `magpie.db` 只登记这一版，Release 只含本版两个包 + `SHA256SUMS`） |
 | 上游最新 | `0.1.3758`（`bump.py --check` 输出，上游一天几十版，这个数字很快会变） |
-| 本机安装 | `magpie-bin 0.1.3711-1`、`magpie-cli-bin 0.1.3711-1`，来自仓库 `[magpie]`；本地 db 还是 15:00 那份，`sudo pacman -Syu` 即可升到 0.1.3758 |
-| 软件源 | `https://eefung.github.io/magpie-repo/x86_64`（`magpie.db` 200，`SHA256SUMS` 200） |
+| 本机安装 | `magpie-bin 0.1.3711-1`、`magpie-cli-bin 0.1.3711-1`，来自仓库 `[magpie]`；本地 `magpie.db` 是 15:11 那份（早于 0.1.3758、0.1.3759 的发布，所以 `pacman -Sl magpie` 只看到 3711），`sudo pacman -Syu` 先同步再升级，落到 0.1.3759 |
+| 软件源 | `https://eefung.github.io/magpie-repo/x86_64`（`magpie.db` 200）。`SHA256SUMS` 在站点根目录 `https://eefung.github.io/magpie-repo/SHA256SUMS`（200），`x86_64/` 下没有；db 与 files 也另有一份 `.tar.gz` 别名 |
 | Pages | 源分支 `gh-pages`、路径 `/`、状态 `built` |
 | Actions | 计划 `17 4 * * *`（每天 04:17 UTC），另在 push 到 `main`（限 `templates/**`、`scripts/**`、workflow 本身）与手动 dispatch 时触发；最近 8 次运行全 success |
 | Secrets / Variables | **空**。`AUR_SSH_PRIVATE_KEY` 没配，所以 AUR 推送步骤始终跳过 |
