@@ -32,9 +32,10 @@
 
 ```
 cron 04:17 UTC / push / workflow_dispatch
-  └─ scripts/bump.py --check        上游最新版本（GitHub releases/api == 站点 /api/latest 的兜底）
-       ├─ 与 packages/*/PKGBUILD 的 pkgver 相同 → 结束（"nothing to publish"）
-       └─ 有新版本 → scripts/bump.py --render
+  └─ scripts/bump.py --check        上游最新版本（GitHub releases/api == 站点 /api/latest 的兜底），
+       │                         另读一次线上 magpie.db，比对站点实际发布了哪一版
+       ├─ pkgver 与上游相同、且站点也是这一版 → 结束（"nothing to publish"）
+       └─ 有新版本，或站点落后于 packages/（上次发布中途失败）→ scripts/bump.py --render
             ├─ 二进制校验和：该版本 release 的 SHA256SUMS 资产
             ├─ LICENSE、图标：每次按实际字节现算 sha256
             ├─ 渲染 templates/*.PKGBUILD.in → packages/<pkg>/PKGBUILD

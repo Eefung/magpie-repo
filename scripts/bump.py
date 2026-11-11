@@ -5,7 +5,7 @@ Upstream (yetone/magpie) ships dozens of builds a day; the AUR packages are
 prebuilt-binary packages, so a bump only needs the new version plus the
 published checksums -- no compilation.
 
-    ./scripts/bump.py --check            # compare packaged vs upstream version
+    ./scripts/bump.py --check            # packaged vs upstream, and what the site serves
     ./scripts/bump.py --render           # write both PKGBUILDs for the latest
     ./scripts/bump.py --render --version 0.1.3702
 
@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
 import sys
+import tarfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -33,7 +35,11 @@ RELEASES = "https://github.com/yetone/magpie-releases/releases"
 SOURCE_REPO = "https://raw.githubusercontent.com/yetone/magpie"
 SITE_API = "https://usemagpie.ai/api/latest"
 ICON_URL = "https://usemagpie.ai/img/icon-256.png"
-UA = "magpie-aur-bump (+https://github.com/Eefung/magpie-aur)"
+UA = "magpie-repo-bump (+https://github.com/Eefung/magpie-repo)"
+# What pacman syncs; comparing it with packages/ is what makes a failed publish
+# (committed PKGBUILD, gh-pages push never landed) repair itself on the next run.
+REPO_DB = os.environ.get("REPO_DB", "https://eefung.github.io/magpie-repo/x86_64/magpie.db")
+VERSION_RE = re.compile(r"[0-9]+(?:\.[0-9]+)+")
 
 MAINTAINER = os.environ.get("AUR_MAINTAINER", "Eefung <eefung@tuta.io>")
 
@@ -60,7 +66,10 @@ def fetch(url: str, *, missing_ok: bool = False) -> bytes | None:
         with urllib.request.urlopen(req, timeout=60) as resp:
             return resp.read()
     except urllib.error.HTTPError as exc:
-        if missing_ok and exc.code in (403, 404):
+        # Only a real 404 means "upstream does not publish this". A 403 is a
+        # rate limit or a policy block, and reporting it as a missing asset
+        # sends the reader after the wrong problem.
+        if missing_ok and exc.code == 404:
             return None
         raise
 
@@ -132,7 +141,41 @@ def stale_sha(pkg: str, key: str) -> str | None:
     return None
 
 
+def published_versions() -> dict[str, str] | None:
+    """{pkgname: version} as advertised by the published pacman database."""
+    try:
+        body = fetch(REPO_DB)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        log(f"warning: cannot read {REPO_DB} ({exc})")
+        return None
+    if not body:
+        return None
+    found = {}
+    try:
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:*") as db:
+            for member in db:
+                if not member.name.endswith("/desc"):
+                    continue
+                handle = db.extractfile(member)
+                if handle is None:
+                    continue
+                text = handle.read().decode("utf-8", "replace")
+                name = re.search(r"^%NAME%\n(\S+)", text, re.M)
+                version = re.search(r"^%VERSION%\n(\S+)", text, re.M)
+                if name and version:
+                    # %VERSION% carries pkgrel (0.1.3759-1); pkgver never does.
+                    found[name.group(1)] = version.group(1).rsplit("-", 1)[0]
+    except (tarfile.TarError, EOFError) as exc:
+        log(f"warning: {REPO_DB} is not a pacman database ({exc})")
+        return None
+    return found or None
+
+
 def render(version: str) -> None:
+    # The version lands verbatim in pkgver= (and in the source URLs); a tag with
+    # a dash or shell metacharacter would break makepkg or inject into it.
+    if not VERSION_RE.fullmatch(version):
+        sys.exit(f"refusing to render pkgver={version!r}: expected digits separated by dots")
     sums = release_sums(version)
     license_bytes = fetch(f"{SOURCE_REPO}/v{version}/LICENSE", missing_ok=True)
     icon_bytes = fetch(ICON_URL, missing_ok=True)
@@ -167,12 +210,30 @@ def check() -> int:
     log(f"upstream={upstream}")
     for pkg, ver in sorted(packaged.items()):
         log(f"packaged {pkg}={ver}")
-    behind = sorted(pkg for pkg, ver in packaged.items() if ver != upstream)
+    published = published_versions()
+    log("published=" + (" ".join(f"{pkg}={ver}" for pkg, ver in sorted(published.items()))
+                        if published else "unknown"))
+
     if not packaged:
         log("warning: no rendered PKGBUILD yet")
         behind = sorted(PACKAGES)
+        reason = "nothing rendered yet"
+    else:
+        behind = sorted(pkg for pkg, ver in packaged.items() if ver != upstream)
+        reason = "upstream moved"
+        if not behind and published is not None:
+            # A run that committed the PKGBUILDs but died before pushing
+            # gh-pages leaves the site behind forever: bumping on the gap is
+            # what makes the next scheduled run publish again.
+            behind = sorted(pkg for pkg, ver in packaged.items()
+                            if published.get(pkg) != ver)
+            if behind:
+                reason = ("the published repository does not carry these builds ("
+                          + " ".join(f"{pkg}={ver}" for pkg, ver in sorted(published.items()))
+                          + "), republishing")
     log(f"bump={'1' if behind else '0'}")
     if behind:
+        log(f"reason={reason}")
         log("behind=" + " ".join(behind))
     return 0
 
@@ -184,11 +245,16 @@ def main() -> int:
     parser.add_argument("--version", help="render this version instead of upstream's latest")
     args = parser.parse_args()
 
-    if args.check and not args.render:
-        return check()
-    if args.render:
-        render(args.version or latest_version())
-        return 0
+    try:
+        if args.check and not args.render:
+            return check()
+        if args.render:
+            render(args.version or latest_version())
+            return 0
+    except urllib.error.HTTPError as exc:
+        sys.exit(f"HTTP {exc.code} {exc.reason} for {exc.url}")
+    except (urllib.error.URLError, OSError) as exc:
+        sys.exit(f"network error: {exc}")
     parser.print_help()
     return 2
 

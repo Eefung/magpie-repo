@@ -24,6 +24,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -128,7 +129,7 @@ jobs:
 
           仓库：$PAGES_URL/x86_64
 
-              sudo pacman -Sy
+              sudo pacman -Syu                  # 先同步所有源（含 [magpie]），别单独 -Sy
               sudo pacman -S magpie-bin        # 桌面版
               sudo pacman -S magpie-cli-bin    # 终端版
 
