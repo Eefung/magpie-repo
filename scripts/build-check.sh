@@ -16,7 +16,10 @@ cd "$dir"
 
 # Keep the downloaded release binaries out of the package directory: makepkg
 # would otherwise drop them next to PKGBUILD, where they would be committed.
-export SRCDEST="${SRCDEST:-$(mktemp -d /tmp/magpie-srcdest.XXXXXX)}"
+# It lives inside the build directory on purpose: when this runs as root it is
+# created before the `builder` account exists, and chown -R has to reach it.
+export SRCDEST="${SRCDEST:-$PWD/.srcdest}"
+mkdir -p "$SRCDEST"
 
 run() {
     if [ "$(id -u)" -eq 0 ]; then

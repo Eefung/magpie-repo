@@ -70,7 +70,7 @@ jobs:
               archlinux:base-devel ./scripts/build-check.sh "packages/$pkg"
             echo "::endgroup::"
           done
-          rm -rf packages/*/src packages/*/pkg packages/*/*.pkg.tar.*
+          rm -rf packages/*/src packages/*/pkg packages/*/.srcdest packages/*/*.pkg.tar.*
           git status --short
 
       - name: Commit the rendered PKGBUILDs

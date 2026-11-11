@@ -3,5 +3,6 @@ packages/*/src/
 packages/*/pkg/
 packages/*/*.pkg.tar.*
 packages/*/magpie-*
+packages/*/.srcdest/
 *.pkg.tar.zst
 *.pkg.tar.xz
