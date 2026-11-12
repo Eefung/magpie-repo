@@ -25,7 +25,7 @@ pkg_name() { sed -n 's/^pkgname=//p' "$1/PKGBUILD" | head -1 | tr -d "'\""; }
 
 # --- build -------------------------------------------------------------------
 for dir in "$@"; do
-    CLEAN=0 ./scripts/build-check.sh "$dir"
+    ./scripts/build-check.sh "$dir"
 done
 
 for dir in "$@"; do

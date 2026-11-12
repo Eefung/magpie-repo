@@ -58,12 +58,3 @@ bsdtar -xOf "$pkgfile" "$bin" > /tmp/magpie-build-check
 chmod +x /tmp/magpie-build-check
 timeout 90 /tmp/magpie-build-check --version
 rm -f /tmp/magpie-build-check
-
-# The build ran as `builder`, so its leftovers belong to that uid; only root
-# can clear them. CI asks for this, a dev machine keeps the cache.
-if [ "${CLEAN:-0}" = 1 ] && [ "$(id -u)" -eq 0 ]; then
-    rm -rf src pkg .srcdest ./*.pkg.tar.*
-    # Hand the directory back to whoever owns the mount (the CI runner), so the
-    # later git add/commit can write to it.
-    [ -d /src ] && chown -R "$(stat -c %u /src)" . || true
-fi
