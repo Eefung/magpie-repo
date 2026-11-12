@@ -14,7 +14,7 @@ scripts/bump.py --check   GitHub releases 与 usemagpie.ai/api/latest 较高者�
       强制推送到 gh-pages 分支（每个软件包保留 2 个版本）→ 发布 Release v<版本> → 把 PKGBUILD 提交回 main
 ```
 
-`gh-pages` 上的 `x86_64/` 就是软件源。先发布后提交：中途失败时 main 上没有新 `pkgver`，下次运行重做；反过来会让仓库停在旧版本。PKGBUILD 里还写着 aarch64，但 CI 不构建也不验证。
+`gh-pages` 上的 `x86_64/` 就是软件源。先发布后提交：中途失败时 main 上没有新 `pkgver`，下次运行重做。PKGBUILD 里还写着 aarch64，但 CI 不构建也不验证。
 
 ## 安装
 
@@ -61,4 +61,4 @@ gh workflow run publish.yml                         # 立刻发布，version 留
 
 ## 许可
 
-`scripts/` 与 `templates/` 是 MIT，见 [LICENSE](LICENSE)；打包的上游二进制按上游 MIT 分发（构建时现取上游 LICENSE）。
+`scripts/` 与 `templates/` 是 MIT，见 [LICENSE](LICENSE)；打包的上游二进制按上游 MIT 分发（构建时从上游下载 LICENSE）。
