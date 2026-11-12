@@ -11,7 +11,7 @@ scripts/bump.py --check   GitHub releases 与 usemagpie.ai/api/latest 较高者�
   └ 如果与 packages/*/PKGBUILD 的 pkgver 不同 → scripts/bump.py --render
       校验和取自该版 release 的 SHA256SUMS；LICENSE 与图标不在其中，下载后现算 → 渲染 PKGBUILD
       scripts/build-repo.sh：makepkg 打包 → 安装该包的依赖项 → 跑 --version → repo-add 重建 db
-      力推 gh-pages（每包留 2 版）→ 建 Release v<版本> → 提交 PKGBUILD 回 main
+      推送 gh-pages（每个软件包保留 2 个版本）→ 创建 Release v<version> → 将 PKGBUILD 提交到 main
 ```
 
 `gh-pages` 上的 `x86_64/` 就是软件源。先发布后提交：中途失败时 main 上没有新 `pkgver`，下次运行重做；反过来会让仓库停在旧版本。aarch64 只在 PKGBUILD 里支持，CI 不构建、不验证。
@@ -31,7 +31,7 @@ sudo pacman -S magpie-bin        # 桌面版（GTK3 + WebKitGTK 4.1）
 sudo pacman -S magpie-cli-bin    # 终端版（静态，无 GUI 依赖），可与桌面版并存
 ```
 
-包没有 GPG 签名，所以必须 `SigLevel = Optional TrustAll`；为什么、排错见 [docs/pacman-repo.md](docs/pacman-repo.md)。
+包没有 GPG 签名，所以必须 `SigLevel = Optional TrustAll`，见 [docs/pacman-repo.md](docs/pacman-repo.md)。
 
 桌面版 `provides`／`conflicts` 了同名包 `magpie`（IPv6 NDP 代理那个），两者不能共存。
 
@@ -57,7 +57,7 @@ gh workflow run publish.yml                         # 立刻发布，version 留
 | 路径 | 作用 |
 |---|---|
 | `templates/*.PKGBUILD.in` | PKGBUILD 模板，`{{...}}` 由 `bump.py` 填 |
-| `packages/<包名>/` | 渲染结果，勿手改 |
+| `packages/<包名>/` | 渲染结果，请勿手动修改 |
 | `.github/workflows/publish.yml` | 发布流水线 |
 | `docs/pacman-repo.md` | 信任模型、有和无、排错 |
 
