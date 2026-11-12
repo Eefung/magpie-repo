@@ -4,23 +4,17 @@
 
 ## 原理
 
-每天 04:17 UTC 由 Actions 跑一次：
+每天 04:17 UTC 由 Actions 跑一次，有新版本才发布：
 
 ```
-scripts/bump.py --check        GitHub releases 与 usemagpie.ai/api/latest 取高者为上游版本
-  └ 与 packages/*/PKGBUILD 的 pkgver 不同 →
-     scripts/bump.py --render  校验和取自该版本 release 的 SHA256SUMS，LICENSE 与图标按字节现算
-     渲染 packages/*/PKGBUILD → scripts/build-repo.sh
-        makepkg 打包 → 装好该包 depends 后跑 --version → repo-add 重建 db
-     力推 gh-pages（单次提交，每包留 2 版）→ 建 Release v<版本>（两包 + SHA256SUMS）
-     → 提交 PKGBUILD 回 main
+scripts/bump.py --check   GitHub releases 与 usemagpie.ai/api/latest 取高者为上游
+  └ 与 packages/*/PKGBUILD 的 pkgver 不同 → scripts/bump.py --render
+      校验和取该版 release 的 SHA256SUMS，LICENSE 与图标按字节现算 → 渲染 PKGBUILD
+      scripts/build-repo.sh：makepkg 打包 → 装好 depends 跑 --version → repo-add 重建 db
+      力推 gh-pages（每包留 2 版）→ 建 Release v<版本> → 提交 PKGBUILD 回 main
 ```
 
-`gh-pages` 上的 `x86_64/` 就是软件源：`magpie.db`、`magpie.files`、当前版与上一版的包。
-
-先发布后提交：中途失败时 main 上没有新 `pkgver`，下次运行重做一遍；反过来会让仓库停在旧版本。
-
-`arch` 里写着 `aarch64`，但 CI 只构建、只验证 `x86_64`，aarch64 靠上游 `SHA256SUMS` 保证。
+`gh-pages` 上的 `x86_64/` 就是软件源。先发布后提交：中途失败时 main 上没有新 `pkgver`，下次运行重做；反过来会让仓库停在旧版本。aarch64 只在 PKGBUILD 里支持，CI 不构建、不验证。
 
 ## 安装
 
@@ -45,7 +39,7 @@ sudo pacman -S magpie-cli-bin    # 终端版（静态，无 GUI 依赖），可�
 
 ## 用法
 
-本机和 CI 跑同一套脚本（`bump.py` 只用标准库）：
+脚本只用标准库，本机与 CI 同一套：
 
 ```bash
 python3 scripts/bump.py --check                     # upstream=… / packaged … / bump=0|1
@@ -62,11 +56,11 @@ gh workflow run publish.yml                         # 立刻发布，version 留
 
 | 路径 | 作用 |
 |---|---|
-| `templates/*.PKGBUILD.in` | PKGBUILD 模板，改打包逻辑改这里；`{{...}}` 由 `bump.py` 填 |
+| `templates/*.PKGBUILD.in` | PKGBUILD 模板，`{{...}}` 由 `bump.py` 填 |
 | `packages/<包名>/` | 渲染结果，勿手改 |
-| `.github/workflows/publish.yml` | 唯一的发布流水线 |
-| `docs/pacman-repo.md` | 用户侧：信任模型、有什么没什么、排错 |
+| `.github/workflows/publish.yml` | 发布流水线 |
+| `docs/pacman-repo.md` | 信任模型、有什么没什么、排错 |
 
 ## 许可
 
-`scripts/` 与 `templates/` 是 MIT，见 [LICENSE](LICENSE)；打包的上游二进制按上游 MIT 分发（构建时现取上游 LICENSE 装进包）。
+`scripts/` 与 `templates/` 是 MIT，见 [LICENSE](LICENSE)；打包的上游二进制按上游 MIT 分发（构建时现取上游 LICENSE）。
