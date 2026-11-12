@@ -1,16 +1,16 @@
 # magpie 自托管 pacman 源
 
-把上游 [magpie](https://usemagpie.ai) 的新版本自动打成 Arch 包，装好之后和 Arch 官方仓库的包一样用 `pacman -Syu` 升级。上游一天几十个构建，所以每天只问一次，最多滞后一天。
+把上游 [magpie](https://usemagpie.ai) 的新版本自动打成 Arch 包，装好之后和 Arch 官方仓库的包一样用 `pacman -Syu` 升级。
 
 ## 原理
 
 每天 04:17 UTC 由 Actions 跑一次，有新版本才发布：
 
 ```
-scripts/bump.py --check   GitHub releases 与 usemagpie.ai/api/latest 取高者为上游
-  └ 与 packages/*/PKGBUILD 的 pkgver 不同 → scripts/bump.py --render
-      校验和取该版 release 的 SHA256SUMS，LICENSE 与图标按字节现算 → 渲染 PKGBUILD
-      scripts/build-repo.sh：makepkg 打包 → 装好 depends 跑 --version → repo-add 重建 db
+scripts/bump.py --check   GitHub releases 与 usemagpie.ai/api/latest 较高者为上游
+  └ 如果与 packages/*/PKGBUILD 的 pkgver 不同 → scripts/bump.py --render
+      校验和取自该版 release 的 SHA256SUMS；LICENSE 与图标不在其中，下载后现算 → 渲染 PKGBUILD
+      scripts/build-repo.sh：makepkg 打包 → 安装该包的依赖项 → 跑 --version → repo-add 重建 db
       力推 gh-pages（每包留 2 版）→ 建 Release v<版本> → 提交 PKGBUILD 回 main
 ```
 
@@ -44,7 +44,7 @@ sudo pacman -S magpie-cli-bin    # 终端版（静态，无 GUI 依赖），可�
 ```bash
 python3 scripts/bump.py --check                     # upstream=… / packaged … / bump=0|1
 python3 scripts/bump.py --render [--version <版本>]  # 渲染 PKGBUILD，默认上游最新
-./scripts/build-check.sh packages/magpie-bin        # 单包构建，装好 depends 跑 --version
+./scripts/build-check.sh packages/magpie-bin        # 单包构建，安装该包的依赖项后跑 --version
 
 ./scripts/build-repo.sh /tmp/magpie-repo/x86_64 packages/magpie-bin packages/magpie-cli-bin
 python3 -m http.server -d /tmp/magpie-repo 8765     # 再用临时 pacman.conf 从 http 试装
@@ -59,7 +59,7 @@ gh workflow run publish.yml                         # 立刻发布，version 留
 | `templates/*.PKGBUILD.in` | PKGBUILD 模板，`{{...}}` 由 `bump.py` 填 |
 | `packages/<包名>/` | 渲染结果，勿手改 |
 | `.github/workflows/publish.yml` | 发布流水线 |
-| `docs/pacman-repo.md` | 信任模型、有什么没什么、排错 |
+| `docs/pacman-repo.md` | 信任模型、有和无、排错 |
 
 ## 许可
 
