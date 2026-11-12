@@ -1,10 +1,47 @@
-# magpie-repo
+# magpie 自托管 pacman 源
 
 自动把上游 [magpie](https://usemagpie.ai) 的新版本打成 Arch 软件包，发布成 **pacman 仓库 + GitHub Releases**，装完之后和任何官方包一样用 `pacman -Syu` 升级。
 
-之所以不是 AUR：AUR 暂停了新用户注册，拿不到推送权限。这个仓库同样由包管理器托管，只是软件源换成了自己的 GitHub Pages。
+之所以不是 AUR：AUR 暂停了新用户注册，拿不到推送权限；`magpie-bin`、`magpie-cli-bin` 这两个名字在 AUR 上又已有活跃维护者，规则不允许重复建包。这个仓库同样由包管理器托管，只是软件源换成了自己的 GitHub Pages。AUR 那条路没删，`scripts/publish.sh` 与 `docs/aur-setup.md` 都在，配上 secret 即生效。
 
-## 用这个仓库装
+## 原理
+
+每天 04:17 UTC 跑一次（也可以 `gh workflow run publish.yml` 手动触发）：
+
+```
+scripts/bump.py --check          问上游最新版本（GitHub releases → 站点 /api/latest 兜底），
+   │                             并读一次线上 magpie.db，确认站点实际发布的是哪一版
+   ├─ 与 packages/*/PKGBUILD 的 pkgver 相同、且站点也是这一版 → 结束，什么都不发
+   └─ 有新版本，或站点落后于 packages/（上次发布中途失败）→ scripts/bump.py --render
+        ├─ 二进制校验和取自该版本 release 的 SHA256SUMS，LICENSE 与图标按实际字节现算
+        ├─ 渲染 packages/magpie-bin/PKGBUILD、packages/magpie-cli-bin/PKGBUILD
+        ├─ docker run archlinux:base-devel scripts/build-repo.sh
+        │    makepkg 校验 sha256 并打包 → 装好该包 depends 后跑 magpie --version
+        │    repo-add 重建 magpie.db / magpie.files，写 SHA256SUMS
+        ├─ 提交 PKGBUILD + .SRCINFO 回 main
+        ├─ 力推 gh-pages（单次提交，每包留最近 2 个版本）→ GitHub Pages 当软件源
+        ├─ 建 GitHub Release v<版本>，附两个 .pkg.tar.zst 与 SHA256SUMS
+        └─ 若配了 AUR 私钥，再顺手推 AUR（当前注册关闭，属于备用路径）
+```
+
+产物落在三个地方：
+
+| 位置 | 内容 | 谁用 |
+|---|---|---|
+| `gh-pages` → `https://eefung.github.io/magpie-repo/x86_64` | `magpie.db`、`magpie.files`、当前版 `.pkg.tar.zst`，外加上一版的文件 | `pacman -Syu` |
+| GitHub Releases `v<版本>` | 同一次构建的两个包 + `SHA256SUMS` | 手动 `pacman -U`、核对校验和 |
+| AUR `magpie-bin`／`magpie-cli-bin` | 配了 `AUR_SSH_PRIVATE_KEY` 才推 | 注册恢复、或成为共同维护者之后 |
+
+几个刻意的取舍：
+
+- **每天一次，不追版次。** 上游一天几十个构建，逐版追没有意义，所以最多滞后一天。
+- **只验 `x86_64`。** PKGBUILD 里 `arch=('x86_64' 'aarch64')` 仍然成立，aarch64 那份靠上游 `SHA256SUMS` 保证，但 CI 不构建也不验证。
+- **gh-pages 每次单提交力推。** 否则每版 65 MB 的包会把分支撑爆，历史不留。站点上每包留 2 个版本的文件（约 127 MB），但 `repo-add` 的 db 里每个包名只有一条记录（最新版）——留着上一版文件是为了让「刚同步完旧 db 的客户端」仍能下完包，不是让 pacman 能装旧版。
+- **存储还有余量。** GitHub 单文件上限 100 MB，当前 `magpie-bin` 约 31 MB、`magpie-cli-bin` 约 30 MB；真超了就得换存储（对象存储或 Release 分片）。
+- **`push` 到 main 也会跑一次**，但只有上游版本变了、或线上 `magpie.db` 落后于 `packages/` 时才会真的发布，否则只打印 `nothing to publish`。要强制重发用 `gh workflow run publish.yml`：`version` 留空就发上游最新，填当前 `pkgver` 也可以——提交步骤发现没有改动会跳过，仓库与 Release 照常重建。
+- **cron 只是尽力而为**，可能延迟；仓库 60 天无活动会被停掉定时工作流（本仓库每次发布都在提交，正常不会触发）。
+
+## 安装
 
 ```bash
 # /etc/pacman.conf 末尾
@@ -19,42 +56,13 @@ sudo pacman -S magpie-bin        # 桌面版
 sudo pacman -S magpie-cli-bin    # 终端版（静态，可与桌面版并存）
 ```
 
-验签说明、排错、退回 AUR 的做法都在 [docs/pacman-repo.md](docs/pacman-repo.md)。
+包没有 GPG 签名，所以仓库必须 `SigLevel = Optional TrustAll`：完整性靠 db 里的 sha256 与 Release 附带的 `SHA256SUMS`。理由、验签、排错、退回 AUR 的做法都在 [docs/pacman-repo.md](docs/pacman-repo.md)。
 
-## 每次运行做什么
+桌面版 `provides`／`conflicts` 了同名包 `magpie`（IPv6 NDP 代理那个），两者不能共存；终端版装成 `magpie-cli`，可与桌面版并列。
 
-```
-每天 04:17 UTC（也可以 gh workflow run publish.yml 手动触发）
-  └─ scripts/bump.py --check          问上游最新版本（GitHub releases → 站点 /api/latest 兜底），
-       │                              并读一次线上 magpie.db，确认站点实际发布的是哪一版
-       ├─ 与 packages/*/PKGBUILD 的 pkgver 相同、且站点也是这一版 → 结束，什么都不发
-       └─ 有新版本，或站点落后于 packages/（上次发布中途失败）→ scripts/bump.py --render
-            ├─ 二进制校验和取自该版本 release 的 SHA256SUMS，LICENSE 与图标按实际字节现算
-            ├─ 渲染 packages/magpie-bin/PKGBUILD、packages/magpie-cli-bin/PKGBUILD
-            ├─ docker run archlinux:base-devel scripts/build-repo.sh
-            │    makepkg 校验 sha256 并打包 → 装好该包 depends 后跑 magpie --version
-            │    repo-add 重建 magpie.db / magpie.files，写 SHA256SUMS
-            ├─ 提交 PKGBUILD + .SRCINFO 回 main
-            ├─ 力推 gh-pages（单次提交，每包留最近 2 个版本）→ GitHub Pages 当软件源
-            ├─ 建 GitHub Release v<版本>，附两个 .pkg.tar.zst 与 SHA256SUMS
-            └─ 若配了 AUR 私钥，再顺手推 AUR（当前注册关闭，属于备用路径）
-```
+## 用法
 
-## 目录
-
-| 路径 | 作用 |
-|---|---|
-| `templates/*.PKGBUILD.in` | PKGBUILD 模板，`{{pkgver}}`、`{{sha_*}}` 由脚本填；改打包逻辑改这里 |
-| `packages/<包名>/` | 渲染结果，目录名 = pkgname，仓库与 AUR 共用同一份 |
-| `scripts/bump.py` | 查上游版本、取校验和、渲染 PKGBUILD（仅用标准库） |
-| `scripts/build-check.sh` | 构建一个包目录并验证产物（root 下自动降权到 builder，因为 makepkg 拒绝 root；装好 `depends` 再跑 `--version`，顺带验证依赖表是否完整） |
-| `scripts/build-repo.sh` | 构建 + 组装 pacman 仓库：拷包、裁剪旧版、`repo-add` 重建 db、生成 SHA256SUMS |
-| `scripts/publish.sh` | 推 AUR 用；`AUR_BASE` 可改远端，方便拿本地裸仓库测试 |
-| `.github/workflows/publish.yml` | 唯一的发布流水线 |
-| `docs/pacman-repo.md` | 用户侧：装、验签、排错 |
-| `docs/aur-setup.md` | AUR 那条路（注册恢复后才能用）的完整步骤 |
-
-## 本机使用
+本机跑同一套脚本（`bump.py` 只用标准库）：
 
 ```bash
 python3 scripts/bump.py --check                  # upstream=… / packaged … / bump=0|1
@@ -63,24 +71,24 @@ python3 scripts/bump.py --render                 # 渲染到上游最新
 
 # 组装仓库到本地目录，再用临时 pacman.conf 试着从 http 装
 ./scripts/build-repo.sh /tmp/magpie-repo/x86_64 packages/magpie-bin packages/magpie-cli-bin
-cd /tmp/magpie-repo && python3 -m http.server 8765
+python3 -m http.server -d /tmp/magpie-repo 8765
 ```
 
-## 发布到哪里
+## 文档
 
-| 位置 | 内容 | 谁用 |
-|---|---|---|
-| `gh-pages` → `https://eefung.github.io/magpie-repo/x86_64` | `magpie.db`、`magpie.files`、当前版 `.pkg.tar.zst`（外加上一版一个文件，见下） | `pacman -Syu` |
-| GitHub Releases `v<版本>` | 同一次构建的两个包 + `SHA256SUMS` | 手动 `pacman -U`、核对校验和 |
-| AUR `magpie-bin`／`magpie-cli-bin` | 配了 `AUR_SSH_PRIVATE_KEY` 才推 | 注册恢复、或成为共同维护者之后 |
+| 路径 | 作用 |
+|---|---|
+| `templates/*.PKGBUILD.in` | PKGBUILD 模板，`{{pkgver}}`、`{{sha_*}}` 由脚本填；改打包逻辑改这里 |
+| `packages/<包名>/` | 渲染结果，目录名 = pkgname，仓库与 AUR 共用同一份 |
+| `scripts/bump.py` | 查上游版本、取校验和、渲染 PKGBUILD |
+| `scripts/build-check.sh` | 构建一个包目录并验证产物（root 下自动降权到 builder，因为 makepkg 拒绝 root；装好 `depends` 再跑 `--version`，顺带验证依赖表是否完整） |
+| `scripts/build-repo.sh` | 构建 + 组装 pacman 仓库：拷包、裁剪旧版、`repo-add` 重建 db、生成 SHA256SUMS |
+| `scripts/publish.sh` | 推 AUR 用；`AUR_BASE` 可改远端，方便拿本地裸仓库测试 |
+| `.github/workflows/publish.yml` | 唯一的发布流水线 |
+| `docs/pacman-repo.md` | 用户侧：装、验签、排错、退回 AUR |
+| `docs/aur-setup.md` | AUR 那条路（注册恢复后才能用）的完整步骤 |
+| `docs/handoff.md` | 交接：当前状态、实测数字、复核方法 |
 
-## 注意事项
+## 许可
 
-- 包**没有 GPG 签名**，所以仓库要 `SigLevel = Optional TrustAll`：完整性靠 db 里的 sha256 与 release 附带的 `SHA256SUMS`，信任对象是 GitHub 上的这个仓库。
-- 只构建并验证 `x86_64`。PKGBUILD 里 `arch=('x86_64' 'aarch64')` 仍然成立，aarch64 那份靠上游 `SHA256SUMS` 保证，但 CI 不验证。
-- 每天只发一次，最多滞后一天；上游一天几十个构建，逐版追也没有意义。
-- gh-pages 每次都是单提交力推（否则每版 65 MB 的包会把分支撑爆），历史不保留。站点上每包留 2 个版本的文件、约 127 MB，但 **`repo-add` 的 db 里每个包名只有一条记录（最新版）**——留着上一版文件是为了让「刚同步完旧 db 的客户端」仍能下完包，而不是让 pacman 能装旧版。
-- GitHub 单文件上限 100 MB：当前 `magpie-bin` 包约 31 MB、`magpie-cli-bin` 约 30 MB，还有余量；真超了就得换存储（对象存储或 Release 分片）。
-- `push` 到 main 也会触发一次运行，但只有上游版本变了、或线上 `magpie.db` 落后于 `packages/` 时才会真的发布，否则只打印 `nothing to publish`。要强制重发用 `gh workflow run publish.yml`：`version` 留空就发上游最新，填当前 `pkgver` 也可以——提交步骤发现没有改动会跳过，仓库与 Release 照常重建。
-- GitHub 的 cron 只是尽力而为，可能延迟；仓库 60 天无活动会被停掉定时工作流（本仓库每次发布都在提交，正常不会触发）。
-- 桌面版 `provides`／`conflicts` 了同名包 `magpie`（IPv6 NDP 代理那个），两者不能共存；终端版装成 `magpie-cli`，可与桌面版并列。
+本仓库的 `scripts/` 与 `templates/` 是 MIT，见 [LICENSE](LICENSE)。`magpie-bin`、`magpie-cli-bin` 打包的上游二进制按上游自己的许可（MIT）分发，构建时现取上游 LICENSE 装进包。
