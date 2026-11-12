@@ -52,46 +52,46 @@ gh workflow run publish.yml                         # 立刻发布，version 留
 
 ## 问题
 
-**有 GPG 签名吗？**
+- **有 GPG 签名吗？**
 
-没有。签名要维护者长期持有私钥，而 CI 跑在一次性容器里。完整性由 `magpie.db` 里的 sha256（pacman 下载后校验）与 Release 的 `SHA256SUMS` 保证，信任链是「你信 GitHub 上的 `Eefung/magpie-repo`」，不是某把长期密钥。介意的话自己从源码构建，或用官方 `curl -fsSL https://usemagpie.ai/install.sh | sh`（装到 `~/.local/bin` 并自更新，不受 pacman 管理）。
+  没有。签名要维护者长期持有私钥，而 CI 跑在一次性容器里。完整性由 `magpie.db` 里的 sha256（pacman 下载后校验）与 Release 的 `SHA256SUMS` 保证，信任链是「你信 GitHub 上的 `Eefung/magpie-repo`」，不是某把长期密钥。介意的话自己从源码构建，或用官方 `curl -fsSL https://usemagpie.ai/install.sh | sh`（装到 `~/.local/bin` 并自更新，不受 pacman 管理）。
 
-**仓库里有什么、没有什么？**
+- **仓库里有什么、没有什么？**
 
-| 有 | 无 |
-|---|---|
-| `x86_64` 的 `magpie-bin`、`magpie-cli-bin` | aarch64 包 |
-| 当前版与上一版的文件（给刚同步过旧 db 的客户端兜底；db 里只有当前版） | 历史版本、降级安装 |
-| 与上游同步的 `depends`、桌面文件、图标 | 签名、`-git` 变体 |
+  | 有 | 无 |
+  |---|---|
+  | `x86_64` 的 `magpie-bin`、`magpie-cli-bin` | aarch64 包 |
+  | 当前版与上一版的文件（给刚同步过旧 db 的客户端兜底；db 里只有当前版） | 历史版本、降级安装 |
+  | 与上游同步的 `depends`、桌面文件、图标 | 签名、`-git` 变体 |
 
-**error: database file for 'magpie' does not exist**
+- **error: database file for 'magpie' does not exist**
 
-`Server` 写错或仓库名与 db 文件名不一致，先手动确认：
+  `Server` 写错或仓库名与 db 文件名不一致，先手动确认：
 
-```bash
-curl -sI https://eefung.github.io/magpie-repo/x86_64/magpie.db | head -1   # 期望 200
-```
+  ```bash
+  curl -sI https://eefung.github.io/magpie-repo/x86_64/magpie.db | head -1   # 期望 200
+  ```
 
-**failed retrieving file 'magpie.db' ... 404**
+- **failed retrieving file 'magpie.db' ... 404**
 
-Pages 刚发布还在构建（几秒到一分钟），或者那次 Actions 失败了，看 <https://github.com/Eefung/magpie-repo/actions>。
+  Pages 刚发布还在构建（几秒到一分钟），或者那次 Actions 失败了，看 <https://github.com/Eefung/magpie-repo/actions>。
 
-**signature from "..." is unknown trust**
+- **signature from "..." is unknown trust**
 
-`pacman.conf` 里的 `SigLevel` 不是 `Optional TrustAll`，改完再 `sudo pacman -Syu`。
+  `pacman.conf` 里的 `SigLevel` 不是 `Optional TrustAll`，改完再 `sudo pacman -Syu`。
 
-**invalid or corrupted package**
+- **invalid or corrupted package**
 
-本机缓存了残缺的包：
+  本机缓存了残缺的包：
 
-```bash
-sudo rm -f /var/cache/pacman/pkg/magpie-*
-sudo pacman -Syy magpie-bin
-```
+  ```bash
+  sudo rm -f /var/cache/pacman/pkg/magpie-*
+  sudo pacman -Syy magpie-bin
+  ```
 
-**版本比上游旧**
+- **版本比上游旧**
 
-`gh workflow run publish.yml --repo Eefung/magpie-repo` 立刻构建，或从 <https://github.com/Eefung/magpie-repo/releases> 下载 `.pkg.tar.zst`，用 `sudo pacman -U` 装。
+  `gh workflow run publish.yml --repo Eefung/magpie-repo` 立刻构建，或从 <https://github.com/Eefung/magpie-repo/releases> 下载 `.pkg.tar.zst`，用 `sudo pacman -U` 装。
 
 ## 文档
 
