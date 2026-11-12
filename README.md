@@ -64,7 +64,7 @@ gh workflow run publish.yml                         # 立刻发布，version 留
 | 当前版与上一版的文件（给刚同步过旧 db 的客户端兜底；db 里只有当前版） | 历史版本、降级安装 |
 | 与上游同步的 `depends`、桌面文件、图标 | 签名、`-git` 变体 |
 
-**`error: database file for 'magpie' does not exist`**
+**error: database file for 'magpie' does not exist**
 
 `Server` 写错或仓库名与 db 文件名不一致，先手动确认：
 
@@ -72,15 +72,15 @@ gh workflow run publish.yml                         # 立刻发布，version 留
 curl -sI https://eefung.github.io/magpie-repo/x86_64/magpie.db | head -1   # 期望 200
 ```
 
-**`failed retrieving file 'magpie.db' ... 404`**
+**failed retrieving file 'magpie.db' ... 404**
 
 Pages 刚发布还在构建（几秒到一分钟），或者那次 Actions 失败了，看 <https://github.com/Eefung/magpie-repo/actions>。
 
-**`signature from "..." is unknown trust`**
+**signature from "..." is unknown trust**
 
 `pacman.conf` 里的 `SigLevel` 不是 `Optional TrustAll`，改完再 `sudo pacman -Syu`。
 
-**`invalid or corrupted package`**
+**invalid or corrupted package**
 
 本机缓存了残缺的包：
 
