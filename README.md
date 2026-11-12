@@ -11,7 +11,7 @@ scripts/bump.py --check   GitHub releases 与 usemagpie.ai/api/latest 较高者�
   └ 如果与 packages/*/PKGBUILD 的 pkgver 不同 → scripts/bump.py --render
       校验和取自该版 release 的 SHA256SUMS；LICENSE 与图标不在其中，下载后现算 → 渲染 PKGBUILD
       scripts/build-repo.sh：makepkg 打包 → 安装该包的依赖项 → 跑 --version → repo-add 重建 db
-      推送 gh-pages（每个软件包保留 2 个版本）→ 创建 Release v<version> → 将 PKGBUILD 提交到 main
+      推送 gh-pages（每个软件包保留 2 个版本）→ 创建 Release v<版本> → 将 PKGBUILD 提交到 main
 ```
 
 `gh-pages` 上的 `x86_64/` 就是软件源。先发布后提交：中途失败时 main 上没有新 `pkgver`，下次运行重做；反过来会让仓库停在旧版本。aarch64 只在 PKGBUILD 里支持，CI 不构建、不验证。
