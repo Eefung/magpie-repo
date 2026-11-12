@@ -17,16 +17,9 @@
 | 软件源 | `https://eefung.github.io/magpie-repo/x86_64`（`magpie.db` 200）。`SHA256SUMS` 在站点根目录 `https://eefung.github.io/magpie-repo/SHA256SUMS`（200），`x86_64/` 下没有；db 与 files 也另有一份 `.tar.gz` 别名 |
 | Pages | 源分支 `gh-pages`、路径 `/`、状态 `built` |
 | Actions | 计划 `17 4 * * *`（每天 04:17 UTC），另在 push 到 `main`（限 `templates/**`、`scripts/**`、workflow 本身）与手动 dispatch 时触发；最近 8 次运行全 success |
-| Secrets / Variables | **空**。`AUR_SSH_PRIVATE_KEY` 没配，所以 AUR 推送步骤始终跳过 |
+| Secrets / Variables | **空** |
 | 包体积 | `magpie-bin` 34,332,977 B / `magpie-cli-bin` 32,247,957 B（0.1.3759，x86_64，zstd） |
 | 保留策略 | 每个包留 2 个版本的文件（`KEEP=2`，站点约 127 MB）；`repo-add` 的 db 只登记最新版 |
-
-## 为什么不是 AUR
-
-- AUR 暂停了新用户注册，拿不到写权限。
-- `magpie-bin`、`magpie-cli-bin` 这两个名字在 AUR 上已存在且有活跃维护者（czyt），AUR 规则明确禁止建重复包，所以不能换个名字绕开。
-
-结论：自己托管软件源，pacman 的升级体验与 AUR 版一致。AUR 那条路**没有删**，代码（`scripts/publish.sh`）和文档（`docs/aur-setup.md`）都在，注册恢复或拿到 co-maintainer 权限后配上 secret 即自动生效，不需要改工作流。
 
 ## 数据流
 
@@ -45,8 +38,7 @@ cron 04:17 UTC / push / workflow_dispatch
             │    build-repo.sh：拷包、裁剪到 KEEP 版、repo-add 重建 magpie.db/.files、写 SHA256SUMS
             ├─ 提交 packages/ 回 main
             ├─ 力推 gh-pages（单提交；先 git archive 取上一版，保证保留窗口）
-            ├─ 建 Release v<ver>：只挂本版两个包 + 本版 SHA256SUMS
-            └─ 若存在 AUR_SSH_PRIVATE_KEY：scripts/publish.sh 再推 AUR
+            └─ 建 Release v<ver>：只挂本版两个包 + 本版 SHA256SUMS
 ```
 
 ## 仓库结构
@@ -58,10 +50,8 @@ cron 04:17 UTC / push / workflow_dispatch
 | `scripts/bump.py` | 查版本、取校验和、渲染（仅标准库，可直接在 CI 的 py3 跑） |
 | `scripts/build-check.sh` | 构建单包并验证；root 下自动 `useradd builder` 降权，装 depends 后跑 `--version` |
 | `scripts/build-repo.sh` | 构建 + 组装仓库（`REPO_NAME=magpie`、`KEEP=2`） |
-| `scripts/publish.sh` | 推 AUR（备用）；`AUR_BASE` 可指向本地裸仓库测试 |
 | `.github/workflows/publish.yml` | 唯一流水线 |
-| `docs/pacman-repo.md` | 用户侧：装、验签说明、排错、退回 AUR |
-| `docs/aur-setup.md` | AUR 路径（注册、密钥、共同维护者申请、失败对照表） |
+| `docs/pacman-repo.md` | 用户侧：装、验签说明、排错 |
 
 ## 日常操作
 
@@ -95,7 +85,6 @@ python3 scripts/bump.py --render --version 0.1.3711
   原始备份：`/etc/pacman.conf.bak-20261111-150739`。
 - `magpie-bin`、`magpie-cli-bin` 由该源安装，`/usr/bin/magpie`（81 MB 左右）与 `/usr/bin/magpie-cli`（74 MB 左右）都在；`~/.local/bin` 里**没有**上游 `install.sh` 装的自更新副本，不存在两份打架。
 - `/usr/share/applications/magpie.desktop` 的 `Categories=Development;`（单主分类，已修）。
-- 想回退：注释掉那三行 → `sudo pacman -Syu` → 需要时 `paru -S magpie-bin`（版本号会回退，需 `pacman -U` 或 `--ignore` 处理降级）。
 
 ## 设计决策与理由
 
@@ -106,9 +95,9 @@ python3 scripts/bump.py --render --version 0.1.3711
 | gh-pages 单提交力推 | 每版 60 MB，保留历史会把分支撑到几个 GB |
 | 未签名，`SigLevel = Optional TrustAll` | 签名要长期持有 GPG 私钥并做 `pacman-key` 分发；当前完整性靠 db 内 sha256 + Release 的 `SHA256SUMS`，信任对象是 GitHub 仓库 |
 | 只构建/验证 x86_64 | PKGBUILD 仍声明 aarch64，靠上游 `SHA256SUMS` 保证，但 CI 不跑 ARM |
-| 校验和取自 release 的 `SHA256SUMS` | 与站点 `/api/latest` 的 digest、以及 AUR 人工维护者钉的 shasum 三处交叉验证过 |
+| 校验和取自 release 的 `SHA256SUMS` | 与站点 `/api/latest` 的 digest 交叉验证过 |
 | 渲染模板而不是补丁式改 PKGBUILD | 幂等、diff 可审、逻辑只有一份 |
-| `pkgver` 变才发布，`pkgrel` 恒为 1 | AUR 与仓库都靠 pkgver 识别升级；上游版本号单调递增，够用 |
+| `pkgver` 变才发布，`pkgrel` 恒为 1 | 仓库靠 pkgver 识别升级；上游版本号单调递增，够用 |
 
 ## 已知限制
 
@@ -118,7 +107,6 @@ python3 scripts/bump.py --render --version 0.1.3711
 - 定时任务只是尽力而为；仓库 60 天无活动 GitHub 会停定时工作流（这里每次发布都有提交，正常不会触发）。
 - 上游个别 release 缺 `SHA256SUMS`（例如 `v0.1.3706`）——`bump.py` 现在会明确报错，需要换版本重试。
 - 本机 `pacman -Syu` 之外不要用 `-Sy` 单独装包（局部升级），除非只装这两个 `-bin` 包。
-- AUR 注册关闭是外部事实（写作时），恢复时间未知。
 
 ## 本次会话踩过的坑
 
@@ -138,14 +126,12 @@ python3 scripts/bump.py --render --version 0.1.3711
 
 1. 想给 `pacman -S` 一个真正可信的签名：生成 GPG 密钥 → 私钥进 secret → CI 里 `makepkg --sign` / `repo-add --sign` → 文档换成 `pacman-key --add` 流程。这是唯一还算重要的缺口。
 2. aarch64 构建（GitHub 已提供 ARM runner），需要 matrix 与环境变量调整。
-3. AUR 注册恢复后：配 `AUR_SSH_PRIVATE_KEY`（+ 可选 `AUR_KNOWN_HOSTS`），或先按 `docs/aur-setup.md` 申请 co-maintainer。
-4. 可选：`pkgrel` 递增能力（现在恒为 1，纯打包修正无法单独发版，得等下一个上游版本）。
+3. 可选：`pkgrel` 递增能力（现在恒为 1，纯打包修正无法单独发版，得等下一个上游版本）。
 
 ## 参考
 
 - 上游站点 <https://usemagpie.ai>，发布仓库 `yetone/magpie-releases`，`/api/latest` 给出当前版本与各产物的 sha256
-- 用户侧文档 `docs/pacman-repo.md`；AUR 路径 `docs/aur-setup.md`
-- 技能：`aur-package-vetting`（判断某个包是否新鲜可用）、`aur-auto-bump-workflow`（打包自动化的通用做法与本项目踩的坑）
+- 用户侧文档 `docs/pacman-repo.md`
 
 ## 下次接手的验证清单
 

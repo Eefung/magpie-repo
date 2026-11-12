@@ -28,10 +28,6 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-      AUR_GIT_NAME: ${{ vars.AUR_GIT_NAME || 'Eefung' }}
-      AUR_GIT_EMAIL: ${{ vars.AUR_GIT_EMAIL || 'eefung@tuta.io' }}
-      AUR_KNOWN_HOSTS: ${{ secrets.AUR_KNOWN_HOSTS }}
       PAGES_URL: https://eefung.github.io/magpie-repo
     steps:
       - uses: actions/checkout@v4
@@ -148,30 +144,6 @@ jobs:
             --notes-file /tmp/notes.md \
             repo/x86_64/*-"$ver"-1-x86_64.pkg.tar.zst /tmp/rel/SHA256SUMS
           echo "release created: $(gh release view "v$ver" --json url -q .url)"
-
-      - name: Push to the AUR
-        if: steps.upstream.outputs.bump == '1' && env.AUR_SSH_PRIVATE_KEY != ''
-        env:
-          AUR_HOST: aur.archlinux.org
-        run: |
-          set -euo pipefail
-          install -d -m700 ~/.ssh
-          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
-          if [ -n "${AUR_KNOWN_HOSTS:-}" ]; then
-            printf '%s\n' "$AUR_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          else
-            ssh-keyscan -t ed25519,rsa "$AUR_HOST" > ~/.ssh/known_hosts 2>/dev/null
-          fi
-          cat > ~/.ssh/config <<EOF
-          Host $AUR_HOST
-            HostName $AUR_HOST
-            User aur
-            IdentityFile ~/.ssh/aur
-            IdentitiesOnly yes
-          EOF
-          chmod 600 ~/.ssh/config
-          ./scripts/publish.sh packages/magpie-bin packages/magpie-cli-bin
 
       - name: Say what was skipped
         if: steps.upstream.outputs.bump != '1'

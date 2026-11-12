@@ -2,8 +2,6 @@
 
 自动把上游 [magpie](https://usemagpie.ai) 的新版本打成 Arch 软件包，发布成 **pacman 仓库 + GitHub Releases**，装完之后和任何官方包一样用 `pacman -Syu` 升级。
 
-之所以不是 AUR：AUR 暂停了新用户注册，拿不到推送权限；`magpie-bin`、`magpie-cli-bin` 这两个名字在 AUR 上又已有活跃维护者，规则不允许重复建包。这个仓库同样由包管理器托管，只是软件源换成了自己的 GitHub Pages。AUR 那条路没删，`scripts/publish.sh` 与 `docs/aur-setup.md` 都在，配上 secret 即生效。
-
 ## 原理
 
 每天 04:17 UTC 跑一次（也可以 `gh workflow run publish.yml` 手动触发）：
@@ -20,17 +18,15 @@ scripts/bump.py --check          问上游最新版本（GitHub releases → 站
         │    repo-add 重建 magpie.db / magpie.files，写 SHA256SUMS
         ├─ 提交 PKGBUILD + .SRCINFO 回 main
         ├─ 力推 gh-pages（单次提交，每包留最近 2 个版本）→ GitHub Pages 当软件源
-        ├─ 建 GitHub Release v<版本>，附两个 .pkg.tar.zst 与 SHA256SUMS
-        └─ 若配了 AUR 私钥，再顺手推 AUR（当前注册关闭，属于备用路径）
+        └─ 建 GitHub Release v<版本>，附两个 .pkg.tar.zst 与 SHA256SUMS
 ```
 
-产物落在三个地方：
+产物落在两个地方：
 
 | 位置 | 内容 | 谁用 |
 |---|---|---|
 | `gh-pages` → `https://eefung.github.io/magpie-repo/x86_64` | `magpie.db`、`magpie.files`、当前版 `.pkg.tar.zst`，外加上一版的文件 | `pacman -Syu` |
 | GitHub Releases `v<版本>` | 同一次构建的两个包 + `SHA256SUMS` | 手动 `pacman -U`、核对校验和 |
-| AUR `magpie-bin`／`magpie-cli-bin` | 配了 `AUR_SSH_PRIVATE_KEY` 才推 | 注册恢复、或成为共同维护者之后 |
 
 几个刻意的取舍：
 
@@ -56,7 +52,7 @@ sudo pacman -S magpie-bin        # 桌面版
 sudo pacman -S magpie-cli-bin    # 终端版（静态，可与桌面版并存）
 ```
 
-包没有 GPG 签名，所以仓库必须 `SigLevel = Optional TrustAll`：完整性靠 db 里的 sha256 与 Release 附带的 `SHA256SUMS`。理由、验签、排错、退回 AUR 的做法都在 [docs/pacman-repo.md](docs/pacman-repo.md)。
+包没有 GPG 签名，所以仓库必须 `SigLevel = Optional TrustAll`：完整性靠 db 里的 sha256 与 Release 附带的 `SHA256SUMS`。理由、验签、排错都在 [docs/pacman-repo.md](docs/pacman-repo.md)。
 
 桌面版 `provides`／`conflicts` 了同名包 `magpie`（IPv6 NDP 代理那个），两者不能共存；终端版装成 `magpie-cli`，可与桌面版并列。
 
@@ -79,14 +75,12 @@ python3 -m http.server -d /tmp/magpie-repo 8765
 | 路径 | 作用 |
 |---|---|
 | `templates/*.PKGBUILD.in` | PKGBUILD 模板，`{{pkgver}}`、`{{sha_*}}` 由脚本填；改打包逻辑改这里 |
-| `packages/<包名>/` | 渲染结果，目录名 = pkgname，仓库与 AUR 共用同一份 |
+| `packages/<包名>/` | 渲染结果，目录名 = pkgname |
 | `scripts/bump.py` | 查上游版本、取校验和、渲染 PKGBUILD |
 | `scripts/build-check.sh` | 构建一个包目录并验证产物（root 下自动降权到 builder，因为 makepkg 拒绝 root；装好 `depends` 再跑 `--version`，顺带验证依赖表是否完整） |
 | `scripts/build-repo.sh` | 构建 + 组装 pacman 仓库：拷包、裁剪旧版、`repo-add` 重建 db、生成 SHA256SUMS |
-| `scripts/publish.sh` | 推 AUR 用；`AUR_BASE` 可改远端，方便拿本地裸仓库测试 |
 | `.github/workflows/publish.yml` | 唯一的发布流水线 |
-| `docs/pacman-repo.md` | 用户侧：装、验签、排错、退回 AUR |
-| `docs/aur-setup.md` | AUR 那条路（注册恢复后才能用）的完整步骤 |
+| `docs/pacman-repo.md` | 用户侧：装、验签、排错 |
 | `docs/handoff.md` | 交接：当前状态、实测数字、复核方法 |
 
 ## 许可

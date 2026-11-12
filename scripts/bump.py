@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Render the magpie AUR PKGBUILDs for upstream's latest release.
+"""Render the magpie PKGBUILDs for upstream's latest release.
 
-Upstream (yetone/magpie) ships dozens of builds a day; the AUR packages are
+Upstream (yetone/magpie) ships dozens of builds a day; these are
 prebuilt-binary packages, so a bump only needs the new version plus the
 published checksums -- no compilation.
 
@@ -41,7 +41,7 @@ UA = "magpie-repo-bump (+https://github.com/Eefung/magpie-repo)"
 REPO_DB = os.environ.get("REPO_DB", "https://eefung.github.io/magpie-repo/x86_64/magpie.db")
 VERSION_RE = re.compile(r"[0-9]+(?:\.[0-9]+)+")
 
-MAINTAINER = os.environ.get("AUR_MAINTAINER", "Eefung <eefung@tuta.io>")
+MAINTAINER = os.environ.get("MAINTAINER", "Eefung <eefung@tuta.io>")
 
 # package dir -> upstream asset prefix
 PACKAGES = {

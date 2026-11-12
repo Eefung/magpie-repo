@@ -1,6 +1,6 @@
 # 用这个仓库装 magpie
 
-这是 `magpie-repo` 自己托管的 pacman 仓库，装完之后的升级和官方包一样走 `pacman -Syu`，不需要 AUR、不需要谁有 AUR 账号。
+这是 `magpie-repo` 自己托管的 pacman 仓库，装完之后的升级和官方包一样走 `pacman -Syu`。
 
 ## 一次配置
 
@@ -16,8 +16,6 @@ sudo pacman -Syu            # 同步所有源，也包括新加的 magpie
 sudo pacman -S magpie-bin        # 桌面版（GTK3 + WebKitGTK 4.1）
 sudo pacman -S magpie-cli-bin    # 只要终端版（静态，无 GUI 依赖），可和桌面版并存
 ```
-
-两个包名与上游一致，装过的 AUR 版本会被直接升级，不需要先卸载。
 
 之后升级就是 `sudo pacman -Syu`：仓库每天 04:17 UTC 由 Actions 重新构建一次，有新上游版本时才发布。
 
@@ -56,8 +54,6 @@ sudo rm -f /var/cache/pacman/pkg/magpie-*
 sudo pacman -Syy magpie-bin
 ```
 
-**版本比上游旧** —— 这个仓库每天构建一次，最多滞后一天（AUR 的 `magpie-bin` 通常滞后两三天）。想立刻要新版：`gh workflow run publish.yml --repo Eefung/magpie-repo`，或直接去 <https://github.com/Eefung/magpie-repo/releases> 下 `pkg.tar.zst` 用 `sudo pacman -U` 装。
-
-**想退回 AUR 版本** —— 把 `[magpie]` 那三行注释掉，`sudo pacman -Syu`，之后由 `paru -S magpie-bin` 接管（届时版本号可能更低，需要 `sudo pacman -U` 或 `--ignore` 处理降级）。
+**版本比上游旧** —— 这个仓库每天构建一次，最多滞后一天。想立刻要新版：`gh workflow run publish.yml --repo Eefung/magpie-repo`，或直接去 <https://github.com/Eefung/magpie-repo/releases> 下 `pkg.tar.zst` 用 `sudo pacman -U` 装。
 
 **彻底卸载** —— `sudo pacman -Rns magpie-bin magpie-cli-bin`，再删掉 `pacman.conf` 里那三行。

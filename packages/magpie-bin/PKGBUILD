@@ -8,7 +8,7 @@ url="https://usemagpie.ai"
 license=('MIT')
 depends=('glib2' 'gtk3' 'gdk-pixbuf2' 'hicolor-icon-theme' 'libsoup3' 'libx11' 'webkit2gtk-4.1')
 # Upstream installs its binary as `magpie`, which is also the binary of the
-# unrelated AUR package magpie (an IPv6 NDP proxy).
+# unrelated `magpie` package (an IPv6 NDP proxy).
 provides=('magpie')
 conflicts=('magpie')
 options=('!strip' '!debug')
