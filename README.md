@@ -76,7 +76,7 @@ curl -sI https://eefung.github.io/magpie-repo/x86_64/magpie.db | head -1   # 期
 
 Pages 刚发布还在构建（几秒到一分钟），或者那次 Actions 失败了，看 <https://github.com/Eefung/magpie-repo/actions>。
 
-**`signature from "..." is unknown trust`／`invalid or corrupted package`**
+**`signature from "..." is unknown trust` 或 `invalid or corrupted package`**
 
 `SigLevel` 不是 `Optional TrustAll`，或本机缓存了残缺的包：
 
