@@ -61,4 +61,4 @@ gh workflow run publish.yml                         # 立刻发布，version 留
 
 ## 许可
 
-`scripts/` 与 `templates/` 是 MIT，见 [LICENSE](LICENSE)；打包的上游二进制按上游 MIT 分发（构建时从上游下载 LICENSE）。
+`scripts/` 与 `templates/` 是 MIT，见 [LICENSE](LICENSE)；打包的上游二进制按上游 MIT 分发。
