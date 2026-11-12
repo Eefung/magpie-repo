@@ -1,6 +1,6 @@
 # magpie 自托管 pacman 源
 
-把上游 [magpie](https://usemagpie.ai) 的新版本打成 Arch 包，发布成 pacman 仓库：装完之后和官方包一样 `pacman -Syu` 升级。上游一天几十个构建，所以每天只问一次，最多滞后一天。
+把上游 [magpie](https://usemagpie.ai) 的新版本自动打成 Arch 包，装好之后和 Arch 官方仓库的包一样用 `pacman -Syu` 升级。上游一天几十个构建，所以每天只问一次，最多滞后一天。
 
 ## 原理
 
