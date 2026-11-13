@@ -9,7 +9,7 @@ on:
     - cron: "17 4 * * *"
   push:
     branches: [main]
-    paths: ["templates/**", "scripts/**", ".github/workflows/publish.yml"]
+    paths: ["templates/**", "scripts/**", "tests/**", ".github/workflows/publish.yml"]
   workflow_dispatch:
     inputs:
       version:
@@ -19,14 +19,24 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: publish
-  cancel-in-progress: false
-
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the offline tests
+        run: python3 -m unittest discover -s tests -v
+
   publish:
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Serialized on its own, not for the whole run: a queued publish must never
+    # be overtaken, while a test run has no reason to wait behind one.
+    concurrency:
+      group: publish
+      cancel-in-progress: false
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PAGES_URL: https://eefung.github.io/magpie-repo

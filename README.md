@@ -42,6 +42,7 @@ sudo pacman -S magpie-cli-bin    # 终端版（静态，无 GUI 依赖），可�
 ```bash
 python3 scripts/bump.py --check                     # upstream=… / packaged … / bump=0|1
 python3 scripts/bump.py --render [--version <版本>]  # 生成 PKGBUILD，默认上游最新
+python3 -m unittest discover -s tests               # 离线单测，不联网也不进容器
 ./scripts/build-check.sh packages/magpie-bin        # 单包构建，安装该包的依赖项后跑 --version
 
 ./scripts/build-repo.sh /tmp/magpie-repo/x86_64 packages/magpie-bin packages/magpie-cli-bin
