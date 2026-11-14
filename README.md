@@ -44,7 +44,7 @@ sudo pacman -S magpie-cli-bin    # 终端版（静态，无 GUI 依赖），可�
 python3 scripts/bump.py --check                     # upstream=… / packaged … / bump=0|1
 python3 scripts/bump.py --render [--version <版本>]  # 生成 PKGBUILD 并打印 ver=<版本>，默认上游最新
 python3 -m unittest discover -s tests               # 离线单测，不联网也不进容器
-./scripts/build-check.sh packages/magpie-bin        # 单包构建，装依赖后跑 --version 并核对版本号
+./scripts/build-check.sh packages/magpie-bin        # 单包构建，装依赖后跑 --version 核对版本，最后一行 artifact=<路径>
 
 ./scripts/build-repo.sh /tmp/magpie-repo/x86_64 packages/magpie-bin packages/magpie-cli-bin
 python3 -m http.server -d /tmp/magpie-repo 8765     # 再用临时 pacman.conf 从 http 试装

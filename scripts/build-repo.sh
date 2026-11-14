@@ -14,6 +14,7 @@ set -euo pipefail
 
 # shellcheck source=lib/pkg.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pkg.sh"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 out="${1:?usage: build-repo.sh <repo x86_64 dir> <package dir>...}"
 shift
@@ -25,12 +26,29 @@ out="$(mkdir -p "$out" && cd "$out" && pwd)"
 root="$(dirname "$out")"
 
 # --- build -------------------------------------------------------------------
-for dir in "$@"; do
-    ./scripts/build-check.sh "$dir"
-done
+# build-check owns its package directory and answers with one line: where the
+# package file it made is. Taking that path is the whole handover -- no globbing
+# for whatever happens to be lying there, no guessing by timestamp.
+built=""
+build_one() {
+    local dir="$1" log
+    log="$(mktemp)"
+    if ! "$here/build-check.sh" "$dir" >"$log" 2>&1; then
+        cat "$log" >&2
+        rm -f "$log"
+        echo "building $dir failed" >&2
+        return 1
+    fi
+    cat "$log"
+    # Not `local`: the caller moves the file this names.
+    built="$(sed -n 's/^artifact=//p' "$log")"
+    rm -f "$log"
+    [ -n "$built" ] || { echo "build-check printed no artifact= for $dir" >&2; return 1; }
+}
 
 for dir in "$@"; do
-    install -m644 "$dir"/*.pkg.tar.* "$out"/
+    build_one "$dir"
+    mv -f "$built" "$out/"
 done
 
 # --- keep only the newest KEEP builds of every package ------------------------
@@ -74,12 +92,3 @@ echo "repository $REPO_NAME: ${#current[@]} package(s) in the database, \
 $(ls -1 "$out"/*.pkg.tar.* | wc -l) file(s) on disk, $(du -sh "$out" | cut -f1)"
 
 (cd "$out" && sha256sum -- *.pkg.tar.* > "$root/SHA256SUMS" && echo "checksums: $root/SHA256SUMS")
-
-# --- leave the tree as it was found -----------------------------------------
-for dir in "$@"; do
-    rm -rf "$dir"/src "$dir"/pkg "$dir"/.srcdest "$dir"/*.pkg.tar.*
-    # build-check ran makepkg as `builder` when we are root; hand it back.
-    if [ "$(id -u)" -eq 0 ] && [ -d /src ]; then
-        chown -R "$(stat -c %u /src)" "$dir"
-    fi
-done
