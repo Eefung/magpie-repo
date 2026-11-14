@@ -318,6 +318,31 @@ class RenderTest(unittest.TestCase):
         for pkg in bump.PACKAGES:
             self.assertIn("rendered from the decoy tree", self.pkgbuild(pkg))
 
+    def test_a_template_whose_pkgname_drifted_stops_before_the_network(self):
+        # The 包清单 publishes the inventory key as the pkgname, and the release
+        # step asks for exactly that name. A template naming another package
+        # rendered clean until this guard: the build would produce files under
+        # the template's name and the release would find none, after gh-pages
+        # had been pushed.
+        decoy = self.out_root / "templates"
+        decoy.mkdir()
+        for pkg in bump.PACKAGES:
+            text = (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
+            (decoy / f"{pkg}.PKGBUILD.in").write_text(text)
+        drifted = decoy / "magpie-cli-bin.PKGBUILD.in"
+        drifted.write_text(
+            drifted.read_text().replace("pkgname=magpie-cli-bin", "pkgname=magpie-cli-bn")
+        )
+
+        fetch = FetchSpy(self.table())
+        with self.assertRaises(bump.BumpError) as caught:
+            bump.render(self.VERSION, layout=layout_at(self.out_root, templates=decoy), fetch=fetch)
+
+        self.assertIn("magpie-cli-bn", str(caught.exception))
+        self.assertIn("magpie-cli-bin", str(caught.exception))
+        self.assertEqual(fetch.urls, [])
+        self.assertFalse((self.out_root / "packages").exists())
+
     def test_a_layout_missing_a_template_names_the_package(self):
         empty = self.out_root / "templates"
         empty.mkdir()
@@ -440,6 +465,35 @@ class CheckTest(unittest.TestCase):
                     "behind=magpie-cli-bin",
                 ],
             )
+
+
+class TemplatePkgnameTest(unittest.TestCase):
+    """A template's literal pkgname= is the inventory key it is filed under."""
+
+    def test_our_own_templates_carry_their_inventory_key(self):
+        for pkg in bump.PACKAGES:
+            with self.subTest(pkg=pkg):
+                text = (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
+                bump.check_pkgname(pkg, text)
+
+    def test_a_template_naming_another_package_is_refused(self):
+        text = (REPO / "templates" / "magpie-cli-bin.PKGBUILD.in").read_text()
+        drifted = text.replace("pkgname=magpie-cli-bin", "pkgname=magpie-cli-bn")
+        with self.assertRaises(bump.BumpError) as caught:
+            bump.check_pkgname("magpie-cli-bin", drifted)
+        self.assertIn("magpie-cli-bn", str(caught.exception))
+        self.assertIn("magpie-cli-bin", str(caught.exception))
+
+    def test_a_template_with_no_pkgname_is_named(self):
+        with self.assertRaises(bump.BumpError) as caught:
+            bump.check_pkgname("magpie-bin", "pkgver=0.1.2\n")
+        self.assertIn("no pkgname=", str(caught.exception))
+
+    def test_a_quoted_value_reads_the_way_the_renderer_writes_it(self):
+        # pkg_field takes the first token and strips one matching pair of
+        # quotes; this reads the same shape, so a quoted template is not a
+        # drift the shell and python disagree about.
+        bump.check_pkgname("magpie-bin", "pkgname='magpie-bin'\n")
 
 
 class TemplateArchesTest(unittest.TestCase):

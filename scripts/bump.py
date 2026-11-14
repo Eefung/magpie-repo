@@ -50,6 +50,7 @@ SITE_API = "https://usemagpie.ai/api/latest"
 ICON_URL = "https://usemagpie.ai/img/icon-256.png"
 UA = "magpie-repo-bump (+https://github.com/Eefung/magpie-repo)"
 VERSION_RE = re.compile(r"[0-9]+(?:\.[0-9]+)+")
+PKGNAME_RE = re.compile(r"^pkgname=(\S+)", re.M)
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([\w-]+)\s*\}\}")
 ARCH_LINE_RE = re.compile(r"^arch=\(([^)]*)\)\s*$", re.M)
 # The package() case arm that turns $CARCH into the upstream asset suffix:
@@ -238,6 +239,27 @@ def template_suffixes(template: str) -> dict[str, str]:
     return dict(CASE_ARM_RE.findall(template))
 
 
+def check_pkgname(pkg: str, template: str) -> None:
+    """The template's literal pkgname= is the inventory key it is filed under.
+
+    That key is what the 包清单 publishes and, on the build side, what
+    `makepkg --packagelist` puts in the 包文件 name. Nothing used to hold the
+    two together: a template naming another package rendered clean, the build
+    produced files under the template's name, and the release step -- asking
+    for the inventory's -- found nothing, after gh-pages had already been
+    pushed. Checked here, before the network, with the arch table.
+    """
+    match = PKGNAME_RE.search(template)
+    if match is None:
+        raise BumpError(f"{pkg}: the template declares no pkgname=")
+    declared = match.group(1).strip("'\"")
+    if declared != pkg:
+        raise BumpError(
+            f"{pkg}: the template names {declared}, "
+            f"but the 包清单 files it as {pkg}"
+        )
+
+
 def check_arches(pkg: str, template: str, arches: Mapping[str, str]) -> None:
     """Hold a template's every arch-shaped part to the table, before fetching.
 
@@ -384,9 +406,11 @@ def render(
     if not VERSION_RE.fullmatch(version):
         raise BumpError(f"refusing to render pkgver={version!r}: expected digits separated by dots")
 
-    # Read every template and hold it to the arch table before the network is
-    # asked anything: a template that lags the table is this repository's
-    # problem, and it should not be reported as "the release has no such asset".
+    # Read every template and hold it to the arch table and to its own pkgname
+    # before the network is asked anything: a template that lags the table, or
+    # is filed under another name, is this repository's problem, and it should
+    # not be reported as "the release has no such asset" or found after the
+    # gh-pages push.
     plans = []
     for pkg, prefix in layout.inventory.items():
         path = layout.templates / f"{pkg}.PKGBUILD.in"
@@ -397,6 +421,7 @@ def render(
             # template for a package in its own inventory. Say which.
             raise BumpError(f"no template for {pkg}: {path} ({exc.strerror})") from exc
         names = placeholders(template)
+        check_pkgname(pkg, template)
         check_arches(pkg, template, layout.arches)
         plans.append((pkg, prefix, template, names))
 
