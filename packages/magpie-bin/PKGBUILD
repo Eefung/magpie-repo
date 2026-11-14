@@ -1,6 +1,6 @@
 # Maintainer: Eefung <eefung@tuta.io>
 pkgname=magpie-bin
-pkgver=0.1.4129
+pkgver=0.1.4131
 pkgrel=1
 pkgdesc="One place to pick every AI coding agent's model: Codex, Claude Code, Gemini CLI and more"
 arch=('x86_64' 'aarch64')
@@ -27,8 +27,8 @@ source_aarch64=(
 )
 sha256sums=('79d2c8444715d4bc453ec4f8a0aaf2051a4c1ee5ac08f5bd2e5848aef87c7572'
             '57437c6596e05a8fcfc42d4288c030aa00ed86b69fe35d464d69d7026150c704')
-sha256sums_x86_64=('bbd8f9a3581b4b6417cec7fbbc2746abec009bedde231c540258900ce9365d99')
-sha256sums_aarch64=('998af3d3ed64b09c9c4fcc79e0dbd71e458feb43994bcb0a29e41e18225a5e61')
+sha256sums_x86_64=('2e100bf161a32b12ca76891085d2ea7e8b1b4ef3173d870b97fd4488c1ee6f28')
+sha256sums_aarch64=('acef065ad2d76dbdcdf470b0fd29afee344c9a62447e1192a90e5dbee2589b12')
 
 package() {
     local _suffix
