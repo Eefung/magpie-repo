@@ -50,11 +50,27 @@ for dir in "$@"; do
 done
 
 # --- rebuild the database from what is on disk -------------------------------
+# Only the newest build of each package belongs in the database. The older
+# files stay on disk for clients whose db still names them (the retention
+# window), but an entry in the db would also let a pinned install reach back
+# to them, which is not what the window is for.
+newest() {
+    local pkgname="$1"
+    local -a files
+    # shellcheck disable=SC2012  # package filenames are pkgname-pkgver-pkgrel-arch
+    mapfile -t files < <(ls -1 "$out/$pkgname"-[0-9]*.pkg.tar.* 2>/dev/null | sort -V)
+    [ "${#files[@]}" -gt 0 ] && printf '%s\n' "${files[${#files[@]}-1]}"
+    return 0
+}
+mapfile -t current < <(for dir in "$@"; do newest "$(pkg_name "$dir")"; done)
+[ "${#current[@]}" -gt 0 ] || { echo "no package files to put in the database" >&2; exit 1; }
+
 rm -f "$out/$REPO_NAME.db" "$out/$REPO_NAME.db.tar.gz" \
       "$out/$REPO_NAME.files" "$out/$REPO_NAME.files.tar.gz"
-repo-add -q "$out/$REPO_NAME.db.tar.gz" "$out"/*.pkg.tar.*
+repo-add -q "$out/$REPO_NAME.db.tar.gz" "${current[@]}"
 # shellcheck disable=SC2012
-echo "repository $REPO_NAME: $(ls -1 "$out"/*.pkg.tar.* | wc -l) package(s), $(du -sh "$out" | cut -f1)"
+echo "repository $REPO_NAME: ${#current[@]} package(s) in the database, \
+$(ls -1 "$out"/*.pkg.tar.* | wc -l) file(s) on disk, $(du -sh "$out" | cut -f1)"
 
 (cd "$out" && sha256sum -- *.pkg.tar.* > "$root/SHA256SUMS" && echo "checksums: $root/SHA256SUMS")
 
