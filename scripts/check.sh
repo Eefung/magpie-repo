@@ -3,8 +3,9 @@
 #
 #   ./scripts/check.sh
 #
-# Three gates: the offline tests, shellcheck over every shell script under
-# scripts/, and actionlint over .github/workflows.
+# Four gates: the offline tests, shellcheck over every shell script under
+# scripts/, actionlint over .github/workflows, and the probe -- the real
+# makepkg + repo-add chain, run when this machine has those tools.
 #
 # The shell scripts are enumerated, not listed: a hand-written glob silently
 # skips a new directory, which is how scripts/lib/ went un-linted when it was
@@ -113,22 +114,42 @@ else
     failed "actionlint (could not obtain the pinned copy)"
 fi
 
+heading "probe (real makepkg + repo-add)"
+# The probe was a paragraph of prose in the block below, and nothing ran it: a
+# green gate said "the build chain is only proved by a publish run" while the
+# chain's real tooling sat unexercised on the machine that has it. It runs when
+# the tools exist and says so when they do not -- the CI runner has no makepkg.
+missing=()
+for tool in makepkg repo-add bsdtar; do
+    command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+done
+if [ "${#missing[@]}" -eq 0 ]; then
+    log="$(mktemp)"
+    if "$here/probe-repo-build.sh" >"$log" 2>&1; then
+        printf 'ok: %s\n' "$(grep -c '^  ok:' "$log") assertions, real makepkg and repo-add"
+    else
+        cat "$log" >&2
+        failed "probe-repo-build.sh"
+    fi
+    rm -f "$log"
+else
+    printf 'skipped: no %s on PATH -- the real 打包 chain needs those\n' "${missing[*]}"
+fi
+
 heading "not covered here"
 cat <<'EOF'
 - build-check.sh's root branch (useradd / su / chown and the depends install
   behind it): it only exists inside the publish container, so a publish run
-  proves it. The rest of that path runs without root: the offline tests drive
-  the scripts against stubs (tests/test_build_check.py, tests/test_build_repo.py,
-  tests/test_pkg_sh.py), and scripts/probe-repo-build.sh runs the real makepkg
-  and repo-add against a synthesized package -- no container, no network.
+  proves it. Everything else runs without root: the offline tests drive the
+  scripts against stubs and a srcinfo-shaped fixture (tests/test_build_check.py,
+  tests/test_build_repo.py, tests/test_pkg_sh.py), and the probe gate above
+  runs the real thing -- on a machine that has makepkg, which the runner has
+  not.
 - the publish steps themselves -- seeding repo/ from the previous gh-pages
   tree, the force push, the Release, the commit back to main: they only exist
   in the publish job, and a real publish is what proves them. The seed takes
   only x86_64/*.pkg.tar.* across, so a file this repository still needs but
   does not write under that pattern would stop being served.
-- the container's workdir being the layout root: the 包清单 names directories
-  relative to the repository root and only the publish job's mount makes them
-  resolve. Nothing offline asserts the two agree.
 EOF
 
 if [ "$failures" -ne 0 ]; then

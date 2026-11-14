@@ -68,6 +68,26 @@ class UpstreamHandoverTest(unittest.TestCase):
         self.assertEqual(workflow.count("scripts/bump.py --render"), 1)
 
 
+class ContainerWorkdirTest(unittest.TestCase):
+    """The container works from the root the 包清单 names things against.
+
+    The 包清单 carries directories relative to the repository root, and the
+    build step mounts that root at /src and works from there. It used to be one
+    assumption held by a printed note -- `check.sh`'s "not covered here" -- so
+    moving the mount or the workdir would have left every build step resolving
+    a directory that is not there, with nothing offline to say so.
+    """
+
+    def test_the_build_mounts_the_root_and_works_from_it(self):
+        workflow = (REPO / ".github" / "workflows" / "publish.yml").read_text()
+        self.assertIn('--volume "$PWD:/src" --workdir /src', workflow)
+
+    def test_the_package_list_is_named_relative_to_that_root(self):
+        for directory, _ in bump.package_entries(bump.layout_for(REPO)):
+            self.assertFalse(directory.startswith("/"), directory)
+            self.assertTrue((REPO / directory).is_dir(), directory)
+
+
 class PackageListTest(unittest.TestCase):
     """`--packages` is the 包清单's only exit, and it carries the whole entry."""
 

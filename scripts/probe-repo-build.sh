@@ -13,7 +13,9 @@
 # chown and the depends install), which only exists inside the publish
 # container.
 #
-# Four cases; any of them failing prints "!! FAIL" and exits 1.
+# Four cases; any of them failing prints "!! FAIL" and exits 1. Every case is
+# asserted -- the two that used to only print their state are the retention
+# window and the database entry, which is where a broken prune() hides.
 set -euo pipefail
 
 REPO="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -63,6 +65,30 @@ seed_old() {
 
 run() { ./scripts/build-repo.sh repo/x86_64 packages/fixture; }
 
+# What case 1 and case 4 claim, asked of the tree rather than read by eye --
+# printing the state and letting a human compare was how a broken retention
+# window passed this probe with exit 0.
+db_entries() { bsdtar -xOf repo/x86_64/magpie.db.tar.gz | grep -c 'pkg.tar.zst' || true; }
+disk_files() { find repo/x86_64 -name '*.pkg.tar.zst' | wc -l; }
+
+# expect <expected> <actual> <label>
+expect() {
+    if [ "$1" = "$2" ]; then
+        echo "  ok: $3 = $2"
+    else
+        echo "!! FAIL: $3 = $2, expected $1"
+        exit 1
+    fi
+}
+
+expect_gone() {
+    if [ -e "$1" ]; then
+        echo "!! FAIL: $1 is still on disk"
+        exit 1
+    fi
+    echo "  ok: $(basename "$1") is gone"
+}
+
 show() {
     bsdtar -xOf repo/x86_64/magpie.db.tar.gz 2>/dev/null | grep 'pkg.tar.zst' | sed 's/^/  db:   /'
     find repo/x86_64 -name '*.pkg.tar.zst' | sort | sed 's|.*/|  disk: |'
@@ -72,6 +98,8 @@ echo "########## 1. payload reports $VER (expect: pass, db=1, disk=2) ##########
 make_pkgbuild "$VER" "$VER"
 seed_old
 run
+expect 1 "$(db_entries)" "database entries"
+expect 2 "$(disk_files)" "files on disk"
 show
 
 echo
@@ -88,4 +116,7 @@ echo
 echo "########## 4. KEEP=1 drops the older build from db and disk ##########"
 make_pkgbuild "$VER" "$VER"
 KEEP=1 run
+expect 1 "$(db_entries)" "database entries"
+expect 1 "$(disk_files)" "files on disk"
+expect_gone "repo/x86_64/$PKG-$OLD-1-x86_64.pkg.tar.zst"
 show
