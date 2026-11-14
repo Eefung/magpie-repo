@@ -5,7 +5,10 @@ packages/*/*.pkg.tar.*
 packages/*/magpie-*
 packages/*/.srcdest/
 # build-check.sh removes these itself; the entries are for a run that was
-# killed before its trap could fire, so a stray file never reaches a commit
+# killed before its trap could fire, so a stray file never reaches a commit.
+# .SRCINFO stays for the same reason one step further back: nothing writes it
+# any more (makepkg's srcinfo is kept in a variable), but an older checkout can
+# still have one lying in a package directory.
 packages/*/.SRCINFO
 *.pkg.tar.zst
 *.pkg.tar.xz
