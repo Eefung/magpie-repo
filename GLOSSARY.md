@@ -17,7 +17,7 @@ _Avoid_: 版本号、tag
 _Avoid_: 包列表、packages 变量
 
 **冻结行**：
-生产者打印一次、读者不再回头解析的 `name=value` 行：`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`build-check` 的 `pkgname=` / `pkgver=` / `artifact=`、`--check` 的 `bump=`。读它只走 `scripts/lib/pkg.sh` 的 `line_field` 与 `pkglist_field`：重复一行是协议断了，空值算失败，缺行算什么由调用方定（`|| true` 加默认值）。措辞是契约的那几条之外，其余是日志。
+生产者打印一次、读者不再回头解析的 `name=value` 行：`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`build-check` 的 `pkgname=` / `pkgver=` / `artifact=`、`--check` 的 `upstream=`（`--render` 接它，不再自己问一遍上游）与 `bump=`。读它只走 `scripts/lib/pkg.sh` 的 `line_field` 与 `pkglist_field`：重复一行是协议断了，空值算失败，缺行算什么由调用方定（`|| true` 加默认值）。措辞是契约的那几条之外，其余是日志。
 _Avoid_: 输出格式、stdout
 
 **arch 表**：
@@ -33,7 +33,7 @@ _Avoid_: 生成、打包
 _Avoid_: 编译
 
 **落后**：
-已渲染的版本与上游不一致。`--check` 只回答这一件事。
+已渲染的版本与上游不一致。`--check` 只回答这一件事。这里的「上游」指它最新的、SHA256SUMS 已经传好的那个版本：tag 与资产不一起到，打包只能从取得到的东西开始，所以只打了 tag 的版本既不算落后，也进不了渲染。
 _Avoid_: 过期、不同步
 
 **软件源**：

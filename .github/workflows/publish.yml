@@ -59,6 +59,12 @@ jobs:
           # build and release steps read this file instead of a package name
           # spelled into this YAML.
           python3 scripts/bump.py --packages > /tmp/packages.txt
+          # The 版本 this run would publish, handed on instead of re-derived:
+          # --render used to ask 上游 a second time, so what it rendered could
+          # differ from what --check had just compared. line_field fails the
+          # step when the line is absent, which is a broken check, not "seen".
+          upstream="$(line_field upstream /tmp/check.txt)"
+          echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
           bump=0
           if [ -n "$WANTED" ]; then
             echo "asked for $WANTED"; bump=1
@@ -75,15 +81,17 @@ jobs:
         if: steps.upstream.outputs.bump == '1'
         env:
           WANTED: ${{ inputs.version }}
+          UPSTREAM: ${{ steps.upstream.outputs.upstream }}
         run: |
           set -euo pipefail
           # shellcheck source=scripts/lib/pkg.sh
           source scripts/lib/pkg.sh
-          if [ -n "$WANTED" ]; then
-            python3 scripts/bump.py --render --version "$WANTED" | tee /tmp/render.txt
-          else
-            python3 scripts/bump.py --render | tee /tmp/render.txt
-          fi
+          # The 版本 comes from the step above -- a hand-picked one when a human
+          # asked for it, otherwise the one --check just compared. Asking 上游
+          # again here was how a run rendered a version nobody had checked.
+          target="${WANTED:-$UPSTREAM}"
+          [ -n "$target" ] || { echo "neither WANTED nor UPSTREAM names a version" >&2; exit 1; }
+          python3 scripts/bump.py --render --version "$target" | tee /tmp/render.txt
           git diff --stat
           # Every later step needs the same version; the renderer printed it.
           # Checking it here rather than letting an empty value flow on: the

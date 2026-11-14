@@ -18,13 +18,15 @@ The network enters through an injected `fetch`, so the decisions -- which
 version wins, which checksum goes where, whether a template and its values
 agree -- are exercised offline: python3 -m unittest discover -s tests
 
-Two facts leave through frozen lines, because a caller reads them instead of
-re-deriving them from the files: `--render` prints `ver=<version>`, and
-`--check` prints `bump=0|1`. `--packages` prints `package <dir> <pkgname>`, one
-line per package, read through pkglist_field. Those are contracts -- change one
-with its reader in pkg.sh. The rest of `--check`'s output (`upstream=`,
-`packaged <pkg>=`, `behind=`) is a log for whoever reads the run: reword it
-freely, and let the tests assert what it means rather than how it reads.
+Three facts leave through frozen lines, because a caller reads them instead of
+re-deriving them from the files: `--render` prints `ver=<version>`, `--check`
+prints `upstream=<version>` (the 版本 the render is supposed to take, so the
+render never asks 上游 a second time), and `--check` prints `bump=0|1`.
+`--packages` prints `package <dir> <pkgname>`, one line per package, read
+through pkglist_field. Those are contracts -- change one with its reader in
+pkg.sh. The rest of `--check`'s output (`packaged <pkg>=`, `behind=`) is a log
+for whoever reads the run: reword it freely, and let the tests assert what it
+means rather than how it reads.
 
 Stdlib only: runs on any python3 in CI and on the user's machine alike.
 """
@@ -45,7 +47,7 @@ from typing import Mapping, Protocol, Sequence
 
 ROOT = Path(__file__).resolve().parent.parent
 RELEASES = "https://github.com/yetone/magpie-releases/releases"
-GITHUB_LATEST = "https://api.github.com/repos/yetone/magpie-releases/releases/latest"
+GITHUB_RELEASES = "https://api.github.com/repos/yetone/magpie-releases/releases?per_page=30"
 SOURCE_REPO = "https://raw.githubusercontent.com/yetone/magpie"
 SITE_API = "https://usemagpie.ai/api/latest"
 ICON_URL = "https://usemagpie.ai/img/icon-256.png"
@@ -165,6 +167,11 @@ def sha256_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def version_key(version: str) -> tuple[int, ...]:
+    """A 版本's sort key: the parts as numbers, so 0.1.1000 outranks 0.1.999."""
+    return tuple(int(part) for part in version.split("."))
+
+
 def highest(versions: Sequence[str]) -> str:
     """The greatest dotted version here; blank and malformed entries drop out.
 
@@ -176,23 +183,30 @@ def highest(versions: Sequence[str]) -> str:
     if not usable:
         offered = ", ".join(repr(v) for v in versions) if versions else "nothing at all"
         raise BumpError(f"upstream offered no usable version: {offered}")
-    return max(usable, key=lambda v: tuple(int(part) for part in v.split(".")))
+    return max(usable, key=version_key)
 
 
-def latest_version(fetch: Fetch = http_fetch) -> str:
-    """Upstream's newest version, taking the higher of GitHub and the site API.
+def offered_versions(fetch: Fetch = http_fetch) -> list[str]:
+    """Every usable 版本 上游 offers, newest first.
 
-    GitHub's /releases/latest skips prereleases, so a version upstream marks as
-    pre-release would otherwise be invisible; the site reports whatever it
-    ships. Either source alone can also be rate limited or stale.
+    The release list is the source that knows more than "the latest": a tag
+    exists before its assets do, so the release *before* the newest one can be
+    the newest thing this run can 打包. The site API answers with a single
+    version and is asked too -- either source can be rate limited or stale, and
+    the two can disagree -- which is why the caller walks the list instead of
+    taking the maximum of two readings.
     """
     candidates = []
     try:
-        raw = fetch(GITHUB_LATEST)
-        tag = json.loads(raw or b"{}").get("tag_name", "")
-        if not tag:
-            raise ValueError("no tag_name in the GitHub answer")
-        candidates.append(tag.lstrip("v"))
+        raw = fetch(GITHUB_RELEASES)
+        releases = json.loads(raw or b"[]")
+        if not isinstance(releases, list):
+            raise ValueError("the GitHub answer is not a list of releases")
+        candidates.extend(
+            str(release.get("tag_name", "")).lstrip("v")
+            for release in releases
+            if isinstance(release, dict) and not release.get("draft")
+        )
     except (urllib.error.URLError, OSError, ValueError) as exc:
         log(f"warning: GitHub API unusable ({exc}); asking {SITE_API}")
     try:
@@ -204,18 +218,22 @@ def latest_version(fetch: Fetch = http_fetch) -> str:
         log(f"warning: {SITE_API} unusable ({exc})")
     if not candidates:
         raise BumpError("could not learn upstream's version from GitHub or the site API")
-    return highest(candidates)
+    highest(candidates)  # names 上游's junk when none of the candidates is usable
+    usable = {v for v in candidates if VERSION_RE.fullmatch(v)}
+    return sorted(usable, key=version_key, reverse=True)
 
 
-def release_sums(version: str, *, fetch: Fetch = http_fetch) -> dict[str, str]:
-    """The release's SHA256SUMS, as {asset name: sha256}."""
+def uploaded_sums(version: str, *, fetch: Fetch = http_fetch) -> dict[str, str] | None:
+    """The release's SHA256SUMS, or None when 上游 has not uploaded it yet.
+
+    A tag exists before its assets do: the release page appears first and the
+    uploads land seconds to minutes later. That is not a broken repository and
+    not a broken release -- it is a 版本 this run cannot 打包 yet.
+    """
     url = f"{RELEASES}/download/v{version}/SHA256SUMS"
     body = fetch(url, missing_ok=True)
     if body is None:
-        raise BumpError(
-            f"v{version} publishes no SHA256SUMS; "
-            "pick a version whose release carries it (or bump to the latest)"
-        )
+        return None
     sums = {}
     for line in body.decode().splitlines():
         parts = line.split()
@@ -224,6 +242,38 @@ def release_sums(version: str, *, fetch: Fetch = http_fetch) -> dict[str, str]:
     if not sums:
         raise BumpError(f"{url} lists no checksums")
     return sums
+
+
+def release_sums(version: str, *, fetch: Fetch = http_fetch) -> dict[str, str]:
+    """The release's SHA256SUMS, as {asset name: sha256}.
+
+    Called with a version the caller asked for by hand, so an unuploaded one is
+    that caller's mistake and says which version to pick instead.
+    """
+    sums = uploaded_sums(version, fetch=fetch)
+    if sums is None:
+        raise BumpError(
+            f"v{version} publishes no SHA256SUMS; "
+            "pick a version whose release carries it (or bump to the latest)"
+        )
+    return sums
+
+
+def latest_version(fetch: Fetch = http_fetch) -> str:
+    """Upstream's newest 版本 this run can 打包: its release is uploaded.
+
+    The tag and the assets do not arrive together, so the newest 版本 上游
+    advertises can be one whose SHA256SUMS is still a 404. Taking the maximum of
+    the two sources and hoping was how a run holding a complete release
+    published nothing: `--check` said bump, `--render` asked a second time, and
+    the second reading landed on a tag with no assets yet.
+    """
+    for version in offered_versions(fetch=fetch):
+        if uploaded_sums(version, fetch=fetch) is not None:
+            return version
+    raise BumpError(
+        "upstream has tagged versions, but none has its SHA256SUMS uploaded yet"
+    )
 
 
 def placeholders(template: str) -> list[str]:

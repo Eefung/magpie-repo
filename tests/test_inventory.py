@@ -49,6 +49,25 @@ class InventoryAgreementTest(unittest.TestCase):
         self.assertEqual([pkg for pkg in bump.PACKAGES if pkg in workflow], [])
 
 
+class UpstreamHandoverTest(unittest.TestCase):
+    """The 版本 `--check` decided is the one `--render` is given.
+
+    The render used to ask 上游 a second time, so what it rendered could differ
+    from what had just been compared -- and a tag whose SHA256SUMS had not been
+    uploaded yet turned a run that had a complete release in hand into one that
+    published nothing.
+    """
+
+    def test_the_render_step_takes_the_version_the_check_decided(self):
+        workflow = (REPO / ".github" / "workflows" / "publish.yml").read_text()
+        self.assertIn("line_field upstream /tmp/check.txt", workflow)
+        self.assertIn('target="${WANTED:-$UPSTREAM}"', workflow)
+        self.assertIn('--render --version "$target"', workflow)
+        # One render invocation, and it always carries a version: a bare
+        # `--render` would ask 上游 again and undo the handover.
+        self.assertEqual(workflow.count("scripts/bump.py --render"), 1)
+
+
 class PackageListTest(unittest.TestCase):
     """`--packages` is the 包清单's only exit, and it carries the whole entry."""
 

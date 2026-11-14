@@ -18,7 +18,7 @@ import unittest
 import urllib.error
 from email.message import Message
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
@@ -68,14 +68,34 @@ def license_url(version: str) -> str:
     return f"{bump.SOURCE_REPO}/v{version}/LICENSE"
 
 
-def version_sources(github: str | None, site: str | None) -> dict[str, bytes | None]:
-    """A fetch table for the two version sources; None means "that one 404s"."""
+def version_sources(
+    github: str | Sequence[str] | None, site: str | None
+) -> dict[str, bytes | None]:
+    """A fetch table for the two version sources; None means "that one 404s".
+
+    `github` is the list of tags GitHub's release endpoint carries, newest
+    first. A version this table mentions is a 版本 whose release is fully
+    uploaded: the version 上游 advertises and the assets it serves do not arrive
+    together, so a table naming a version without its SHA256SUMS would be
+    describing a release no run can package.
+    """
+    tags = [] if github is None else ([github] if isinstance(github, str) else list(github))
     table: dict[str, bytes | None] = {}
+    for version in [*tags, site]:
+        if version is not None:
+            table.setdefault(sums_url(version), sums_body({"magpie-linux-amd64": "a" * 64}))
     if github is not None:
-        table[bump.GITHUB_LATEST] = json.dumps({"tag_name": f"v{github}"}).encode()
+        table[bump.GITHUB_RELEASES] = json.dumps(
+            [{"tag_name": f"v{tag}", "draft": False} for tag in tags]
+        ).encode()
     if site is not None:
         table[bump.SITE_API] = json.dumps({"version": site}).encode()
     return table
+
+
+def uploaded(*versions: str) -> dict[str, bytes]:
+    """The SHA256SUMS of these 版本, and of nothing else."""
+    return {sums_url(version): sums_body({"magpie-linux-amd64": "a" * 64}) for version in versions}
 
 
 def sums_body(entries: dict[str, str]) -> bytes:
@@ -164,8 +184,9 @@ class LatestVersionTest(unittest.TestCase):
     def test_github_rate_limit_falls_back_to_the_site(self):
         fetch = FetchSpy(
             {
-                bump.GITHUB_LATEST: urllib.error.HTTPError(bump.GITHUB_LATEST, 403, "rate limited", Message(), None),
+                bump.GITHUB_RELEASES: urllib.error.HTTPError(bump.GITHUB_RELEASES, 403, "rate limited", Message(), None),
                 bump.SITE_API: json.dumps({"version": "0.1.9"}).encode(),
+                **uploaded("0.1.9"),
             }
         )
         with contextlib.redirect_stdout(io.StringIO()):
@@ -174,15 +195,41 @@ class LatestVersionTest(unittest.TestCase):
     def test_connection_error_falls_back_to_the_site(self):
         fetch = FetchSpy(
             {
-                bump.GITHUB_LATEST: urllib.error.URLError("no route to host"),
+                bump.GITHUB_RELEASES: urllib.error.URLError("no route to host"),
                 bump.SITE_API: json.dumps({"version": "0.1.9"}).encode(),
+                **uploaded("0.1.9"),
             }
         )
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(bump.latest_version(fetch=fetch), "0.1.9")
 
+    def test_a_tag_without_its_assets_falls_back_to_the_uploaded_release(self):
+        # 上游的 tag 与资产不一起到：先有 release 页面，上传在后面几秒到几分钟。
+        # 取两个源里较大的那个、再指望资产齐备，就是那次「手里有完整的 0.1.10，
+        # 却因为第二个读数撞上只打了 tag 的 0.1.11 而什么都不发」。
+        fetch = FetchSpy(
+            {
+                **version_sources(github=["0.1.11", "0.1.10"], site="0.1.11"),
+                sums_url("0.1.11"): None,
+            }
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(bump.latest_version(fetch=fetch), "0.1.10")
+
+    def test_nothing_uploaded_is_one_line(self):
+        fetch = FetchSpy(
+            {
+                **version_sources(github=["0.1.11"], site="0.1.11"),
+                sums_url("0.1.11"): None,
+            }
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(bump.BumpError) as caught:
+                bump.latest_version(fetch=fetch)
+        self.assertIn("none has its SHA256SUMS", str(caught.exception))
+
     def test_no_answer_from_anywhere_is_one_line(self):
-        fetch = FetchSpy({bump.GITHUB_LATEST: None, bump.SITE_API: None})
+        fetch = FetchSpy({bump.GITHUB_RELEASES: None, bump.SITE_API: None})
         with contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(bump.BumpError) as caught:
                 bump.latest_version(fetch=fetch)
