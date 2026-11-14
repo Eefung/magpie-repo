@@ -31,7 +31,7 @@ jobs:
       # bump.py only, so a broken run: block or a quoting slip would first show
       # up as a failed publish at 04:17 UTC.
       - name: Lint the shell scripts
-        run: shellcheck scripts/*.sh
+        run: shellcheck scripts/*.sh scripts/lib/*.sh
       - name: Lint the workflow
         env:
           VERSION: "1.7.12"
