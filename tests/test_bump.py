@@ -280,6 +280,15 @@ class RenderTest(unittest.TestCase):
         self.assertIn("expected digits separated by dots", str(caught.exception))
         self.assertEqual(fetch.urls, [])
 
+    def test_hands_the_version_to_the_caller(self):
+        # publish.yml scrapes this one line instead of re-parsing the file
+        # render just wrote; the wording is the contract.
+        fetch = FetchSpy(self.table())
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            bump.render(self.VERSION, out_root=self.out_root, fetch=fetch)
+        self.assertIn(f"ver={self.VERSION}", buffer.getvalue().splitlines())
+
 
 class PackagedVersionsTest(unittest.TestCase):
     def test_reads_pkgver_from_each_package_dir(self):

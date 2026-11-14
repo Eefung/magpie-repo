@@ -12,6 +12,9 @@
 # free of entries for packages that were pruned.
 set -euo pipefail
 
+# shellcheck source=lib/pkg.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pkg.sh"
+
 out="${1:?usage: build-repo.sh <repo x86_64 dir> <package dir>...}"
 shift
 [ "$#" -gt 0 ] || { echo "name at least one package directory" >&2; exit 2; }
@@ -20,8 +23,6 @@ REPO_NAME="${REPO_NAME:-magpie}"
 KEEP="${KEEP:-2}"          # versions of each package kept in the repository
 out="$(mkdir -p "$out" && cd "$out" && pwd)"
 root="$(dirname "$out")"
-
-pkg_name() { sed -n 's/^pkgname=//p' "$1/PKGBUILD" | head -1 | tr -d "'\""; }
 
 # --- build -------------------------------------------------------------------
 for dir in "$@"; do
@@ -46,7 +47,7 @@ prune() {
 }
 
 for dir in "$@"; do
-    prune "$(pkg_name "$dir")"
+    prune "$(pkg_field "$dir/PKGBUILD" pkgname)"
 done
 
 # --- rebuild the database from what is on disk -------------------------------
@@ -62,7 +63,7 @@ newest() {
     [ "${#files[@]}" -gt 0 ] && printf '%s\n' "${files[${#files[@]}-1]}"
     return 0
 }
-mapfile -t current < <(for dir in "$@"; do newest "$(pkg_name "$dir")"; done)
+mapfile -t current < <(for dir in "$@"; do newest "$(pkg_field "$dir/PKGBUILD" pkgname)"; done)
 [ "${#current[@]}" -gt 0 ] || { echo "no package files to put in the database" >&2; exit 1; }
 
 rm -f "$out/$REPO_NAME.db" "$out/$REPO_NAME.db.tar.gz" \

@@ -13,6 +13,9 @@
 # check that the dependency list is complete.
 set -euo pipefail
 
+# shellcheck source=lib/pkg.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pkg.sh"
+
 dir="${1:?usage: build-check.sh <package dir>}"
 [ -d "$dir" ] || { echo "no such directory: $dir" >&2; exit 1; }
 cd "$dir"
@@ -59,8 +62,7 @@ if [ "$(id -u)" -eq 0 ]; then
     fi
 fi
 
-pkgver="$(sed -n 's/^pkgver=//p' PKGBUILD | head -1 | tr -d "'\"")"
-[ -n "$pkgver" ] || { echo "no pkgver in $dir/PKGBUILD" >&2; exit 1; }
+pkgver="$(pkg_field PKGBUILD pkgver)"
 
 bsdtar -xOf "$pkgfile" "$bin" > /tmp/magpie-build-check
 chmod +x /tmp/magpie-build-check

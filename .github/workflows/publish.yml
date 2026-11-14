@@ -85,14 +85,22 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "$WANTED" ]; then
-            python3 scripts/bump.py --render --version "$WANTED"
+            python3 scripts/bump.py --render --version "$WANTED" | tee /tmp/render.txt
           else
-            python3 scripts/bump.py --render
+            python3 scripts/bump.py --render | tee /tmp/render.txt
           fi
           git diff --stat
-          # Every later step needs the same version; derive it once.
-          echo "ver=$(sed -n 's/^pkgver=//p' packages/magpie-bin/PKGBUILD | tr -d "'\"")" \
-            >> "$GITHUB_ENV"
+          # Every later step needs the same version; the renderer printed it.
+          # Checking it here rather than letting an empty value flow on: the
+          # failure would otherwise land after the gh-pages push, leaving a
+          # half-published run the "publish first, commit last" order exists
+          # to prevent.
+          ver="$(sed -n 's/^ver=//p' /tmp/render.txt)"
+          if [ -z "$ver" ]; then
+            echo "the renderer printed no ver= line" >&2
+            exit 1
+          fi
+          echo "ver=$ver" >> "$GITHUB_ENV"
 
       - name: Build the packages and assemble the pacman repository
         if: steps.upstream.outputs.bump == '1'

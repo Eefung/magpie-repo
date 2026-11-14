@@ -17,6 +17,11 @@ The network enters through an injected `fetch`, so the decisions -- which
 version wins, which checksum goes where, whether a template and its values
 agree -- are exercised offline: python3 -m unittest discover -s tests
 
+Both modes end with one frozen line a caller reads instead of re-deriving it
+from the files: `--check` prints `upstream=`, `packaged <pkg>=`, `bump=` and
+`behind=`; `--render` prints `ver=<version>`. The workflow scrapes those lines
+and nothing else, so the wording is a contract -- change it with the reader.
+
 Stdlib only: runs on any python3 in CI and on the user's machine alike.
 """
 
@@ -262,6 +267,11 @@ def render(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text)
         log(f"rendered packages/{pkg}/PKGBUILD at {version}")
+
+    # The version this module just wrote, handed to the caller. Every later
+    # step needs it, and re-deriving it from the PKGBUILD gave the pipeline a
+    # second, untested reader of a file this one had already parsed.
+    log(f"ver={version}")
 
 
 def check(*, fetch: Fetch = http_fetch, out_root: Path = ROOT) -> int:
