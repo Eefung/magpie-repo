@@ -32,6 +32,9 @@ dir="${1:?usage: build-check.sh <package dir>}"
 pkgdir="$(cd "$dir" && pwd)"
 owner="$(stat -c %u "$pkgdir")"
 artifact=""
+# What the trap is allowed to keep. Empty until the run has proved the payload,
+# so a failure after the package file exists still leaves nothing behind.
+keep=""
 
 # A package file left by an earlier run must not be published later, so the
 # directory starts empty of them. The trap keeps that true for this run's own
@@ -43,7 +46,7 @@ cleanup() {
     local file
     for file in "$pkgdir"/*.pkg.tar.*; do
         [ -e "$file" ] || continue
-        if [ "$file" = "$artifact" ]; then continue; fi
+        if [ "$file" = "${keep:-}" ]; then continue; fi
         rm -f "$file"
     done
     # As root, makepkg ran as `builder`; hand the directory back to whoever
@@ -118,5 +121,6 @@ payload_reports "$artifact" "$pkgver" >/dev/null || exit 1
 echo "ok: $(basename "$artifact") reports $pkgver"
 
 # The last line is the one fact the caller needs, and the one thing the trap
-# above keeps for it.
+# above keeps for it: only a run that reaches this line leaves a file behind.
+keep="$artifact"
 echo "artifact=$artifact"
