@@ -44,5 +44,9 @@ _Avoid_: 历史版本、归档
 软件源 `x86_64/` 里的 `.pkg.tar.zst`，名字恒为 `pkgname-pkgver-pkgrel-arch`，由 makepkg 决定。排序、保留窗口、db 条目读的是同一个顺序，这三个判断都由 `scripts/lib/pkg.sh` 回答。
 _Avoid_: 安装包、构建产物
 
+**载荷核对**：
+包文件里那个程序是不是这次要发的版本：`usr/bin/` 下唯一的成员，跑它的 `--version`，第一个点分数字必须**等于** `pkgver`。由 `scripts/lib/pkg.sh` 回答，容器里用 `bsdtar`，离线测试用 GNU `tar`（`PAYLOAD_TAR` 是那个 seam）。
+_Avoid_: 冒烟测试、二进制检查
+
 **builder**：
 容器里跑 makepkg 的非特权账户——makepkg 拒绝以 root 运行。

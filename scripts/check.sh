@@ -110,8 +110,9 @@ fi
 heading "not covered here"
 cat <<'EOF'
 - build-check.sh's root branch (useradd / su / chown): it only exists in the
-  publish job's container, so a publish run proves it. build-repo.sh's window,
-  database and checksums run offline in tests/test_build_repo.py.
+  publish job's container, so a publish run proves it. Its 载荷核对 runs
+  offline in tests/test_pkg_sh.py, and build-repo.sh's window, database and
+  checksums run offline in tests/test_build_repo.py.
 EOF
 
 if [ "$failures" -ne 0 ]; then

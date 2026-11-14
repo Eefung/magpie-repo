@@ -12,8 +12,10 @@ tested here too instead of only inside a publish run.
 
 from __future__ import annotations
 
+import io
 import shlex
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -315,6 +317,76 @@ class PkglistTest(unittest.TestCase):
         result = self.read("pkglist_dirs")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no such file", result.stderr)
+
+
+class PayloadTest(unittest.TestCase):
+    """The judgement that can publish a wrong 版本, off the container's floor.
+
+    A fixture is a real `.pkg.tar` written by python's own tarfile and read by
+    GNU tar, which the test job has; the container's bsdtar is the other
+    adapter behind the same PAYLOAD_TAR seam.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name)
+
+    def artifact(self, *members: tuple[str, bytes]) -> Path:
+        path = self.dir / "magpie-bin-0.1.4147-1-x86_64.pkg.tar"
+        with tarfile.open(path, "w") as tar:
+            for name, data in members:
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                info.mode = 0o755
+                tar.addfile(info, io.BytesIO(data))
+        return path
+
+    def program(self, reported: str, name: str = "usr/bin/magpie") -> tuple[str, bytes]:
+        return (name, f"#!/bin/sh\necho 'magpie {reported}'\n".encode())
+
+    def reports(self, artifact: Path, expected: str) -> subprocess.CompletedProcess:
+        return call(
+            f"export PAYLOAD_TAR=tar; payload_reports {shlex.quote(str(artifact))} {expected}"
+        )
+
+    def member(self, artifact: Path) -> subprocess.CompletedProcess:
+        return call(f"export PAYLOAD_TAR=tar; payload_member {shlex.quote(str(artifact))}")
+
+    def test_the_member_is_the_package_itself(self):
+        artifact = self.artifact(self.program("0.1.4147"), ("usr/share/x", b"x"))
+        result = self.member(artifact)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "usr/bin/magpie\n")
+
+    def test_a_file_with_no_program_is_refused(self):
+        result = self.member(self.artifact(("usr/share/licenses/x", b"x")))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("installs nothing under usr/bin/", result.stderr)
+
+    def test_two_programs_are_refused_rather_than_picked_from(self):
+        result = self.member(
+            self.artifact(self.program("0.1.4147"), self.program("0.1.4147", "usr/bin/helper"))
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("installs 2 programs", result.stderr)
+
+    def test_the_reported_version_has_to_match(self):
+        result = self.reports(self.artifact(self.program("0.1.4147")), "0.1.4147")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "0.1.4147\n")
+
+    def test_a_longer_version_does_not_pass_for_a_shorter_one(self):
+        # The substring test this replaced would accept 0.1.412 for 0.1.41.
+        result = self.reports(self.artifact(self.program("magpie 0.1.412")), "0.1.41")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("reports '0.1.412', expected 0.1.41", result.stderr)
+
+    def test_a_program_that_will_not_run_is_refused(self):
+        artifact = self.artifact(("usr/bin/magpie", b"#!/bin/sh\nexit 3\n"))
+        result = self.reports(artifact, "0.1.4147")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("failed to run --version", result.stderr)
 
 
 if __name__ == "__main__":

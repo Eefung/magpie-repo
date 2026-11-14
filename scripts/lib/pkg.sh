@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The shell side of what a rendered package is: its identity, the names of the
-# package files built from it, and the one-line answers the producers hand back.
+# package files built from it, what the built file's payload reports, and the
+# one-line answers the producers hand back.
 #
 #   source "$(dirname "${BASH_SOURCE[0]}")/lib/pkg.sh"
 #   pkg_field packages/magpie-bin/PKGBUILD pkgver
@@ -123,4 +124,69 @@ pkgfiles_at() {
             "$pkgname-$pkgver-"*) printf '%s\n' "$file" ;;
         esac
     done < <(pkgfiles "$out" "$pkgname")
+}
+
+# payload_member <包文件> -- the one program it installs under usr/bin/.
+#
+# The templates decide where that program goes; this asks the built file rather
+# than restating the path as a regex the way build-check.sh used to. Exactly one
+# is accepted: two binaries is a package change someone has to look at, not a
+# value to pick the first of.
+payload_member() {
+    local artifact="$1" tar_bin="${PAYLOAD_TAR:-bsdtar}" listing
+    local -a members
+    [ -r "$artifact" ] || { echo "no such 包文件: $artifact" >&2; return 1; }
+    if ! listing="$("$tar_bin" -tf "$artifact")"; then
+        echo "cannot read $artifact with $tar_bin" >&2
+        return 1
+    fi
+    mapfile -t members < <(printf '%s\n' "$listing" | grep '^usr/bin/.' | grep -v '/$' || true)
+    if [ "${#members[@]}" -eq 0 ]; then
+        echo "$(basename "$artifact") installs nothing under usr/bin/" >&2
+        return 1
+    fi
+    if [ "${#members[@]}" -gt 1 ]; then
+        echo "$(basename "$artifact") installs ${#members[@]} programs under usr/bin/:" >&2
+        printf '  %s\n' "${members[@]}" >&2
+        return 1
+    fi
+    printf '%s\n' "${members[0]}"
+}
+
+# payload_reports <包文件> <expected pkgver> -- the version its program reports,
+# when that is <expected>.
+#
+# This is the judgement that can publish a wrong 版本: a binary taken from the
+# wrong asset, or out of a stale SRCDEST, still runs and still loads. The first
+# dotted number it prints is compared exactly -- a substring test would accept
+# 0.1.412 for 0.1.41 -- and the program's own output is quoted back on a
+# mismatch.
+#
+# PAYLOAD_TAR is the extractor, because the seam has two adapters: bsdtar in the
+# build container, GNU tar on the machine that runs the offline tests.
+payload_reports() {
+    local artifact="$1" expected="$2" tar_bin="${PAYLOAD_TAR:-bsdtar}"
+    local member tmp output reported
+    member="$(payload_member "$artifact")" || return 1
+    tmp="$(mktemp)" || return 1
+    if ! "$tar_bin" -xOf "$artifact" "$member" >"$tmp"; then
+        rm -f "$tmp"
+        echo "cannot extract $member from $(basename "$artifact")" >&2
+        return 1
+    fi
+    chmod +x "$tmp"
+    if ! output="$(timeout 90 "$tmp" --version 2>&1)"; then
+        echo "$(basename "$artifact") failed to run --version:" >&2
+        printf '%s\n' "$output" >&2
+        rm -f "$tmp"
+        return 1
+    fi
+    rm -f "$tmp"
+    reported="$(printf '%s\n' "$output" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)" || true
+    if [ "$reported" != "$expected" ]; then
+        echo "$(basename "$artifact") reports '${reported:-nothing}', expected $expected:" >&2
+        printf '%s\n' "$output" >&2
+        return 1
+    fi
+    printf '%s\n' "$reported"
 }
