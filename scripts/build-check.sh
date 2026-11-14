@@ -59,7 +59,25 @@ if [ "$(id -u)" -eq 0 ]; then
     fi
 fi
 
+pkgver="$(sed -n 's/^pkgver=//p' PKGBUILD | head -1 | tr -d "'\"")"
+[ -n "$pkgver" ] || { echo "no pkgver in $dir/PKGBUILD" >&2; exit 1; }
+
 bsdtar -xOf "$pkgfile" "$bin" > /tmp/magpie-build-check
 chmod +x /tmp/magpie-build-check
-timeout 90 /tmp/magpie-build-check --version
+# Running it only proves it loads. The point of the check is that the payload
+# still reports the version being packaged, so a binary that came out of the
+# wrong asset or a stale SRCDEST cannot pass. The first dotted number it prints
+# is compared exactly: a substring test would accept 0.1.412 for 0.1.41.
+if ! output="$(timeout 90 /tmp/magpie-build-check --version 2>&1)"; then
+    echo "the packaged binary failed to run --version:" >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+fi
 rm -f /tmp/magpie-build-check
+reported="$(printf '%s\n' "$output" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)" || true
+if [ "$reported" != "$pkgver" ]; then
+    echo "the packaged binary reports '${reported:-nothing}', expected $pkgver:" >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+fi
+echo "ok: $pkgfile reports $pkgver"
