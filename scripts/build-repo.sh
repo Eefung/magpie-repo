@@ -41,9 +41,12 @@ build_one() {
     fi
     cat "$log"
     # Not `local`: the caller moves the file this names.
-    built="$(sed -n 's/^artifact=//p' "$log")"
+    if ! built="$(line_field artifact "$log")"; then
+        rm -f "$log"
+        echo "building $dir failed" >&2
+        return 1
+    fi
     rm -f "$log"
-    [ -n "$built" ] || { echo "build-check printed no artifact= for $dir" >&2; return 1; }
 }
 
 for dir in "$@"; do

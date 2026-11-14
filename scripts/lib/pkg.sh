@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The shell side of what a rendered package is: its identity, and the names of
-# the package files built from it.
+# The shell side of what a rendered package is: its identity, the names of the
+# package files built from it, and the one-line answers the producers hand back.
 #
 #   source "$(dirname "${BASH_SOURCE[0]}")/lib/pkg.sh"
 #   pkg_field packages/magpie-bin/PKGBUILD pkgver
@@ -9,6 +9,34 @@
 # this is the one place the shell reads a PKGBUILD field. bump.py reads the same
 # file from the other side; it renders it, so it owns the writer's half. Any
 # third sed for `pkgver=` belongs here instead.
+#
+# The same goes for the frozen `name=value` lines: bump.py and build-check.sh
+# write them, and every reader goes through line_field rather than its own sed.
+
+# line_field <name> <file> -- the one `name=value` line a frozen producer wrote.
+#
+# A producer writes its line once, so two matches is a protocol break to report,
+# not a value to pick from. A missing line is a failure here too: what "absent"
+# means differs per line (an absent `bump=` is "nothing to do", an absent `ver=`
+# is a broken render), so the caller decides with `|| true` and a default rather
+# than this function guessing.
+line_field() {
+    local name="$1" file="$2" count value
+    [ -r "$file" ] || { echo "no such file: $file" >&2; return 1; }
+    count="$(grep -c "^${name}=" "$file" || true)"
+    count="${count:-0}"
+    if [ "$count" -eq 0 ]; then
+        echo "no ${name}= in ${file}" >&2
+        return 1
+    fi
+    if [ "$count" -gt 1 ]; then
+        echo "${count} ${name}= lines in ${file}" >&2
+        return 1
+    fi
+    value="$(sed -n "s/^${name}=//p" "$file")"
+    [ -n "$value" ] || { echo "empty ${name}= in ${file}" >&2; return 1; }
+    printf '%s\n' "$value"
+}
 
 # pkg_field <pkgbuild> <field> -- one field of a rendered PKGBUILD, unquoted.
 pkg_field() {
@@ -32,3 +60,4 @@ pkgfiles() {
     [ "${#files[@]}" -gt 0 ] || return 0
     printf '%s\n' "${files[@]}"
 }
+

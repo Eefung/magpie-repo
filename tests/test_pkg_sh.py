@@ -121,5 +121,51 @@ class PkgFieldTest(unittest.TestCase):
         self.assertIn("no such PKGBUILD", result.stderr)
 
 
+class LineFieldTest(unittest.TestCase):
+    """The one reader of the frozen `name=value` lines."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.log = Path(self._tmp.name) / "out.txt"
+
+    def field(self, name: str, body: str | None = None) -> subprocess.CompletedProcess:
+        if body is not None:
+            self.log.write_text(body)
+        return call(f"line_field {shlex.quote(name)} {shlex.quote(str(self.log))}")
+
+    def test_reads_the_line_the_producer_wrote(self):
+        result = self.field("ver", "rendered packages/magpie-bin at 0.1.2\nver=0.1.2\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "0.1.2\n")
+
+    def test_a_list_valued_line_survives_whole(self):
+        result = self.field("packages", "packages=packages/magpie-bin packages/magpie-cli-bin\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "packages/magpie-bin packages/magpie-cli-bin\n")
+
+    def test_two_matches_are_a_protocol_break_not_a_choice(self):
+        # Every producer writes its line once, so a second one is a bug worth
+        # stopping on rather than picking a winner from.
+        result = self.field("ver", "ver=1\nver=2\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("2 ver= lines", result.stderr)
+
+    def test_a_missing_line_fails_and_names_it(self):
+        result = self.field("ver", "upstream=0.1.2\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no ver=", result.stderr)
+
+    def test_an_empty_value_is_not_a_value(self):
+        result = self.field("ver", "ver=\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("empty ver=", result.stderr)
+
+    def test_a_missing_file_fails_loudly(self):
+        result = self.field("ver")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no such file", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

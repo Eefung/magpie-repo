@@ -67,6 +67,8 @@ jobs:
           WANTED: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          # shellcheck source=scripts/lib/pkg.sh
+          source scripts/lib/pkg.sh
           if [ -n "$WANTED" ]; then
             python3 scripts/bump.py --render --version "$WANTED" | tee /tmp/render.txt
           else
@@ -77,12 +79,8 @@ jobs:
           # Checking it here rather than letting an empty value flow on: the
           # failure would otherwise land after the gh-pages push, leaving a
           # half-published run the "publish first, commit last" order exists
-          # to prevent.
-          ver="$(sed -n 's/^ver=//p' /tmp/render.txt)"
-          if [ -z "$ver" ]; then
-            echo "the renderer printed no ver= line" >&2
-            exit 1
-          fi
+          # to prevent. line_field fails the step if the line is absent.
+          ver="$(line_field ver /tmp/render.txt)"
           echo "ver=$ver" >> "$GITHUB_ENV"
 
       - name: Build the packages and assemble the pacman repository
