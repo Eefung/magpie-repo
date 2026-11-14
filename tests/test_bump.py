@@ -445,8 +445,16 @@ class TemplateArchesTest(unittest.TestCase):
 
     TEMPLATE = (
         "arch=('x86_64' 'aarch64')\n"
+        "source_x86_64=('magpie-${pkgver}-amd64::https://example.invalid/magpie-linux-amd64')\n"
+        "source_aarch64=('magpie-${pkgver}-arm64::https://example.invalid/magpie-linux-arm64')\n"
         "sha256sums_x86_64=('{{sha_linux-amd64}}')\n"
         "sha256sums_aarch64=('{{sha_linux-arm64}}')\n"
+        "package() {\n"
+        "    case \"$CARCH\" in\n"
+        "        x86_64)  _suffix=amd64 ;;\n"
+        "        aarch64) _suffix=arm64 ;;\n"
+        "    esac\n"
+        "}\n"
     )
 
     def check(self, template: str) -> None:
@@ -473,6 +481,45 @@ class TemplateArchesTest(unittest.TestCase):
         with self.assertRaises(bump.BumpError) as caught:
             self.check(template)
         self.assertIn("sha256sums_aarch64", str(caught.exception))
+
+    def test_a_missing_source_array_is_named(self):
+        # This is the one the guard did not look at: the table gained an arch,
+        # the template's source_<arch> array was forgotten, and the render
+        # passed -- the build only failed later, inside the container.
+        template = self.TEMPLATE.replace(
+            "source_aarch64=('magpie-${pkgver}-arm64::https://example.invalid/magpie-linux-arm64')\n", ""
+        )
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(template)
+        self.assertIn("source_aarch64", str(caught.exception))
+
+    def test_a_missing_case_arm_is_named(self):
+        template = self.TEMPLATE.replace("        aarch64) _suffix=arm64 ;;\n", "")
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(template)
+        self.assertIn("no case arm for aarch64", str(caught.exception))
+
+    def test_a_case_arm_that_disagrees_with_the_table_is_named(self):
+        template = self.TEMPLATE.replace("_suffix=arm64", "_suffix=amd64")
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(template)
+        self.assertIn("maps aarch64 to amd64", str(caught.exception))
+
+    def test_a_case_arm_for_an_arch_the_table_never_heard_of_is_refused(self):
+        template = self.TEMPLATE.replace(
+            "        aarch64) _suffix=arm64 ;;\n",
+            "        aarch64) _suffix=arm64 ;;\n        riscv64) _suffix=riscv64 ;;\n",
+        )
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(template)
+        self.assertIn("riscv64", str(caught.exception))
+
+    def test_our_own_templates_pass(self):
+        # The synthetic template above is the shape; these are the files.
+        for pkg in bump.PACKAGES:
+            with self.subTest(pkg=pkg):
+                text = (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
+                bump.check_arches(pkg, text, bump.placeholders(text))
 
     def test_a_missing_placeholder_is_named(self):
         template = self.TEMPLATE.replace("'{{sha_linux-arm64}}'", "'" + "0" * 64 + "'")

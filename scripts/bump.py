@@ -52,6 +52,9 @@ UA = "magpie-repo-bump (+https://github.com/Eefung/magpie-repo)"
 VERSION_RE = re.compile(r"[0-9]+(?:\.[0-9]+)+")
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([\w-]+)\s*\}\}")
 ARCH_LINE_RE = re.compile(r"^arch=\(([^)]*)\)\s*$", re.M)
+# The package() case arm that turns $CARCH into the upstream asset suffix:
+#     x86_64)  _suffix=amd64 ;;
+CASE_ARM_RE = re.compile(r"^\s*(\w+)\)\s*_suffix=([\w-]+)\s*;;", re.M)
 
 DEFAULT_MAINTAINER = "Eefung <eefung@tuta.io>"
 
@@ -222,14 +225,26 @@ def template_arches(template: str) -> list[str]:
     return re.findall(r"'([^']+)'", match.group(1))
 
 
+def template_suffixes(template: str) -> dict[str, str]:
+    """The arch -> source suffix map a template's package() case block declares."""
+    return dict(CASE_ARM_RE.findall(template))
+
+
 def check_arches(pkg: str, template: str, names: Sequence[str]) -> None:
-    """Hold a template's arches to the table, before anything is fetched.
+    """Hold a template's every arch-shaped part to the table, before fetching.
 
     Every package targets the same repo arches; a package that does not is a
     change to ARCHES, not a template exception. Both directions bite, because
-    the arch a package claims and the checksum it carries have to be about the
-    same set: an arch added to the table with no template behind it, and a
-    template arch the table never heard of.
+    the arch a package claims and the checksum and source it carries have to be
+    about the same set: an arch added to the table with no template behind it,
+    and a template arch the table never heard of.
+
+    The table is restated in the template four ways, so all four are checked:
+    arch=(), source_{arch}=, sha256sums_{arch}= with its {{sha_suffix}}
+    placeholder, and the package() case block that turns $CARCH into the same
+    suffix. Only the first, third and fourth used to be held; a table entry
+    whose source_ array was forgotten rendered clean and failed inside the
+    container, as a makepkg error pointing at something else.
     """
     declared = template_arches(template)
     unknown = sorted(set(declared) - set(ARCHES))
@@ -241,12 +256,34 @@ def check_arches(pkg: str, template: str, names: Sequence[str]) -> None:
     missing = sorted(set(ARCHES) - set(declared))
     if missing:
         raise BumpError(f"{pkg}: the template leaves out {', '.join(missing)}")
+
+    suffixes = template_suffixes(template)
+    strangers = sorted(set(suffixes) - set(ARCHES))
+    if strangers:
+        raise BumpError(
+            f"{pkg}: package() has a case arm for {', '.join(strangers)}, "
+            "which the arch table never heard of"
+        )
+
     for arch, suffix in ARCHES.items():
+        if f"source_{arch}=" not in template:
+            raise BumpError(f"{pkg}: the template has no source_{arch}= array")
         if f"sha256sums_{arch}=" not in template:
             raise BumpError(f"{pkg}: the template has no sha256sums_{arch}= array")
         if f"sha_{suffix}" not in names:
             raise BumpError(
                 f"{pkg}: the template has no {{{{sha_{suffix}}}}} placeholder for {arch}"
+            )
+        # The case block is the fourth copy of the mapping, stripped of the
+        # `linux-` that only upstream's asset names carry.
+        want = suffix.removeprefix("linux-")
+        have = suffixes.get(arch)
+        if have is None:
+            raise BumpError(f"{pkg}: package() has no case arm for {arch}")
+        if have != want:
+            raise BumpError(
+                f"{pkg}: package() maps {arch} to {have}, "
+                f"but the arch table says {want} ({suffix})"
             )
 
 

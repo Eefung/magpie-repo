@@ -16,6 +16,10 @@ _Avoid_: 版本号、tag
 本仓库发布的包组成的集合——目录名，以及它们在上游资产名里的前缀。渲染、`--check` 与打包都从它取，`--packages` 是它唯一的出口：一行一个包，`package <相对仓库根的目录> <pkgname>`。目录给打包步骤，`pkgname` 给发布步骤，两者都不在 workflow 里出现第二次，也不从 PKGBUILD 回头再读。
 _Avoid_: 包列表、packages 变量
 
+**arch 表**：
+`ARCHES`——本仓库发布的 arch 与上游资产名后缀的对应（`x86_64` 对 `linux-amd64`）。模板里 `arch=()`、`source_`、`sha256sums_` 与 `package()` 的 `case` 四处都受它约束：加一个 arch 是改这张表，不是给某个模板开例外。
+_Avoid_: 架构列表、ARCHES 变量
+
 **渲染**：
 把 `templates/<包>.PKGBUILD.in` 与算好的校验和填成 `packages/<包>/PKGBUILD`。写盘之前的所有判定——版本合法、校验和齐备、模板与值互相对得上——都属于渲染。
 _Avoid_: 生成、打包
