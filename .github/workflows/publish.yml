@@ -104,7 +104,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           touch .nojekyll
           git add --all
-          git commit --quiet -m "repo: magpie $ver"
+          git commit --quiet -m "build(gh-pages): magpie $ver"
           # One squashed commit per release keeps the branch from growing a copy
           # of every 30 MB package it ever served.
           git push --quiet --force \
@@ -121,7 +121,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "PKGBUILDs are already at $ver, nothing to commit"
           else
-            git commit -m "upgpkg: magpie $ver"
+            git commit -m "build: magpie $ver"
             # A hand push landing mid-run would otherwise reject this one.
             git push || { git pull --rebase --autostash && git push; }
           fi
