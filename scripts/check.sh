@@ -120,6 +120,12 @@ cat <<'EOF'
   proves it. The rest of build-check.sh runs offline in
   tests/test_build_check.py -- build-repo.sh's window and database in
   tests/test_build_repo.py, the 载荷核对 in tests/test_pkg_sh.py.
+- the publish steps themselves -- seeding repo/ from the previous gh-pages
+  tree, clearing files this repository no longer writes, the force push, the
+  Release, the commit back to main: they only exist in the publish job, and a
+  real publish is what proves them. Deleting a producer is the case to watch:
+  the tree is cumulative, so the file outlives the writer that used to refresh
+  it.
 EOF
 
 if [ "$failures" -ne 0 ]; then
