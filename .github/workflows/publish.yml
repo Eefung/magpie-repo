@@ -111,21 +111,10 @@ jobs:
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:gh-pages
           echo "repository published: $PAGES_URL/x86_64"
 
-      - name: Commit the rendered PKGBUILDs
-        if: steps.upstream.outputs.bump == '1'
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages
-          if git diff --cached --quiet; then
-            echo "PKGBUILDs are already at $ver, nothing to commit"
-          else
-            git commit -m "build: magpie $ver"
-            # A hand push landing mid-run would otherwise reject this one.
-            git push || { git pull --rebase --autostash && git push; }
-          fi
-
+      # Before the commit, deliberately: a failure here leaves main at the old
+      # pkgver, so the next run retries. With the commit first, a failed
+      # release would leave main looking current and the release would never
+      # exist -- no later run would try again.
       - name: Publish the GitHub release
         if: steps.upstream.outputs.bump == '1'
         run: |
@@ -155,6 +144,23 @@ jobs:
             --notes-file /tmp/notes.md \
             repo/x86_64/*-"$ver"-1-x86_64.pkg.tar.zst /tmp/rel/SHA256SUMS
           echo "release created: $(gh release view "v$ver" --json url -q .url)"
+
+      # Last, so that every failure above is retried by the next run: main
+      # still carries the old pkgver until this step succeeds.
+      - name: Commit the rendered PKGBUILDs
+        if: steps.upstream.outputs.bump == '1'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages
+          if git diff --cached --quiet; then
+            echo "PKGBUILDs are already at $ver, nothing to commit"
+          else
+            git commit -m "build: magpie $ver"
+            # A hand push landing mid-run would otherwise reject this one.
+            git push || { git pull --rebase --autostash && git push; }
+          fi
 
       - name: Say what was skipped
         if: steps.upstream.outputs.bump != '1'
