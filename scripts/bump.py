@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Render the magpie PKGBUILDs for upstream's latest release.
 
 Upstream (yetone/magpie) ships dozens of builds a day; these are
