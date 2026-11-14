@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import shlex
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -22,6 +23,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 LIB = REPO / "scripts" / "lib" / "pkg.sh"
+
+sys.path.insert(0, str(REPO / "scripts"))
+
+import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
 
 
 def call(script: str) -> subprocess.CompletedProcess:
@@ -387,6 +392,48 @@ class PayloadTest(unittest.TestCase):
         result = self.reports(artifact, "0.1.4147")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("failed to run --version", result.stderr)
+
+
+class PkgverReadersTest(unittest.TestCase):
+    """One shape for pkgver, read from both runtimes.
+
+    `pkg_field` is the shell's reader and `bump.packaged_versions` is python's:
+    they answer the same question about the same file in two languages, because
+    the build container has no python3. Their agreement used to live in a
+    comment under a shell-only test, and their leniency had already drifted --
+    so one table is fed to both and both answers are compared.
+    """
+
+    SHAPES = [
+        "pkgver=0.1.4147\n",
+        "pkgver='0.1.4147'\n",
+        'pkgver="0.1.4147"\n',
+        # The first line wins on both sides.
+        "pkgver=0.1.1\npkgver=0.1.2\n",
+        # A hand edit that leaves a trailing space used to split them.
+        "pkgver=0.1.4147   \n",
+    ]
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def test_both_readers_give_the_same_answer(self):
+        for shape in self.SHAPES:
+            with self.subTest(shape=shape):
+                pkg = "magpie-bin"
+                pkgbuild = self.root / "packages" / pkg / "PKGBUILD"
+                pkgbuild.parent.mkdir(parents=True, exist_ok=True)
+                pkgbuild.write_text(shape)
+
+                from_python = bump.packaged_versions(bump.layout_for(self.root))[pkg]
+                from_shell = call(f"pkg_field {shlex.quote(str(pkgbuild))} pkgver")
+
+                self.assertEqual(from_shell.returncode, 0, from_shell.stderr)
+                # Exact, not stripped: a trailing space is one of the shapes,
+                # and stripping stdout here would hide the split it describes.
+                self.assertEqual(from_shell.stdout, from_python + "\n")
 
 
 if __name__ == "__main__":

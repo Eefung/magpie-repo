@@ -72,10 +72,19 @@ pkglist_dirs() { pkglist_field "$1" 1; }
 pkglist_names() { pkglist_field "$1" 2; }
 
 # pkg_field <pkgbuild> <field> -- one field of a rendered PKGBUILD, unquoted.
+#
+# The value is the first token of the first matching line, with a matching pair
+# of quotes taken off. That is the shape the renderer writes, and it is the
+# rule bump.py's own reader applies (`^pkgver=(\S+)` then strip), so the two
+# sides answer alike on a quoted value or a trailing space. A test feeds one
+# table of shapes to both; before that, their agreement was a comment.
 pkg_field() {
     local file="$1" name="$2" value
     [ -r "$file" ] || { echo "no such PKGBUILD: $file" >&2; return 1; }
-    value="$(sed -n "s/^${name}=//p" "$file" | head -1 | tr -d "'\"")"
+    value="$(sed -n "s/^${name}=//p" "$file" | head -1)"
+    read -r value _ <<<"$value" || true
+    value="${value%\'}"; value="${value#\'}"
+    value="${value%\"}"; value="${value#\"}"
     [ -n "$value" ] || { echo "no ${name}= in ${file}" >&2; return 1; }
     printf '%s\n' "$value"
 }
