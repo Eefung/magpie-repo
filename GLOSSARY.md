@@ -12,6 +12,10 @@ _Avoid_: 官方、源仓库
 上游 release 的 tag 去掉 `v`，形如 `0.1.3995`，只由数字和点组成。这是渲染前强制的那条不变量。
 _Avoid_: 版本号、tag
 
+**包清单**：
+本仓库发布的包组成的集合——目录名，以及它们在上游资产名里的前缀。渲染、`--check` 与打包都从它取，`--packages` 是它唯一的出口，所以包名不在 workflow 里出现第二次。
+_Avoid_: 包列表、packages 变量
+
 **渲染**：
 把 `templates/<包>.PKGBUILD.in` 与算好的校验和填成 `packages/<包>/PKGBUILD`。写盘之前的所有判定——版本合法、校验和齐备、模板与值互相对得上——都属于渲染。
 _Avoid_: 生成、打包
@@ -33,7 +37,7 @@ _Avoid_: 仓库（会和 git 仓库混淆）
 _Avoid_: 历史版本、归档
 
 **包文件**：
-软件源 `x86_64/` 里的 `.pkg.tar.zst`，名字恒为 `pkgname-pkgver-pkgrel-arch`，由 makepkg 决定。排序、保留窗口、db 条目读的是同一个顺序。
+软件源 `x86_64/` 里的 `.pkg.tar.zst`，名字恒为 `pkgname-pkgver-pkgrel-arch`，由 makepkg 决定。排序、保留窗口、db 条目读的是同一个顺序，这三个判断都由 `scripts/lib/pkg.sh` 回答。
 _Avoid_: 安装包、构建产物
 
 **builder**：

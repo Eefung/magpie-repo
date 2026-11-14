@@ -54,6 +54,8 @@ python3 -m http.server -d /tmp/magpie-repo 8765     # 再用临时 pacman.conf �
 gh workflow run publish.yml                         # 立刻发布，version 留空＝上游最新
 ```
 
+`--packages` 打印要打包的目录；workflow 从它取，包名不再写死在 YAML 里。包文件的名字（含 `pkgrel` 与 `arch`）只由 `scripts/lib/pkg.sh` 回答，发布步骤也不再自己拼 glob。
+
 ## 问题
 
 - **有 GPG 签名吗？**
