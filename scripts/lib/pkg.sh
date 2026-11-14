@@ -7,7 +7,8 @@
 #   pkg_field packages/magpie-bin/PKGBUILD pkgver
 #
 # Both build scripts run inside archlinux:base-devel, which ships no python3, so
-# this is the one place the shell reads a PKGBUILD field. bump.py reads the same
+# this is the one place the shell reads a PKGBUILD field -- and the one place it
+# reads what makepkg printed about one (srcinfo_depends). bump.py reads the same
 # file from the other side; it renders it, so it owns the writer's half. Any
 # third sed for `pkgver=` belongs here instead.
 #
@@ -87,6 +88,16 @@ pkg_field() {
     value="${value%\"}"; value="${value#\"}"
     [ -n "$value" ] || { echo "no ${name}= in ${file}" >&2; return 1; }
     printf '%s\n' "$value"
+}
+
+# srcinfo_depends <text> -- the depends a srcinfo block lists, one per line.
+#
+# makepkg --printsrcinfo is the package's own answer to "what does this build
+# need at runtime". build-check.sh used to write that answer to .SRCINFO only to
+# sed it back into memory, inside the root branch no offline test reaches; the
+# text is an argument now, so the read is testable and the file never exists.
+srcinfo_depends() {
+    printf '%s\n' "$1" | sed -n 's/^[[:space:]]*depends = //p'
 }
 
 # pkgfiles <repo dir> <pkgname> -- that package's files in that directory,

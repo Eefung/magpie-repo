@@ -430,6 +430,41 @@ class FrozenLineJoinTest(unittest.TestCase):
         )
 
 
+class SrcinfoDependsTest(unittest.TestCase):
+    """The depends a PKGBUILD declares, read from what makepkg printed.
+
+    build-check.sh used to write `.SRCINFO` to disk only to sed it back into
+    memory, inside the root branch no offline test reaches. The read lives in
+    pkg.sh now, so the fixture is a string and the temp file is gone.
+    """
+
+    def depends(self, text: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "srcinfo"
+            path.write_text(text)
+            result = call(f"srcinfo_depends \"$(cat {shlex.quote(str(path))})\"")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.splitlines()
+
+    def test_reads_every_depends_line_in_order(self):
+        text = "pkgbase = magpie-bin\n\tpkgdesc = d\n\tdepends = glib2\n\tdepends = gtk3\n"
+        self.assertEqual(self.depends(text), ["glib2", "gtk3"])
+
+    def test_does_not_pick_up_the_other_depend_arrays(self):
+        # makedepends/checkdepends/optdepends are not runtime depends, and
+        # installing them would be a different (slower, wrong) build.
+        text = (
+            "\tmakedepends = go\n"
+            "\tcheckdepends = pytest\n"
+            "\toptdepends = x: y\n"
+            "\tdepends = glib2\n"
+        )
+        self.assertEqual(self.depends(text), ["glib2"])
+
+    def test_no_depends_is_empty_not_an_error(self):
+        self.assertEqual(self.depends("pkgbase = magpie-bin\n"), [])
+
+
 class PayloadTest(unittest.TestCase):
     """The judgement that can publish a wrong 版本, off the container's floor.
 

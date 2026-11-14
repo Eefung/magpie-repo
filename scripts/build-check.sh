@@ -13,9 +13,10 @@
 # check that the dependency list is complete.
 #
 # It owns its directory from start to finish. Whatever the build leaves behind
-# (src/, pkg/, .srcdest/, .SRCINFO) is removed on every exit path, and the one
-# thing that survives is the package file. What the caller gets instead of the
-# directory's shape is three frozen lines, the last one always last:
+# (src/, pkg/, .srcdest/) is removed on every exit path, and the one thing that
+# survives is the package file. makepkg's srcinfo is kept in a variable, never
+# written to disk. What the caller gets instead of the directory's shape is
+# three frozen lines, the last one always last:
 #
 #   pkgname=<pkgname>
 #   pkgver=<pkgver>
@@ -46,7 +47,7 @@ keep=""
 rm -f "$pkgdir"/*.pkg.tar.*
 
 cleanup() {
-    rm -rf "$pkgdir/src" "$pkgdir/pkg" "$pkgdir/.srcdest" "$pkgdir/.SRCINFO"
+    rm -rf "$pkgdir/src" "$pkgdir/pkg" "$pkgdir/.srcdest"
     local file
     for file in "$pkgdir"/*.pkg.tar.*; do
         [ -e "$file" ] || continue
@@ -86,7 +87,10 @@ run() {
 cd "$pkgdir"
 
 run makepkg --noconfirm -f --nodeps --nocheck
-run makepkg --printsrcinfo > .SRCINFO
+# What the package needs at runtime, asked once and kept in a variable: writing
+# it to .SRCINFO only to read it back would be a second copy of a value makepkg
+# just printed. The read itself lives in pkg.sh, where the offline tests reach it.
+srcinfo="$(run makepkg --printsrcinfo)"
 
 # makepkg is the one that knows what the file is called (pkgname-pkgver-pkgrel-
 # arch); ask it, rather than guessing by timestamp or by globbing.
@@ -106,7 +110,7 @@ echo "ok: $(basename "$artifact") ships $member"
 # without its runtime dependencies; installing them from the PKGBUILD is the
 # point of the check, not an inconvenience it works around.
 if [ "$(id -u)" -eq 0 ]; then
-    mapfile -t deps < <(sed -n 's/^[[:space:]]*depends = //p' .SRCINFO)
+    mapfile -t deps < <(srcinfo_depends "$srcinfo")
     if [ "${#deps[@]}" -gt 0 ]; then
         echo "installing the package's own depends: ${deps[*]}"
         pacman -Syu --noconfirm --needed "${deps[@]}" >/dev/null
