@@ -39,10 +39,14 @@ class InventoryAgreementTest(unittest.TestCase):
         self.assertEqual(on_disk, set(bump.PACKAGES))
 
     def test_the_workflow_does_not_name_packages(self):
-        # The build step reads the directories from the inventory, so a name
-        # typed back into the YAML is the second list coming back.
+        # The 包清单 is the only place a package name is spelled: the build
+        # step takes the directories from it, the release step takes the names.
+        # The old assertion only caught the `packages/<name>` spelling, so the
+        # install lines in the release notes -- a bare `pacman -S magpie-bin` --
+        # went unseen. Reading the inventory instead of one hardcoded string
+        # means a third package is held to this too.
         workflow = (REPO / ".github" / "workflows" / "publish.yml").read_text()
-        self.assertNotIn("packages/magpie", workflow)
+        self.assertEqual([pkg for pkg in bump.PACKAGES if pkg in workflow], [])
 
 
 class PackageListTest(unittest.TestCase):

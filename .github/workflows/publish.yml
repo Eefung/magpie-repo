@@ -154,24 +154,26 @@ jobs:
             echo "v$ver already has a release"
             exit 0
           fi
+          # Both the pkgname and the file names come from pkg.sh -- the pkgname
+          # from the 包清单, the names from the pkgname-pkgver-pkgrel-arch rule.
+          # Read once, before anything uses it: the install lines below are
+          # generated from it, so this file never spells a package name out.
+          mapfile -t pkgnames < <(pkglist_names /tmp/packages.txt)
           cat > /tmp/notes.md <<EOF
           magpie $ver 的 x86_64 pacman 软件包。
 
           仓库：$PAGES_URL/x86_64
 
-              sudo pacman -Syu                  # 先同步所有源（含 [magpie]），别单独 -Sy
-              sudo pacman -S magpie-bin        # 桌面版
-              sudo pacman -S magpie-cli-bin    # 终端版
+              # 先同步所有源（含 [magpie]），别单独 -Sy
+              sudo pacman -Syu
+              # 桌面版与终端版，可分开装
+              sudo pacman -S ${pkgnames[*]}
 
           校验和见下方的 SHA256SUMS；上游版本说明见
           https://github.com/yetone/magpie-releases/releases/tag/v$ver
           EOF
           # Only this version: repo/x86_64 also carries the previous build for
-          # the retention window, and those do not belong in this release. Both
-          # the pkgname and the file names come from pkg.sh -- the pkgname from
-          # the 包清单, the names from the pkgname-pkgver-pkgrel-arch rule -- so
-          # this file never spells pkgrel or arch out again.
-          mapfile -t pkgnames < <(pkglist_names /tmp/packages.txt)
+          # the retention window, and those do not belong in this release.
           assets=()
           for pkgname in "${pkgnames[@]}"; do
             mapfile -t -O "${#assets[@]}" assets < <(pkgfiles_at repo/x86_64 "$pkgname" "$ver")
