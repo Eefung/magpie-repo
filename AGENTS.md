@@ -27,6 +27,7 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 | `docs` | README、GLOSSARY、ADR、调研笔记 |
 | `refactor` | 不改行为的重排 |
 | `build` | 发布产物与版本号——渲染出的 PKGBUILD、发布流程里碰版本的地方。原来的 `upgpkg:` 一律用这个 |
-| `chore` | 配置、工具、CI 的杂项 |
+| `ci` | workflow 与发布流水线本身 |
+| `chore` | 配置、工具、依赖 |
 
 一次提交只做一件事：`build` 的渲染结果与流程改动分开提交，否则回滚时会把版本号一起带走。
