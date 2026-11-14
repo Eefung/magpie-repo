@@ -19,6 +19,7 @@ import urllib.error
 from email.message import Message
 from pathlib import Path
 from typing import Mapping
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
@@ -415,6 +416,59 @@ class CheckTest(unittest.TestCase):
                     "behind=magpie-cli-bin",
                 ],
             )
+
+
+class TemplateArchesTest(unittest.TestCase):
+    """A template's arches are held to the table before anything is fetched."""
+
+    TEMPLATE = (
+        "arch=('x86_64' 'aarch64')\n"
+        "sha256sums_x86_64=('{{sha_linux-amd64}}')\n"
+        "sha256sums_aarch64=('{{sha_linux-arm64}}')\n"
+    )
+
+    def check(self, template: str) -> None:
+        bump.check_arches("magpie-bin", template, bump.placeholders(template))
+
+    def test_a_template_that_agrees_with_the_table_passes(self):
+        self.check(self.TEMPLATE)
+
+    def test_an_arch_the_table_gained_names_the_template_that_lags(self):
+        with mock.patch.dict(bump.ARCHES, {"riscv64": "linux-riscv64"}):
+            with self.assertRaises(bump.BumpError) as caught:
+                self.check(self.TEMPLATE)
+        self.assertIn("magpie-bin", str(caught.exception))
+        self.assertIn("riscv64", str(caught.exception))
+
+    def test_a_template_arch_the_table_never_heard_of_is_refused(self):
+        template = self.TEMPLATE.replace("'aarch64')", "'aarch64' 'riscv64')")
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(template)
+        self.assertIn("riscv64", str(caught.exception))
+
+    def test_a_missing_checksum_array_is_named(self):
+        template = self.TEMPLATE.replace("sha256sums_aarch64=('{{sha_linux-arm64}}')\n", "")
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(template)
+        self.assertIn("sha256sums_aarch64", str(caught.exception))
+
+    def test_a_missing_placeholder_is_named(self):
+        template = self.TEMPLATE.replace("'{{sha_linux-arm64}}'", "'" + "0" * 64 + "'")
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(template)
+        self.assertIn("sha_linux-arm64", str(caught.exception))
+
+    def test_render_checks_the_arches_before_the_network(self):
+        # The table gaining an arch means this repository's template lags, not
+        # that upstream's release is missing an asset -- so say so without
+        # fetching anything.
+        with mock.patch.dict(bump.ARCHES, {"riscv64": "linux-riscv64"}):
+            with tempfile.TemporaryDirectory() as tmp:
+                fetch = FetchSpy({})
+                with self.assertRaises(bump.BumpError) as caught:
+                    bump.render("0.1.2", layout=layout_at(Path(tmp)), fetch=fetch)
+        self.assertIn("riscv64", str(caught.exception))
+        self.assertEqual(fetch.urls, [])
 
 
 if __name__ == "__main__":

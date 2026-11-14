@@ -51,6 +51,7 @@ ICON_URL = "https://usemagpie.ai/img/icon-256.png"
 UA = "magpie-repo-bump (+https://github.com/Eefung/magpie-repo)"
 VERSION_RE = re.compile(r"[0-9]+(?:\.[0-9]+)+")
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([\w-]+)\s*\}\}")
+ARCH_LINE_RE = re.compile(r"^arch=\(([^)]*)\)\s*$", re.M)
 
 DEFAULT_MAINTAINER = "Eefung <eefung@tuta.io>"
 
@@ -60,7 +61,13 @@ PACKAGES = {
     "magpie-cli-bin": "magpie-cli",
 }
 
-ARCH_ASSETS = ("linux-amd64", "linux-arm64")
+# repo arch -> the suffix upstream puts in its asset names (magpie-linux-amd64).
+# One table: each template's arch=() and its sha_* placeholders are held to it,
+# so an arch cannot be added on one side only.
+ARCHES = {
+    "x86_64": "linux-amd64",
+    "aarch64": "linux-arm64",
+}
 
 
 @dataclass(frozen=True)
@@ -196,6 +203,42 @@ def placeholders(template: str) -> list[str]:
     return list(dict.fromkeys(PLACEHOLDER_RE.findall(template)))
 
 
+def template_arches(template: str) -> list[str]:
+    """The repo arches a template declares in its arch=() line."""
+    match = ARCH_LINE_RE.search(template)
+    if match is None:
+        raise BumpError("the template declares no arch=()")
+    return re.findall(r"'([^']+)'", match.group(1))
+
+
+def check_arches(pkg: str, template: str, names: Sequence[str]) -> None:
+    """Hold a template's arches to the table, before anything is fetched.
+
+    Every package targets the same repo arches; a package that does not is a
+    change to ARCHES, not a template exception. Both directions bite, because
+    the arch a package claims and the checksum it carries have to be about the
+    same set: an arch added to the table with no template behind it, and a
+    template arch the table never heard of.
+    """
+    declared = template_arches(template)
+    unknown = sorted(set(declared) - set(ARCHES))
+    if unknown:
+        raise BumpError(
+            f"{pkg}: the template declares {', '.join(unknown)}, "
+            "which the arch table knows no upstream suffix for"
+        )
+    missing = sorted(set(ARCHES) - set(declared))
+    if missing:
+        raise BumpError(f"{pkg}: the template leaves out {', '.join(missing)}")
+    for arch, suffix in ARCHES.items():
+        if f"sha256sums_{arch}=" not in template:
+            raise BumpError(f"{pkg}: the template has no sha256sums_{arch}= array")
+        if f"sha_{suffix}" not in names:
+            raise BumpError(
+                f"{pkg}: the template has no {{{{sha_{suffix}}}}} placeholder for {arch}"
+            )
+
+
 def render_pkgbuild(template: str, values: Mapping[str, str]) -> str:
     """Fill a template, holding both sides to the same contract.
 
@@ -268,8 +311,9 @@ def render(
     if not VERSION_RE.fullmatch(version):
         raise BumpError(f"refusing to render pkgver={version!r}: expected digits separated by dots")
 
-    sums = release_sums(version, fetch=fetch)
-
+    # Read every template and hold it to the arch table before the network is
+    # asked anything: a template that lags the table is this repository's
+    # problem, and it should not be reported as "the release has no such asset".
     plans = []
     for pkg, prefix in layout.inventory.items():
         path = layout.templates / f"{pkg}.PKGBUILD.in"
@@ -279,7 +323,11 @@ def render(
             # A layout is handed in now, so it can point at a tree that has no
             # template for a package in its own inventory. Say which.
             raise BumpError(f"no template for {pkg}: {path} ({exc.strerror})") from exc
-        plans.append((pkg, prefix, template, placeholders(template)))
+        names = placeholders(template)
+        check_arches(pkg, template, names)
+        plans.append((pkg, prefix, template, names))
+
+    sums = release_sums(version, fetch=fetch)
 
     # Fetch by what the templates ask for, not by what upstream offers: a
     # package that ships no icon must not be held up by an icon it never
@@ -312,14 +360,11 @@ def render(
             name: value for name, value in supplied.items()
             if name in names and value is not None
         }
-        for arch in ARCH_ASSETS:
-            key = f"sha_{arch}"
-            if key not in names:
-                continue
-            asset = f"{prefix}-{arch}"
+        for suffix in ARCHES.values():
+            asset = f"{prefix}-{suffix}"
             if asset not in sums:
                 raise BumpError(f"{pkg}: the release has no {asset}")
-            values[key] = sums[asset]
+            values[f"sha_{suffix}"] = sums[asset]
         rendered.append((pkg, render_pkgbuild(template, values)))
 
     for pkg, text in rendered:
