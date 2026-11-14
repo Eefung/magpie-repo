@@ -347,6 +347,22 @@ class CheckTest(unittest.TestCase):
                 ],
             )
 
+    def test_one_missing_pkgbuild_is_still_behind(self):
+        # The other package is current, so only the absent one is behind; a
+        # reader that walked the rendered packages would see nothing to do.
+        fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = staged_root(Path(tmp), {"magpie-bin": "0.1.10"})
+            self.assertEqual(
+                self.lines(fetch, root),
+                [
+                    "upstream=0.1.10",
+                    "packaged magpie-bin=0.1.10",
+                    "bump=1",
+                    "behind=magpie-cli-bin",
+                ],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

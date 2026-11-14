@@ -273,9 +273,10 @@ def check(*, fetch: Fetch = http_fetch, out_root: Path = ROOT) -> int:
 
     if not packaged:
         log("warning: no rendered PKGBUILD yet")
-        behind = sorted(PACKAGES)
-    else:
-        behind = sorted(pkg for pkg, ver in packaged.items() if ver != upstream)
+    # Walk PACKAGES, not what happens to be on disk: a package whose PKGBUILD
+    # was never rendered, or was lost, is behind just as much as a stale one.
+    # Reading `packaged` alone would report the tree current forever.
+    behind = sorted(pkg for pkg in PACKAGES if packaged.get(pkg) != upstream)
     log(f"bump={'1' if behind else '0'}")
     if behind:
         log("behind=" + " ".join(behind))
