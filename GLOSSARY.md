@@ -17,7 +17,7 @@ _Avoid_: 版本号、tag
 _Avoid_: 包列表、packages 变量
 
 **arch 表**：
-`ARCHES`——本仓库发布的 arch 与上游资产名后缀的对应（`x86_64` 对 `linux-amd64`）。模板里 `arch=()`、`source_`、`sha256sums_` 与 `package()` 的 `case` 四处都受它约束：加一个 arch 是改这张表，不是给某个模板开例外。
+`ARCHES`——本仓库发布的 arch 与上游资产名后缀的对应（`x86_64` 对 `linux-amd64`）。模板里 `arch=()`、`source_<arch>=`（文件名后缀与下载 URL 两处）、`sha256sums_<arch>=` 与 `package()` 的 `case` 四处都受它约束：加一个 arch 是改这张表，不是给某个模板开例外。渲染前的 `check_arches` 逐条比，不是查子串。
 _Avoid_: 架构列表、ARCHES 变量
 
 **渲染**：

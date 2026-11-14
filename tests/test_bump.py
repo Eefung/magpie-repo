@@ -549,6 +549,40 @@ class TemplateArchesTest(unittest.TestCase):
             self.check(template)
         self.assertIn("source_aarch64", str(caught.exception))
 
+    def test_a_source_url_for_another_arch_is_named(self):
+        # The URL is the restatement nobody read: an aarch64 entry pointing at
+        # the amd64 asset rendered clean, and the mistake only surfaced as a
+        # checksum mismatch inside the build container.
+        template = self.TEMPLATE.replace("magpie-linux-arm64", "magpie-linux-amd64")
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(template)
+        self.assertIn("source_aarch64", str(caught.exception))
+        self.assertIn("linux-arm64", str(caught.exception))
+
+    def test_a_source_file_name_for_another_arch_is_named(self):
+        template = self.TEMPLATE.replace("-arm64::", "-amd64::")
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(template)
+        self.assertIn("source_aarch64", str(caught.exception))
+        self.assertIn("amd64", str(caught.exception))
+
+    def test_a_source_array_that_is_only_a_comment_is_named(self):
+        # The guard used to be a substring test, so a template with the array
+        # commented out still rendered.
+        template = self.TEMPLATE.replace("source_aarch64=(", "# retired source_aarch64=(")
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(template)
+        self.assertIn("source_aarch64", str(caught.exception))
+
+    def test_the_real_template_is_read_past_its_first_line(self):
+        # magpie-bin spreads source_x86_64 over several lines; the guard has to
+        # read the array, not just find the key.
+        text = (REPO / "templates" / "magpie-bin.PKGBUILD.in").read_text()
+        mutated = text.replace("magpie-linux-arm64", "magpie-linux-amd64")
+        with self.assertRaises(bump.BumpError) as caught:
+            bump.check_arches("magpie-bin", mutated, bump.ARCHES)
+        self.assertIn("source_aarch64", str(caught.exception))
+
     def test_a_missing_case_arm_is_named(self):
         template = self.TEMPLATE.replace("        aarch64) _suffix=arm64 ;;\n", "")
         with self.assertRaises(bump.BumpError) as caught:

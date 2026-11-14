@@ -56,6 +56,10 @@ ARCH_LINE_RE = re.compile(r"^arch=\(([^)]*)\)\s*$", re.M)
 # The package() case arm that turns $CARCH into the upstream asset suffix:
 #     x86_64)  _suffix=amd64 ;;
 CASE_ARM_RE = re.compile(r"^\s*(\w+)\)\s*_suffix=([\w-]+)\s*;;", re.M)
+# A source_<arch>=() array, anchored at the line start so a commented-out
+# array is not mistaken for a live one. Both shapes the templates use land
+# here: one entry per line, and the whole array on one line.
+SOURCE_ARRAY_RE = r"^source_{arch}=\((.*?)\)\s*$"
 
 DEFAULT_MAINTAINER = "Eefung <eefung@tuta.io>"
 
@@ -239,6 +243,30 @@ def template_suffixes(template: str) -> dict[str, str]:
     return dict(CASE_ARM_RE.findall(template))
 
 
+def source_entries(template: str, arch: str) -> list[tuple[str, str]] | None:
+    """The (file name, url) pairs a template's source_<arch>=() array carries.
+
+    None means the template has no such array at all. The array is read rather
+    than probed for with a substring: `source_aarch64=` appears in a comment as
+    readily as in the file, and the two facts inside the array -- what the file
+    is called and where it comes from -- are both restatements of the arch
+    table.
+    """
+    match = re.search(
+        SOURCE_ARRAY_RE.format(arch=re.escape(arch)), template, re.S | re.M
+    )
+    if match is None:
+        return None
+    entries = []
+    for line in match.group(1).splitlines():
+        line = line.strip().rstrip(",").strip()
+        if not line:
+            continue
+        name, _, url = line.partition("::")
+        entries.append((name.strip().strip("'\""), url.strip().strip("'\"")))
+    return entries
+
+
 def check_pkgname(pkg: str, template: str) -> None:
     """The template's literal pkgname= is the inventory key it is filed under.
 
@@ -269,12 +297,14 @@ def check_arches(pkg: str, template: str, arches: Mapping[str, str]) -> None:
     have to be about the same set: an arch added to the table with no template
     behind it, and a template arch the table never heard of.
 
-    The table is restated in the template four ways, so all four are checked:
-    arch=(), source_{arch}=, sha256sums_{arch}= with its {{sha_suffix}}
-    placeholder, and the package() case block that turns $CARCH into the same
-    suffix. Only the first, third and fourth used to be held; a table entry
-    whose source_ array was forgotten rendered clean and failed inside the
-    container, as a makepkg error pointing at something else.
+    The mapping is restated in the template five ways, so all five are checked:
+    arch=(), the source_<arch>= array (its key, the file name it gives the
+    download, and the asset its URL ends in), sha256sums_<arch>= with its
+    {{sha_suffix}} placeholder, and the package() case block that turns $CARCH
+    into the same suffix. The source array used to be probed for with a
+    substring, so a commented-out array passed and an aarch64 entry pointing at
+    the amd64 asset rendered clean -- it took a checksum mismatch inside the
+    container to say so.
 
     The template's placeholders are read here rather than handed in: they follow
     from the template, so asking the caller for them was an interface that could
@@ -301,17 +331,30 @@ def check_arches(pkg: str, template: str, arches: Mapping[str, str]) -> None:
         )
 
     for arch, suffix in arches.items():
-        if f"source_{arch}=" not in template:
+        entries = source_entries(template, arch)
+        if entries is None:
             raise BumpError(f"{pkg}: the template has no source_{arch}= array")
+        # The case block is the fifth copy of the mapping, stripped of the
+        # `linux-` that only upstream's asset names carry. The source array's
+        # file name is stripped the same way.
+        want = suffix.removeprefix("linux-")
+        for name, url in entries:
+            if not name.endswith(want):
+                raise BumpError(
+                    f"{pkg}: source_{arch} names {name!r}, "
+                    f"which does not end in {want!r} ({suffix})"
+                )
+            if not url.endswith(suffix):
+                raise BumpError(
+                    f"{pkg}: source_{arch} downloads {url}, "
+                    f"which is not a {suffix} asset"
+                )
         if f"sha256sums_{arch}=" not in template:
             raise BumpError(f"{pkg}: the template has no sha256sums_{arch}= array")
         if f"sha_{suffix}" not in names:
             raise BumpError(
                 f"{pkg}: the template has no {{{{sha_{suffix}}}}} placeholder for {arch}"
             )
-        # The case block is the fourth copy of the mapping, stripped of the
-        # `linux-` that only upstream's asset names carry.
-        want = suffix.removeprefix("linux-")
         have = suffixes.get(arch)
         if have is None:
             raise BumpError(f"{pkg}: package() has no case arm for {arch}")
