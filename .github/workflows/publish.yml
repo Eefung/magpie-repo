@@ -127,6 +127,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           touch .nojekyll
+          # The tree was seeded from the previous gh-pages build, so a file this
+          # repository no longer writes would be carried forward forever, frozen
+          # at the version that last wrote it. SHA256SUMS was such a file: the
+          # release step owns the checksums, built from that 版本's 包文件.
+          rm -f SHA256SUMS
           git add --all
           git commit --quiet -m "build(gh-pages): magpie $ver"
           # One squashed commit per release keeps the branch from growing a copy
