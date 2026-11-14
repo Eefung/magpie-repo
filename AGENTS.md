@@ -18,7 +18,7 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 
 ## 检查
 
-推送前跑 `scripts/check.sh`：它就是 CI `test` job 的全部闸门（离线单测、shellcheck、actionlint），两个 linter 由脚本按固定版本下到 `~/.cache/magpie-repo`，所以本机没装也跑得动、且与 runner 同版本。它跑不到的是打包——`build-check.sh` 的 root 分支只在 publish 的容器里存在，那一支由发布运行证明。
+推送前跑 `scripts/check.sh`：它就是 CI `test` job 的全部闸门（离线单测、shellcheck、actionlint），两个 linter 由脚本按固定版本下到 `~/.cache/magpie-repo`，所以本机没装也跑得动、且与 runner 同版本。分段提交时每个中间态也跑一次：它不到一秒，而每次 push 都会真的跑流水线。它跑不到的只有 `build-check.sh` 的 root 分支（useradd / su / chown），那一支只在 publish 的容器里存在，由发布运行证明。
 
 `publish.yml` 的 `paths` 含 `scripts/**`、`tests/**`、`templates/**`，所以这些改动推送后会触发一次 publish，可能直接发一版。这类提交单独推，一次提交只做一件事。
 
