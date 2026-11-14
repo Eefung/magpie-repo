@@ -35,6 +35,7 @@ import re
 import sys
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Protocol, Sequence
 
@@ -48,7 +49,7 @@ UA = "magpie-repo-bump (+https://github.com/Eefung/magpie-repo)"
 VERSION_RE = re.compile(r"[0-9]+(?:\.[0-9]+)+")
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([\w-]+)\s*\}\}")
 
-MAINTAINER = os.environ.get("MAINTAINER", "Eefung <eefung@tuta.io>")
+DEFAULT_MAINTAINER = "Eefung <eefung@tuta.io>"
 
 # package dir -> upstream asset prefix
 PACKAGES = {
@@ -57,6 +58,37 @@ PACKAGES = {
 }
 
 ARCH_ASSETS = ("linux-amd64", "linux-arm64")
+
+
+@dataclass(frozen=True)
+class Layout:
+    """What the renderer needs to know about this repository, handed in.
+
+    Every one of these was reachable from inside render() as a module global,
+    so a caller had to learn four globals to use two parameters, and a test
+    could only point the render at a temporary tree by monkeypatching the
+    module. The maintainer is read from the environment in main(), when the
+    layout is built -- not when this file is imported.
+    """
+
+    templates: Path
+    packages_dir: Path
+    inventory: Mapping[str, str]
+    maintainer: str
+
+
+def layout_for(
+    root: Path = ROOT,
+    *,
+    maintainer: str = DEFAULT_MAINTAINER,
+    inventory: Mapping[str, str] | None = None,
+) -> Layout:
+    return Layout(
+        templates=root / "templates",
+        packages_dir=root / "packages",
+        inventory=dict(PACKAGES if inventory is None else inventory),
+        maintainer=maintainer,
+    )
 
 
 class BumpError(Exception):
@@ -191,10 +223,10 @@ def render_pkgbuild(template: str, values: Mapping[str, str]) -> str:
     return rendered
 
 
-def packaged_versions(out_root: Path = ROOT) -> dict[str, str]:
+def packaged_versions(layout: Layout) -> dict[str, str]:
     found = {}
-    for pkg in PACKAGES:
-        pkgbuild = out_root / "packages" / pkg / "PKGBUILD"
+    for pkg in layout.inventory:
+        pkgbuild = layout.packages_dir / pkg / "PKGBUILD"
         if not pkgbuild.exists():
             continue
         match = re.search(r"^pkgver=(\S+)", pkgbuild.read_text(), re.M)
@@ -203,10 +235,18 @@ def packaged_versions(out_root: Path = ROOT) -> dict[str, str]:
     return found
 
 
+def shown(path: Path) -> str:
+    """A path the way the reader would name it: relative to where they ran."""
+    try:
+        return str(path.relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
+
+
 def render(
     version: str,
     *,
-    out_root: Path = ROOT,
+    layout: Layout,
     fetch: Fetch = http_fetch,
 ) -> None:
     # The version lands verbatim in pkgver= (and in the source URLs); a tag with
@@ -217,8 +257,14 @@ def render(
     sums = release_sums(version, fetch=fetch)
 
     plans = []
-    for pkg, prefix in PACKAGES.items():
-        template = (ROOT / "templates" / f"{pkg}.PKGBUILD.in").read_text()
+    for pkg, prefix in layout.inventory.items():
+        path = layout.templates / f"{pkg}.PKGBUILD.in"
+        try:
+            template = path.read_text()
+        except OSError as exc:
+            # A layout is handed in now, so it can point at a tree that has no
+            # template for a package in its own inventory. Say which.
+            raise BumpError(f"no template for {pkg}: {path} ({exc.strerror})") from exc
         plans.append((pkg, prefix, template, placeholders(template)))
 
     # Fetch by what the templates ask for, not by what upstream offers: a
@@ -244,7 +290,7 @@ def render(
     for pkg, prefix, template, names in plans:
         supplied = {
             "pkgver": version,
-            "maintainer": MAINTAINER,
+            "maintainer": layout.maintainer,
             "sha_license": sha256_of(license_bytes) if license_bytes is not None else None,
             "sha_icon": sha256_of(icon_bytes) if icon_bytes is not None else None,
         }
@@ -263,10 +309,10 @@ def render(
         rendered.append((pkg, render_pkgbuild(template, values)))
 
     for pkg, text in rendered:
-        out = out_root / "packages" / pkg / "PKGBUILD"
+        out = layout.packages_dir / pkg / "PKGBUILD"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text)
-        log(f"rendered packages/{pkg}/PKGBUILD at {version}")
+        log(f"rendered {shown(out)} at {version}")
 
     # The version this module just wrote, handed to the caller. Every later
     # step needs it, and re-deriving it from the PKGBUILD gave the pipeline a
@@ -274,19 +320,20 @@ def render(
     log(f"ver={version}")
 
 
-def check(*, fetch: Fetch = http_fetch, out_root: Path = ROOT) -> int:
+def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     upstream = latest_version(fetch=fetch)
-    packaged = packaged_versions(out_root)
+    packaged = packaged_versions(layout)
     log(f"upstream={upstream}")
     for pkg, ver in sorted(packaged.items()):
         log(f"packaged {pkg}={ver}")
 
     if not packaged:
         log("warning: no rendered PKGBUILD yet")
-    # Walk PACKAGES, not what happens to be on disk: a package whose PKGBUILD
-    # was never rendered, or was lost, is behind just as much as a stale one.
-    # Reading `packaged` alone would report the tree current forever.
-    behind = sorted(pkg for pkg in PACKAGES if packaged.get(pkg) != upstream)
+    # Walk the inventory, not what happens to be on disk: a package whose
+    # PKGBUILD was never rendered, or was lost, is behind just as much as a
+    # stale one. Reading `packaged` alone would report the tree current
+    # forever.
+    behind = sorted(pkg for pkg in layout.inventory if packaged.get(pkg) != upstream)
     log(f"bump={'1' if behind else '0'}")
     if behind:
         log("behind=" + " ".join(behind))
@@ -302,9 +349,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        layout = layout_for(maintainer=os.environ.get("MAINTAINER", DEFAULT_MAINTAINER))
         if args.check:
-            return check()
-        render(args.version or latest_version())
+            return check(layout=layout)
+        render(args.version or latest_version(), layout=layout)
         return 0
     except BumpError as exc:
         sys.exit(str(exc))

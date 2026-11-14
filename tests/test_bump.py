@@ -19,7 +19,6 @@ import urllib.error
 from email.message import Message
 from pathlib import Path
 from typing import Mapping
-from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
@@ -90,6 +89,25 @@ def staged_root(root: Path, versions: dict[str, str]) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"pkgname={pkg}\npkgver={version}\npkgrel=1\n")
     return root
+
+
+def layout_at(
+    root: Path,
+    *,
+    templates: Path | None = None,
+    inventory: dict[str, str] | None = None,
+) -> bump.Layout:
+    """A layout pointing the renderer at a temporary tree.
+
+    Templates default to the repository's own: the tests are about what gets
+    filled in, not about keeping a second copy of them in step.
+    """
+    return bump.Layout(
+        templates=REPO / "templates" if templates is None else templates,
+        packages_dir=root / "packages",
+        inventory=dict(bump.PACKAGES if inventory is None else inventory),
+        maintainer="Test Maintainer <test@example.invalid>",
+    )
 
 
 class HighestTest(unittest.TestCase):
@@ -214,6 +232,7 @@ class RenderTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.out_root = Path(self._tmp.name)
+        self.layout = layout_at(self.out_root)
 
     def table(self, *, license_bytes: bytes | None = b"license", icon_bytes: bytes | None = b"icon", assets: dict[str, str] | None = None):
         return {
@@ -227,7 +246,7 @@ class RenderTest(unittest.TestCase):
 
     def test_writes_both_pkgbuilds_with_the_new_version(self):
         fetch = FetchSpy(self.table())
-        bump.render(self.VERSION, out_root=self.out_root, fetch=fetch)
+        bump.render(self.VERSION, layout=self.layout, fetch=fetch)
 
         for pkg in bump.PACKAGES:
             text = self.pkgbuild(pkg)
@@ -236,7 +255,7 @@ class RenderTest(unittest.TestCase):
 
     def test_puts_the_hashed_bytes_where_the_template_expects_them(self):
         fetch = FetchSpy(self.table(license_bytes=b"the license", icon_bytes=b"the icon"))
-        bump.render(self.VERSION, out_root=self.out_root, fetch=fetch)
+        bump.render(self.VERSION, layout=self.layout, fetch=fetch)
 
         self.assertIn(sha(b"the license"), self.pkgbuild("magpie-bin"))
         self.assertIn(sha(b"the icon"), self.pkgbuild("magpie-bin"))
@@ -252,16 +271,41 @@ class RenderTest(unittest.TestCase):
                 license_url(self.VERSION): b"license",
             }
         )
-        with mock.patch.object(bump, "PACKAGES", {"magpie-cli-bin": "magpie-cli"}):
-            bump.render(self.VERSION, out_root=self.out_root, fetch=fetch)
+        cli_only = layout_at(self.out_root, inventory={"magpie-cli-bin": "magpie-cli"})
+        bump.render(self.VERSION, layout=cli_only, fetch=fetch)
 
         self.assertNotIn(bump.ICON_URL, fetch.urls)
         self.assertNotIn("sha_icon", self.pkgbuild("magpie-cli-bin"))
 
+    def test_templates_come_from_the_layout_not_from_the_repository(self):
+        # The bug this replaced: templates were read from the module's own ROOT
+        # while the output directory was a parameter, so a caller pointing the
+        # renderer at a tree still got the repository's templates filled in.
+        decoy = self.out_root / "templates"
+        decoy.mkdir()
+        for pkg in bump.PACKAGES:
+            text = (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
+            (decoy / f"{pkg}.PKGBUILD.in").write_text(text + "\n# rendered from the decoy tree\n")
+
+        fetch = FetchSpy(self.table())
+        bump.render(self.VERSION, layout=layout_at(self.out_root, templates=decoy), fetch=fetch)
+
+        for pkg in bump.PACKAGES:
+            self.assertIn("rendered from the decoy tree", self.pkgbuild(pkg))
+
+    def test_a_layout_missing_a_template_names_the_package(self):
+        empty = self.out_root / "templates"
+        empty.mkdir()
+        fetch = FetchSpy(self.table())
+        with self.assertRaises(bump.BumpError) as caught:
+            bump.render(self.VERSION, layout=layout_at(self.out_root, templates=empty), fetch=fetch)
+        self.assertIn("no template for magpie-bin", str(caught.exception))
+        self.assertFalse((self.out_root / "packages").exists())
+
     def test_a_missing_license_stops_before_writing_anything(self):
         fetch = FetchSpy(self.table(license_bytes=None))
         with self.assertRaises(bump.BumpError) as caught:
-            bump.render(self.VERSION, out_root=self.out_root, fetch=fetch)
+            bump.render(self.VERSION, layout=self.layout, fetch=fetch)
         self.assertIn("no LICENSE", str(caught.exception))
         self.assertFalse((self.out_root / "packages").exists())
 
@@ -269,14 +313,14 @@ class RenderTest(unittest.TestCase):
         assets = {k: v for k, v in self.ASSETS.items() if k != "magpie-linux-arm64"}
         fetch = FetchSpy(self.table(assets=assets))
         with self.assertRaises(bump.BumpError) as caught:
-            bump.render(self.VERSION, out_root=self.out_root, fetch=fetch)
+            bump.render(self.VERSION, layout=self.layout, fetch=fetch)
         self.assertIn("magpie-bin: the release has no magpie-linux-arm64", str(caught.exception))
         self.assertFalse((self.out_root / "packages").exists())
 
     def test_refuses_a_version_that_is_not_dotted_digits(self):
         fetch = FetchSpy(self.table())
         with self.assertRaises(bump.BumpError) as caught:
-            bump.render("0.1.2-rc1", out_root=self.out_root, fetch=fetch)
+            bump.render("0.1.2-rc1", layout=self.layout, fetch=fetch)
         self.assertIn("expected digits separated by dots", str(caught.exception))
         self.assertEqual(fetch.urls, [])
 
@@ -286,7 +330,7 @@ class RenderTest(unittest.TestCase):
         fetch = FetchSpy(self.table())
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
-            bump.render(self.VERSION, out_root=self.out_root, fetch=fetch)
+            bump.render(self.VERSION, layout=self.layout, fetch=fetch)
         self.assertIn(f"ver={self.VERSION}", buffer.getvalue().splitlines())
 
 
@@ -295,14 +339,14 @@ class PackagedVersionsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = staged_root(Path(tmp), {"magpie-bin": "0.1.2", "magpie-cli-bin": "0.1.1"})
             self.assertEqual(
-                bump.packaged_versions(root),
+                bump.packaged_versions(layout_at(root)),
                 {"magpie-bin": "0.1.2", "magpie-cli-bin": "0.1.1"},
             )
 
     def test_skips_packages_that_were_never_rendered(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = staged_root(Path(tmp), {"magpie-bin": "0.1.2"})
-            self.assertEqual(bump.packaged_versions(root), {"magpie-bin": "0.1.2"})
+            self.assertEqual(bump.packaged_versions(layout_at(root)), {"magpie-bin": "0.1.2"})
 
 
 class CheckTest(unittest.TestCase):
@@ -311,7 +355,7 @@ class CheckTest(unittest.TestCase):
     def lines(self, fetch, out_root) -> list[str]:
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
-            bump.check(fetch=fetch, out_root=out_root)
+            bump.check(layout=layout_at(out_root), fetch=fetch)
         return buffer.getvalue().splitlines()
 
     def test_reports_every_package_that_is_behind(self):
