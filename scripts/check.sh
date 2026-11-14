@@ -25,10 +25,15 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(dirname "$here")"
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/magpie-repo"
 
-SHELLCHECK_VERSION=0.11.0
-SHELLCHECK_SHA256=8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
-ACTIONLINT_VERSION=1.7.12
-ACTIONLINT_SHA256=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+# Pinned tools, one row each: name|version|sha256|asset url|member|strip.
+# Each digest is the sha256 of the release asset as fetched at pin time; bump
+# the version and the digest together, in the same row. `strip` is how many
+# leading path components the archive carries, so extracting always lands the
+# member at <cache>/<name>-v<version>/<member>.
+PINNED_TOOLS=(
+    "shellcheck|0.11.0|8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198|https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz|shellcheck|1"
+    "actionlint|1.7.12|8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8|https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz|actionlint|0"
+)
 
 failures=0
 
@@ -50,32 +55,32 @@ fetch() {
     fi
 }
 
-shellcheck_bin() {
-    local dir="$cache/shellcheck-v$SHELLCHECK_VERSION"
-    local tar="$cache/shellcheck-v$SHELLCHECK_VERSION.tar.xz"
-    if [ -x "$dir/shellcheck" ]; then
-        printf '%s\n' "$dir/shellcheck"
+# pinned_tool <name> -- the path to that tool, downloaded once into the cache
+# and held to its digest. Both linters come through here: the two copies this
+# replaced differed in five constants and one tar flag, which is how a third
+# linter would have become a third copy.
+pinned_tool() {
+    local name="$1" row="" line version sha url member components dir archive
+    local -a strip=()
+    for line in "${PINNED_TOOLS[@]}"; do
+        case "$line" in
+            "$name|"*) row="$line"; break ;;
+        esac
+    done
+    [ -n "$row" ] || { echo "no pinned tool named $name" >&2; return 1; }
+    IFS='|' read -r _ version sha url member components <<<"$row"
+    dir="$cache/$name-v$version"
+    archive="$cache/$name-v$version.${url##*.}"
+    if [ -x "$dir/$member" ]; then
+        printf '%s\n' "$dir/$member"
         return 0
     fi
-    mkdir -p "$cache" || return 1
-    fetch "https://github.com/koalaman/shellcheck/releases/download/v$SHELLCHECK_VERSION/shellcheck-v$SHELLCHECK_VERSION.linux.x86_64.tar.xz" \
-        "$SHELLCHECK_SHA256" "$tar" || return 1
-    tar -xJf "$tar" -C "$cache" || return 1
-    printf '%s\n' "$dir/shellcheck"
-}
-
-actionlint_bin() {
-    local dir="$cache/actionlint-v$ACTIONLINT_VERSION"
-    local tar="$cache/actionlint-v$ACTIONLINT_VERSION.tar.gz"
-    if [ -x "$dir/actionlint" ]; then
-        printf '%s\n' "$dir/actionlint"
-        return 0
-    fi
-    mkdir -p "$cache" "$dir" || return 1
-    fetch "https://github.com/rhysd/actionlint/releases/download/v$ACTIONLINT_VERSION/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
-        "$ACTIONLINT_SHA256" "$tar" || return 1
-    tar -xzf "$tar" -C "$dir" actionlint || return 1
-    printf '%s\n' "$dir/actionlint"
+    mkdir -p "$dir" || return 1
+    fetch "$url" "$sha" "$archive" || return 1
+    [ "$components" = "1" ] && strip=(--strip-components=1)
+    # -xf reads the compression off the file, so xz and gz need no flag here.
+    tar -xf "$archive" -C "$dir" "${strip[@]}" || return 1
+    printf '%s\n' "$dir/$member"
 }
 
 cd "$root" || exit 1
@@ -90,7 +95,7 @@ while IFS= read -r file; do
 done < <(find "$here" -name '*.sh' -type f | sort)
 if [ "${#shells[@]}" -eq 0 ]; then
     failed "shellcheck (no shell scripts found under $here)"
-elif sc="$(shellcheck_bin)"; then
+elif sc="$(pinned_tool shellcheck)"; then
     # -x follows `source`, -P resolves the `lib/pkg.sh` paths against scripts/.
     "$sc" -x -P "$here" "${shells[@]}" || failed "shellcheck"
 else
@@ -98,11 +103,12 @@ else
 fi
 
 heading "actionlint"
-if al="$(actionlint_bin)"; then
+if al="$(pinned_tool actionlint)"; then
     # Put the pinned shellcheck on PATH first: actionlint lints the workflows'
     # run: blocks with whatever shellcheck it finds, and that should be the
-    # same one the gate above used.
-    PATH="$(dirname "$(shellcheck_bin)"):$PATH" "$al" || failed "actionlint"
+    # same one the gate above used. Resolved once, not a second time.
+    [ -n "${sc:-}" ] && PATH="$(dirname "$sc"):$PATH"
+    "$al" || failed "actionlint"
 else
     failed "actionlint (could not obtain the pinned copy)"
 fi
