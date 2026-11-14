@@ -2,7 +2,10 @@
 
 b085210 (the database must list only each package's newest build) landed here
 with no test: the sort rule and the file glob were written twice, in `prune()`
-and in `newest()`. They are one function now, and this is what holds it.
+and in `newest()`. They are one function now, and this is what holds it. The
+window (`pkgfiles_prune`), the db entry (`pkgfiles_current`) and the release
+selection (`pkgfiles_at`) are thin answers over that one order, so they are
+tested here too instead of only inside a publish run.
 
     python3 -m unittest discover -s tests
 """
@@ -190,6 +193,31 @@ class PkgfilesCurrentTest(RepoDirectory):
 
     def test_nothing_on_disk_is_empty_not_an_error(self):
         self.assertEqual(self.current(), [])
+
+
+class PkgfilesAtTest(RepoDirectory):
+    """The release step's selection: one version's files, nothing else."""
+
+    def at(self, version: str) -> list[str]:
+        return self.answer(f"pkgfiles_at {self.out_arg()} magpie-bin {version}")
+
+    def test_only_that_version(self):
+        self.touch(build("0.1.9"), build("0.1.10"), build("0.1.10", rel="2"))
+        self.assertEqual(self.at("0.1.10"), [build("0.1.10"), build("0.1.10", rel="2")])
+
+    def test_a_pkgrel_bump_does_not_hide_the_files(self):
+        # The glob this replaced spelled `-1-` out, so a pkgrel of 2 published
+        # nothing and failed after gh-pages had already been pushed.
+        self.touch(build("0.1.10", rel="2"))
+        self.assertEqual(self.at("0.1.10"), [build("0.1.10", rel="2")])
+
+    def test_a_version_that_was_never_built_is_empty(self):
+        self.touch(build("0.1.9"))
+        self.assertEqual(self.at("0.1.10"), [])
+
+    def test_a_longer_version_does_not_match_a_shorter_one(self):
+        self.touch(build("0.1.100"), build("0.1.10"))
+        self.assertEqual(self.at("0.1.10"), [build("0.1.10")])
 
 
 class LineFieldTest(unittest.TestCase):

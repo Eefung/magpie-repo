@@ -141,6 +141,8 @@ jobs:
         if: steps.upstream.outputs.bump == '1'
         run: |
           set -euo pipefail
+          # shellcheck source=scripts/lib/pkg.sh
+          source scripts/lib/pkg.sh
           if gh release view "v$ver" >/dev/null 2>&1; then
             echo "v$ver already has a release"
             exit 0
@@ -158,13 +160,25 @@ jobs:
           https://github.com/yetone/magpie-releases/releases/tag/v$ver
           EOF
           # Only this version: repo/x86_64 also carries the previous build for
-          # the retention window, and those do not belong in this release.
+          # the retention window, and those do not belong in this release. The
+          # names come from pkg.sh, which owns the pkgname-pkgver-pkgrel-arch
+          # rule -- pkgrel and arch are makepkg's to decide, so this file must
+          # not spell them out again.
+          read -r -a pkgdirs <<< "$PKGDIRS"
+          assets=()
+          for dir in "${pkgdirs[@]}"; do
+            mapfile -t -O "${#assets[@]}" assets < <(pkgfiles_at repo/x86_64 "$(pkg_field "$dir/PKGBUILD" pkgname)" "$ver")
+          done
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "no package files for v$ver in repo/x86_64" >&2
+            exit 1
+          fi
           mkdir -p /tmp/rel
-          (cd repo/x86_64 && sha256sum -- *-"$ver"-1-x86_64.pkg.tar.zst > /tmp/rel/SHA256SUMS)
+          (cd repo/x86_64 && sha256sum -- "${assets[@]##*/}" > /tmp/rel/SHA256SUMS)
           gh release create "v$ver" \
             --title "magpie $ver" \
             --notes-file /tmp/notes.md \
-            repo/x86_64/*-"$ver"-1-x86_64.pkg.tar.zst /tmp/rel/SHA256SUMS
+            "${assets[@]}" /tmp/rel/SHA256SUMS
           echo "release created: $(gh release view "v$ver" --json url -q .url)"
 
       # Last, so that every failure above is retried by the next run: main

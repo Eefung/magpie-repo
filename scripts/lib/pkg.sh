@@ -79,3 +79,16 @@ pkgfiles_current() {
     pkgfiles "$1" "$2" | tail -1
 }
 
+# pkgfiles_at <repo dir> <pkgname> <pkgver> -- that version's files only, in the
+# same order. The release step publishes exactly these and asks here, instead of
+# rebuilding the name with a pkgrel and an arch of its own (both are makepkg's
+# to decide, not the workflow's).
+pkgfiles_at() {
+    local out="$1" pkgname="$2" pkgver="$3" file name
+    while IFS= read -r file; do
+        name="${file##*/}"
+        case "$name" in
+            "$pkgname-$pkgver-"*) printf '%s\n' "$file" ;;
+        esac
+    done < <(pkgfiles "$out" "$pkgname")
+}
