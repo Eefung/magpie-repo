@@ -121,11 +121,10 @@ cat <<'EOF'
   tests/test_build_check.py -- build-repo.sh's window and database in
   tests/test_build_repo.py, the 载荷核对 in tests/test_pkg_sh.py.
 - the publish steps themselves -- seeding repo/ from the previous gh-pages
-  tree, clearing files this repository no longer writes, the force push, the
-  Release, the commit back to main: they only exist in the publish job, and a
-  real publish is what proves them. Deleting a producer is the case to watch:
-  the tree is cumulative, so the file outlives the writer that used to refresh
-  it.
+  tree, the force push, the Release, the commit back to main: they only exist
+  in the publish job, and a real publish is what proves them. The seed takes
+  only x86_64/*.pkg.tar.* across, so a file this repository still needs but
+  does not write under that pattern would stop being served.
 EOF
 
 if [ "$failures" -ne 0 ]; then

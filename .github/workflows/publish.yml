@@ -100,11 +100,15 @@ jobs:
           # shellcheck source=scripts/lib/pkg.sh
           source scripts/lib/pkg.sh
           mkdir -p repo
-          # Carry the last published build over, so an upgrade in flight does
-          # not 404 and the retention window has something to keep.
+          # Carry the last published 包文件 over, so an upgrade in flight does
+          # not 404 and the retention window has something to keep. Only the
+          # package files: the tree is cumulative, so anything else would be
+          # carried forward forever, frozen at the version that last wrote it
+          # (SHA256SUMS used to be exactly that). The database is rebuilt from
+          # the package files below, so it has nothing to gain from the seed.
           if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
             git fetch --depth 1 origin gh-pages
-            git archive FETCH_HEAD | tar -x -C repo
+            git archive FETCH_HEAD | tar -x -C repo --wildcards 'x86_64/*.pkg.tar.*'
             echo "previous repository:"; ls repo/x86_64 || true
           else
             echo "no gh-pages yet, starting a fresh repository"
@@ -127,11 +131,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           touch .nojekyll
-          # The tree was seeded from the previous gh-pages build, so a file this
-          # repository no longer writes would be carried forward forever, frozen
-          # at the version that last wrote it. SHA256SUMS was such a file: the
-          # release step owns the checksums, built from that 版本's 包文件.
-          rm -f SHA256SUMS
+          # The seed brought only the 包文件 across, so this tree is exactly what
+          # this run wrote -- nothing has to be retired file by file.
           git add --all
           git commit --quiet -m "build(gh-pages): magpie $ver"
           # One squashed commit per release keeps the branch from growing a copy
