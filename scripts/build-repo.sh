@@ -23,14 +23,13 @@ shift
 REPO_NAME="${REPO_NAME:-magpie}"
 KEEP="${KEEP:-2}"          # versions of each package kept in the repository
 out="$(mkdir -p "$out" && cd "$out" && pwd)"
-root="$(dirname "$out")"
 
 # --- build -------------------------------------------------------------------
 # build-check owns its package directory and answers with one line: where the
 # package file it made is. Taking that path is the whole handover -- no globbing
 # for whatever happens to be lying there, no guessing by timestamp.
-# BUILD_CHECK is the one seam: tests point it at a stub so this script's window,
-# database and checksum handling can run offline, the way build-check cannot.
+# BUILD_CHECK is the one seam: tests point it at a stub so this script's window
+# and database handling can run offline, the way build-check cannot.
 BUILD_CHECK="${BUILD_CHECK:-$here/build-check.sh}"
 built=""
 build_one() {
@@ -89,5 +88,3 @@ repo-add -q "$out/$REPO_NAME.db.tar.gz" "${current[@]}"
 # shellcheck disable=SC2012
 echo "repository $REPO_NAME: ${#current[@]} database entries, \
 $(ls -1 "$out"/*.pkg.tar.* | wc -l) file(s) on disk, $(du -sh "$out" | cut -f1)"
-
-(cd "$out" && sha256sum -- *.pkg.tar.* > "$root/SHA256SUMS" && echo "checksums: $root/SHA256SUMS")

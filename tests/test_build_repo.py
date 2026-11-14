@@ -1,11 +1,11 @@
 """The repository assembly script, run for real against a throwaway tree.
 
 `scripts/check.sh` used to print that the package build was not covered here:
-`build-repo.sh` only ran inside the publish container. The retention window, the
-database entry and the checksum file are filename arithmetic over a directory,
-so the real script runs offline with a stub build-check and a stub repo-add
-(`BUILD_CHECK`, and PATH). What stays uncovered is `build-check.sh`'s root
-branch (useradd / su / chown), which needs the container.
+`build-repo.sh` only ran inside the publish container. The retention window and
+the database entry are filename arithmetic over a directory, so the real script
+runs offline with a stub build-check and a stub repo-add (`BUILD_CHECK`, and
+PATH). What stays uncovered is `build-check.sh`'s root branch (useradd / su /
+chown), which needs the container.
 
     python3 -m unittest discover -s tests
 """
@@ -116,10 +116,10 @@ class BuildRepoTest(unittest.TestCase):
         # the same directory the database is rebuilt from.
         self.assertEqual(self.database_entries(), ["magpie-bin-0.1.10-1-x86_64.pkg.tar.zst"])
         self.assertIn("pruning magpie-bin-0.1.8-1-x86_64.pkg.tar.zst", result.stdout)
-        # One checksum per surviving file, written where the release expects it.
-        checksums = (self.repo / "SHA256SUMS").read_text().splitlines()
-        self.assertEqual(len(checksums), 2)
-        self.assertTrue(all(line.endswith("-x86_64.pkg.tar.zst") for line in checksums))
+        # Nothing outside the directory it was given: the checksum file the
+        # release publishes is built by the release step out of that 版本's
+        # 包文件, not here out of whatever happens to be on disk.
+        self.assertEqual(sorted(path.name for path in self.repo.iterdir()), ["x86_64"])
         # The artifact left the package directory: the source tree stays clean.
         self.assertEqual(list(self.pkgdir.glob("*.pkg.tar.*")), [])
 
@@ -134,7 +134,6 @@ class BuildRepoTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.database_entries(), [])
         self.assertFalse((self.out / "magpie.db.tar.gz").exists())
-        self.assertFalse((self.repo / "SHA256SUMS").exists())
 
 
 if __name__ == "__main__":

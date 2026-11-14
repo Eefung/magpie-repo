@@ -17,8 +17,8 @@
 #
 # What this cannot reach: build-check.sh's root branch (useradd / su / chown),
 # which only exists inside the publish job's container. The rest of the package
-# build -- the retention window, the database entry, the checksum file -- runs
-# offline in tests/test_build_repo.py, against the real build-repo.sh.
+# build -- the retention window and the database entry -- runs offline in
+# tests/test_build_repo.py, against the real build-repo.sh.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -118,8 +118,8 @@ cat <<'EOF'
 - build-check.sh's root branch (useradd / su / chown and the depends install
   behind it): it only exists inside the publish container, so a publish run
   proves it. The rest of build-check.sh runs offline in
-  tests/test_build_check.py -- build-repo.sh's window, database and checksums
-  in tests/test_build_repo.py, the 载荷核对 in tests/test_pkg_sh.py.
+  tests/test_build_check.py -- build-repo.sh's window and database in
+  tests/test_build_repo.py, the 载荷核对 in tests/test_pkg_sh.py.
 EOF
 
 if [ "$failures" -ne 0 ]; then
