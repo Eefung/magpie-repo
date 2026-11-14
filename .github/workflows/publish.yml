@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The gates live in scripts/check.sh, pins and all, so a red run here
       # reproduces with `./scripts/check.sh` locally -- same commands, same
       # linter versions. That is why no lint command appears in this file.
@@ -44,7 +44,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PAGES_URL: https://eefung.github.io/magpie-repo
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: What is upstream at, and what gets packaged
         id: upstream
