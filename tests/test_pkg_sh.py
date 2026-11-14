@@ -121,6 +121,77 @@ class PkgFieldTest(unittest.TestCase):
         self.assertIn("no such PKGBUILD", result.stderr)
 
 
+class RepoDirectory(unittest.TestCase):
+    """A temporary directory holding 包文件 name-shaped files."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.out = Path(self._tmp.name)
+
+    def touch(self, *names: str) -> None:
+        for name in names:
+            (self.out / name).touch()
+
+    def answer(self, script: str) -> list[str]:
+        result = call(script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [Path(line).name for line in result.stdout.splitlines()]
+
+    def out_arg(self) -> str:
+        return shlex.quote(str(self.out))
+
+
+def build(version: str, rel: str = "1", arch: str = "x86_64") -> str:
+    return f"magpie-bin-{version}-{rel}-{arch}.pkg.tar.zst"
+
+
+class PkgfilesPruneTest(RepoDirectory):
+    """The retention window: which files fall out, given KEEP."""
+
+    def prune(self, keep: int) -> list[str]:
+        return self.answer(f"pkgfiles_prune {self.out_arg()} magpie-bin {keep}")
+
+    def test_drops_the_oldest_once_the_window_is_full(self):
+        self.touch(build("0.1.9"), build("0.1.10"), build("0.1.1000"))
+        self.assertEqual(self.prune(2), [build("0.1.9")])
+
+    def test_drops_nothing_while_the_window_has_room(self):
+        self.touch(build("0.1.9"), build("0.1.10"))
+        self.assertEqual(self.prune(2), [])
+
+    def test_drops_every_surplus_when_the_window_shrank(self):
+        self.touch(build("0.1.7"), build("0.1.8"), build("0.1.9"), build("0.1.10"))
+        self.assertEqual(self.prune(1), [build("0.1.7"), build("0.1.8"), build("0.1.9")])
+
+    def test_the_oldest_is_found_by_version_not_by_text(self):
+        # Read as text, 0.1.1000 sorts before 0.1.999; the window must not care.
+        self.touch(build("0.1.999"), build("0.1.1000"), build("0.1.1001"))
+        self.assertEqual(self.prune(2), [build("0.1.999")])
+
+    def test_a_package_with_no_builds_prunes_nothing(self):
+        self.assertEqual(self.prune(2), [])
+
+
+class PkgfilesCurrentTest(RepoDirectory):
+    """The one file the database entry names."""
+
+    def current(self) -> list[str]:
+        return self.answer(f"pkgfiles_current {self.out_arg()} magpie-bin")
+
+    def test_the_newest_build_is_the_current_one(self):
+        self.touch(build("0.1.9"), build("0.1.10"), build("0.1.1000"))
+        self.assertEqual(self.current(), [build("0.1.1000")])
+
+    def test_the_window_and_the_database_read_one_order(self):
+        self.touch(build("0.1.9"), build("0.1.10"), build("0.1.1000"))
+        pruned = self.answer(f"pkgfiles_prune {self.out_arg()} magpie-bin 2")
+        self.assertNotIn(self.current()[0], pruned)
+
+    def test_nothing_on_disk_is_empty_not_an_error(self):
+        self.assertEqual(self.current(), [])
+
+
 class LineFieldTest(unittest.TestCase):
     """The one reader of the frozen `name=value` lines."""
 

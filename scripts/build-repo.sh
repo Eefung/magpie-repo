@@ -49,25 +49,27 @@ build_one() {
     rm -f "$log"
 }
 
+# One walk over the package directories: build each, then name the package once.
+# The window and the database below read this list instead of parsing the same
+# PKGBUILD a second and third time.
+declare -a pkgnames=()
 for dir in "$@"; do
     build_one "$dir"
     mv -f "$built" "$out/"
+    pkgnames+=("$(pkg_field "$dir/PKGBUILD" pkgname)")
 done
 
 # --- keep only the newest KEEP builds of every package ------------------------
 prune() {
     local pkgname="$1" file
-    local -a files
-    mapfile -t files < <(pkgfiles "$out" "$pkgname")
-    [ "${#files[@]}" -gt "$KEEP" ] || return 0
-    for file in "${files[@]:0:${#files[@]}-KEEP}"; do
+    while IFS= read -r file; do
         echo "pruning $(basename "$file")"
         rm -f "$file"
-    done
+    done < <(pkgfiles_prune "$out" "$pkgname" "$KEEP")
 }
 
-for dir in "$@"; do
-    prune "$(pkg_field "$dir/PKGBUILD" pkgname)"
+for pkgname in "${pkgnames[@]}"; do
+    prune "$pkgname"
 done
 
 # --- rebuild the database from what is on disk -------------------------------
@@ -75,10 +77,7 @@ done
 # files stay on disk for clients whose db still names them (the retention
 # window), but an entry in the db would also let a pinned install reach back
 # to them, which is not what the window is for.
-newest() {
-    pkgfiles "$out" "$1" | tail -1
-}
-mapfile -t current < <(for dir in "$@"; do newest "$(pkg_field "$dir/PKGBUILD" pkgname)"; done)
+mapfile -t current < <(for pkgname in "${pkgnames[@]}"; do pkgfiles_current "$out" "$pkgname"; done)
 [ "${#current[@]}" -gt 0 ] || { echo "no package files to put in the database" >&2; exit 1; }
 
 rm -f "$out/$REPO_NAME.db" "$out/$REPO_NAME.db.tar.gz" \

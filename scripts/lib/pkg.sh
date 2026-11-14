@@ -61,3 +61,21 @@ pkgfiles() {
     printf '%s\n' "${files[@]}"
 }
 
+# pkgfiles_prune <repo dir> <pkgname> <keep> -- the files the retention window
+# drops, oldest first: what is left when the newest <keep> are kept. Empty while
+# the window still has room. The decision lives here, next to the ordering it
+# depends on, instead of in the script that happens to call it.
+pkgfiles_prune() {
+    local out="$1" pkgname="$2" keep="$3"
+    local -a files
+    mapfile -t files < <(pkgfiles "$out" "$pkgname")
+    [ "${#files[@]}" -gt "$keep" ] || return 0
+    printf '%s\n' "${files[@]:0:${#files[@]}-keep}"
+}
+
+# pkgfiles_current <repo dir> <pkgname> -- the one file that belongs in the
+# database: the tail of the same order the window reads its head from.
+pkgfiles_current() {
+    pkgfiles "$1" "$2" | tail -1
+}
+
