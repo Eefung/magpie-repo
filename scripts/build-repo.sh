@@ -87,7 +87,7 @@ rm -f "$out/$REPO_NAME.db" "$out/$REPO_NAME.db.tar.gz" \
       "$out/$REPO_NAME.files" "$out/$REPO_NAME.files.tar.gz"
 repo-add -q "$out/$REPO_NAME.db.tar.gz" "${current[@]}"
 # shellcheck disable=SC2012
-echo "repository $REPO_NAME: ${#current[@]} package(s) in the database, \
+echo "repository $REPO_NAME: ${#current[@]} database entries, \
 $(ls -1 "$out"/*.pkg.tar.* | wc -l) file(s) on disk, $(du -sh "$out" | cut -f1)"
 
 (cd "$out" && sha256sum -- *.pkg.tar.* > "$root/SHA256SUMS" && echo "checksums: $root/SHA256SUMS")

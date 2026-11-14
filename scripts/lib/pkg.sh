@@ -91,9 +91,9 @@ pkg_field() {
 
 # pkgfiles <repo dir> <pkgname> -- that package's files in that directory,
 # oldest version first. The naming (pkgname-pkgver-pkgrel-arch) and the
-# ordering are one rule, so it lives here: the retention window takes the head
-# of this list and the database entry takes its tail, and neither can disagree
-# with the other about which build is current.
+# ordering are one rule, so it lives here: the 保留窗口 counts 版本 from the head
+# of this list and the database entry takes the newest 版本's files from its
+# tail, and neither can disagree with the other about which build is current.
 pkgfiles() {
     local out="$1" pkgname="$2"
     local -a files
@@ -103,22 +103,61 @@ pkgfiles() {
     printf '%s\n' "${files[@]}"
 }
 
-# pkgfiles_prune <repo dir> <pkgname> <keep> -- the files the retention window
-# drops, oldest first: what is left when the newest <keep> are kept. Empty while
-# the window still has room. The decision lives here, next to the ordering it
-# depends on, instead of in the script that happens to call it.
-pkgfiles_prune() {
-    local out="$1" pkgname="$2" keep="$3"
-    local -a files
-    mapfile -t files < <(pkgfiles "$out" "$pkgname")
-    [ "${#files[@]}" -gt "$keep" ] || return 0
-    printf '%s\n' "${files[@]:0:${#files[@]}-keep}"
+# pkgfile_version <pkgname> <包文件> -- the 版本 in that file's name.
+#
+# A 版本 is digits and dots only (渲染前强制的那条不变量), so it never contains
+# a dash: the run between `<pkgname>-` and the next dash is the version, and
+# pkgrel and arch -- both makepkg's to decide -- are not read here.
+pkgfile_version() {
+    local pkgname="$1" name="${2##*/}"
+    printf '%s\n' "${name#"$pkgname"-}" | cut -d- -f1
 }
 
-# pkgfiles_current <repo dir> <pkgname> -- the one file that belongs in the
-# database: the tail of the same order the window reads its head from.
+# pkgfiles_prune <repo dir> <pkgname> <keep> -- the files the 保留窗口 drops,
+# oldest first: every file of a 版本 that falls out of the newest <keep> 版本.
+#
+# GLOSSARY defines the window as 每个包同时保留的版本数, so it counts 版本 and not
+# files: the same 版本 built for two arches is one version, and both files stay
+# or go together. Counting files kept a single version in a two-arch repository
+# and dropped one arch of the older one. The decision lives here, next to the
+# ordering it depends on.
+pkgfiles_prune() {
+    local out="$1" pkgname="$2" keep="$3" file version
+    local -a versions=()
+    local -A dropped=()
+    while IFS= read -r file; do
+        version="$(pkgfile_version "$pkgname" "$file")"
+        [ "${#versions[@]}" -gt 0 ] && [ "${versions[${#versions[@]}-1]}" = "$version" ] \
+            || versions+=("$version")
+    done < <(pkgfiles "$out" "$pkgname")
+    [ "${#versions[@]}" -gt "$keep" ] || return 0
+    for version in "${versions[@]:0:${#versions[@]}-keep}"; do
+        dropped["$version"]=1
+    done
+    while IFS= read -r file; do
+        version="$(pkgfile_version "$pkgname" "$file")"
+        if [ -n "${dropped["$version"]:-}" ]; then
+            printf '%s\n' "$file"
+        fi
+    done < <(pkgfiles "$out" "$pkgname")
+}
+
+# pkgfiles_current <repo dir> <pkgname> -- the files that belong in the database:
+# every arch of the newest 版本, read off the tail of the same order the window
+# reads its head from. Today's single arch makes that one file; a second arch
+# gets an entry of its own instead of being left out of the db.
 pkgfiles_current() {
-    pkgfiles "$1" "$2" | tail -1
+    local out="$1" pkgname="$2" file version newest
+    local -a files=()
+    mapfile -t files < <(pkgfiles "$out" "$pkgname")
+    [ "${#files[@]}" -gt 0 ] || return 0
+    newest="$(pkgfile_version "$pkgname" "${files[${#files[@]}-1]}")"
+    for file in "${files[@]}"; do
+        version="$(pkgfile_version "$pkgname" "$file")"
+        if [ "$version" = "$newest" ]; then
+            printf '%s\n' "$file"
+        fi
+    done
 }
 
 # pkgfiles_at <repo dir> <pkgname> <pkgver> -- that version's files only, in the

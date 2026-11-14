@@ -174,6 +174,28 @@ class PkgfilesPruneTest(RepoDirectory):
         self.touch(build("0.1.7"), build("0.1.8"), build("0.1.9"), build("0.1.10"))
         self.assertEqual(self.prune(1), [build("0.1.7"), build("0.1.8"), build("0.1.9")])
 
+    def test_the_window_counts_versions_not_files(self):
+        # GLOSSARY: 保留窗口 is 每个包同时保留的版本数. Counting files instead left
+        # one version in a two-arch repository and dropped both files of the
+        # older one -- and the database then named a single arch.
+        self.touch(
+            build("0.1.9", arch="x86_64"), build("0.1.9", arch="aarch64"),
+            build("0.1.10", arch="x86_64"), build("0.1.10", arch="aarch64"),
+            build("0.1.11", arch="x86_64"), build("0.1.11", arch="aarch64"),
+        )
+        self.assertEqual(
+            sorted(self.prune(2)),
+            sorted([build("0.1.9", arch="x86_64"), build("0.1.9", arch="aarch64")]),
+        )
+
+    def test_every_arch_of_a_surviving_version_is_kept(self):
+        self.touch(
+            build("0.1.9"),
+            build("0.1.10"), build("0.1.10", arch="aarch64"),
+            build("0.1.11"), build("0.1.11", arch="aarch64"),
+        )
+        self.assertEqual(set(self.prune(2)), {build("0.1.9")})
+
     def test_the_oldest_is_found_by_version_not_by_text(self):
         # Read as text, 0.1.1000 sorts before 0.1.999; the window must not care.
         self.touch(build("0.1.999"), build("0.1.1000"), build("0.1.1001"))
@@ -197,6 +219,16 @@ class PkgfilesCurrentTest(RepoDirectory):
         self.touch(build("0.1.9"), build("0.1.10"), build("0.1.1000"))
         pruned = self.answer(f"pkgfiles_prune {self.out_arg()} magpie-bin 2")
         self.assertNotIn(self.current()[0], pruned)
+
+    def test_every_arch_of_the_newest_version_is_current(self):
+        # One database entry per arch. With one arch built that is one file,
+        # which is what build-repo.sh hands repo-add today; the rule behind it
+        # is "the newest 版本", not "the last file in the sort order".
+        self.touch(build("0.1.9"), build("0.1.10"), build("0.1.10", arch="aarch64"))
+        self.assertEqual(
+            sorted(self.current()),
+            sorted([build("0.1.10"), build("0.1.10", arch="aarch64")]),
+        )
 
     def test_nothing_on_disk_is_empty_not_an_error(self):
         self.assertEqual(self.current(), [])
