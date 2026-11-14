@@ -17,6 +17,8 @@ scripts/bump.py --check   GitHub releases 与 usemagpie.ai/api/latest 较高者�
 
 `gh-pages` 上的 `x86_64/` 就是软件源。先发布后提交：中途失败时 main 上没有新 `pkgver`，下次运行重做。PKGBUILD 里还写着 aarch64，但 CI 不构建也不验证。
 
+改了 `templates/` 就必须重渲染 `packages/`：`tests/test_templates.py` 断言每个已提交的 PKGBUILD 仍是它的模板填上值的结果，只改模板不重渲染会让 test job 直接失败（`publish` 是 `needs: test`，因此也发不出去）。
+
 ## 安装
 
 ```bash
