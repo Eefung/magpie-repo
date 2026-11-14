@@ -18,12 +18,12 @@ The network enters through an injected `fetch`, so the decisions -- which
 version wins, which checksum goes where, whether a template and its values
 agree -- are exercised offline: python3 -m unittest discover -s tests
 
-Each mode ends with one frozen line a caller reads instead of re-deriving it
-from the files: `--check` prints `upstream=`, `packaged <pkg>=`, `bump=` and
+Each mode ends with frozen lines a caller reads instead of re-deriving it from
+the files: `--check` prints `upstream=`, `packaged <pkg>=`, `bump=` and
 `behind=`; `--render` prints `ver=<version>`; `--packages` prints
-`packages=<dir> ...`. The workflow scrapes those lines through pkg.sh's
-`line_field` and nothing else, so the wording is a contract -- change it with
-the reader.
+`package <dir> <pkgname>`, one line per package. The workflow reads those
+through pkg.sh and nothing else, so the wording is a contract -- change it
+with the reader.
 
 Stdlib only: runs on any python3 in CI and on the user's machine alike.
 """
@@ -85,6 +85,7 @@ class Layout:
     packages_dir: Path
     inventory: Mapping[str, str]
     maintainer: str
+    root: Path
 
 
 def layout_for(
@@ -107,6 +108,7 @@ def layout_for(
         packages_dir=root / "packages" if packages_dir is None else packages_dir,
         inventory=dict(PACKAGES if inventory is None else inventory),
         maintainer=maintainer,
+        root=root,
     )
 
 
@@ -290,23 +292,35 @@ def packaged_versions(layout: Layout) -> dict[str, str]:
     return found
 
 
-def shown(path: Path) -> str:
-    """A path the way the reader would name it: relative to where they ran."""
+def layout_path(layout: Layout, path: Path) -> str:
+    """A path named the way the layout names it, not the way the caller's cwd does.
+
+    The 包清单 leaves this module and is read by a container whose cwd happens
+    to be the repository root. Deriving the answer from the caller's cwd made
+    the value true only when it was run from there, and a test had to chdir to
+    make the strings line up -- an interface that quietly required a working
+    directory.
+    """
     try:
-        return str(path.relative_to(Path.cwd()))
+        return str(path.relative_to(layout.root))
     except ValueError:
         return str(path)
 
 
-def package_dirs(layout: Layout) -> list[str]:
-    """The package directories to build, in inventory order.
+def package_entries(layout: Layout) -> list[tuple[str, str]]:
+    """The 包清单 as (directory, pkgname), in inventory order.
 
-    The build step used to spell these out, so a package added to the inventory
-    was rendered and committed but never packaged, and nothing compared the two
-    lists: the next `--check` saw it current and printed `bump=0` for good.
-    This is the one place the answer is written down.
+    The build step used to spell the directories out, so a package added to the
+    inventory was rendered and committed but never packaged, and nothing
+    compared the two lists: the next `--check` saw it current and printed
+    `bump=0` for good. The first fix put only the directories on the line, so
+    both consumers read the pkgname back out of the PKGBUILD -- a second source
+    for a fact this module already holds as its keys. The line carries both now.
     """
-    return [shown(layout.packages_dir / pkg) for pkg in layout.inventory]
+    return [
+        (layout_path(layout, layout.packages_dir / pkg), pkg)
+        for pkg in layout.inventory
+    ]
 
 
 def render(
@@ -380,7 +394,7 @@ def render(
         out = layout.packages_dir / pkg / "PKGBUILD"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text)
-        log(f"rendered {shown(out)} at {version}")
+        log(f"rendered {layout_path(layout, out)} at {version}")
 
     # The version this module just wrote, handed to the caller. Every later
     # step needs it, and re-deriving it from the PKGBUILD gave the pipeline a
@@ -420,7 +434,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         layout = layout_for(maintainer=os.environ.get("MAINTAINER", DEFAULT_MAINTAINER))
         if args.packages:
-            log("packages=" + " ".join(package_dirs(layout)))
+            for directory, pkg in package_entries(layout):
+                log(f"package {directory} {pkg}")
             return 0
         if args.check:
             return check(layout=layout)

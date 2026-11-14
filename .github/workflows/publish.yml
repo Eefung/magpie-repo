@@ -55,11 +55,10 @@ jobs:
           # shellcheck source=scripts/lib/pkg.sh
           source scripts/lib/pkg.sh
           python3 scripts/bump.py --check | tee /tmp/check.txt
+          # The 包清单, one `package <dir> <pkgname>` line per package. The
+          # build and release steps read this file instead of a package name
+          # spelled into this YAML.
           python3 scripts/bump.py --packages > /tmp/packages.txt
-          # The package dirs come from the inventory, not from this file: a
-          # package added there is built without anyone editing the YAML.
-          pkgdirs="$(line_field packages /tmp/packages.txt)"
-          echo "PKGDIRS=$pkgdirs" >> "$GITHUB_ENV"
           bump=0
           if [ -n "$WANTED" ]; then
             echo "asked for $WANTED"; bump=1
@@ -98,6 +97,8 @@ jobs:
         if: steps.upstream.outputs.bump == '1'
         run: |
           set -euo pipefail
+          # shellcheck source=scripts/lib/pkg.sh
+          source scripts/lib/pkg.sh
           mkdir -p repo
           # Carry the last published build over, so an upgrade in flight does
           # not 404 and the retention window has something to keep.
@@ -108,8 +109,9 @@ jobs:
           else
             echo "no gh-pages yet, starting a fresh repository"
           fi
-          # The dirs were handed over by the check step, from the inventory.
-          read -r -a pkgdirs <<< "$PKGDIRS"
+          # The dirs come from the 包清单 the check step wrote, not from this
+          # file: a package added to the inventory is built without an edit here.
+          mapfile -t pkgdirs < <(pkglist_dirs /tmp/packages.txt)
           docker run --rm --volume "$PWD:/src" --workdir /src \
             archlinux:base-devel \
             ./scripts/build-repo.sh repo/x86_64 "${pkgdirs[@]}"
@@ -160,14 +162,14 @@ jobs:
           https://github.com/yetone/magpie-releases/releases/tag/v$ver
           EOF
           # Only this version: repo/x86_64 also carries the previous build for
-          # the retention window, and those do not belong in this release. The
-          # names come from pkg.sh, which owns the pkgname-pkgver-pkgrel-arch
-          # rule -- pkgrel and arch are makepkg's to decide, so this file must
-          # not spell them out again.
-          read -r -a pkgdirs <<< "$PKGDIRS"
+          # the retention window, and those do not belong in this release. Both
+          # the pkgname and the file names come from pkg.sh -- the pkgname from
+          # the 包清单, the names from the pkgname-pkgver-pkgrel-arch rule -- so
+          # this file never spells pkgrel or arch out again.
+          mapfile -t pkgnames < <(pkglist_names /tmp/packages.txt)
           assets=()
-          for dir in "${pkgdirs[@]}"; do
-            mapfile -t -O "${#assets[@]}" assets < <(pkgfiles_at repo/x86_64 "$(pkg_field "$dir/PKGBUILD" pkgname)" "$ver")
+          for pkgname in "${pkgnames[@]}"; do
+            mapfile -t -O "${#assets[@]}" assets < <(pkgfiles_at repo/x86_64 "$pkgname" "$ver")
           done
           if [ "${#assets[@]}" -eq 0 ]; then
             echo "no package files for v$ver in repo/x86_64" >&2

@@ -12,6 +12,11 @@
 #
 # The same goes for the frozen `name=value` lines: bump.py and build-check.sh
 # write them, and every reader goes through line_field rather than its own sed.
+#
+# bump.py also writes the 包清单 as one `package <dir> <pkgname>` line per
+# package. That shape has one reader here (pkglist_field) for the same reason:
+# three steps used to split the same line and one of them read the pkgname back
+# out of the PKGBUILD.
 
 # line_field <name> <file> -- the one `name=value` line a frozen producer wrote.
 #
@@ -37,6 +42,33 @@ line_field() {
     [ -n "$value" ] || { echo "empty ${name}= in ${file}" >&2; return 1; }
     printf '%s\n' "$value"
 }
+
+# pkglist_field <file> <index> -- one column of the 包清单, in its order.
+#
+# The line is `package <dir> <pkgname>`, which bump.py writes once per package.
+# A line that is not that shape is a protocol break and fails the caller; an
+# empty file is "no packages", which is why it is not an error here.
+pkglist_field() {
+    local file="$1" index="$2" line
+    local -a parts
+    [ -r "$file" ] || { echo "no such file: $file" >&2; return 1; }
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        read -r -a parts <<<"$line"
+        if [ "${#parts[@]}" -ne 3 ] || [ "${parts[0]}" != "package" ]; then
+            echo "not a 包清单 line: $line" >&2
+            return 1
+        fi
+        printf '%s\n' "${parts[$index]}"
+    done <"$file"
+}
+
+# pkglist_dirs <file> -- the package directories to build, in 包清单 order.
+pkglist_dirs() { pkglist_field "$1" 1; }
+
+# pkglist_names <file> -- each package's pkgname, in the same order, so the
+# release step names files without reading the PKGBUILD again.
+pkglist_names() { pkglist_field "$1" 2; }
 
 # pkg_field <pkgbuild> <field> -- one field of a rendered PKGBUILD, unquoted.
 pkg_field() {

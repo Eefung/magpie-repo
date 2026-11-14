@@ -239,9 +239,9 @@ class LineFieldTest(unittest.TestCase):
         self.assertEqual(result.stdout, "0.1.2\n")
 
     def test_a_list_valued_line_survives_whole(self):
-        result = self.field("packages", "packages=packages/magpie-bin packages/magpie-cli-bin\n")
+        result = self.field("behind", "behind=magpie-bin magpie-cli-bin\n")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "packages/magpie-bin packages/magpie-cli-bin\n")
+        self.assertEqual(result.stdout, "magpie-bin magpie-cli-bin\n")
 
     def test_two_matches_are_a_protocol_break_not_a_choice(self):
         # Every producer writes its line once, so a second one is a bug worth
@@ -262,6 +262,57 @@ class LineFieldTest(unittest.TestCase):
 
     def test_a_missing_file_fails_loudly(self):
         result = self.field("ver")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no such file", result.stderr)
+
+
+class PkglistTest(unittest.TestCase):
+    """The one reader of the 包清单 lines bump.py writes."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.list = Path(self._tmp.name) / "packages.txt"
+
+    def write(self, *lines: str) -> None:
+        self.list.write_text("".join(line + "\n" for line in lines))
+
+    def read(self, reader: str) -> subprocess.CompletedProcess:
+        return call(f"{reader} {shlex.quote(str(self.list))}")
+
+    def test_the_dirs_and_the_names_are_two_columns_of_one_order(self):
+        # The build step takes the first column, the release step the second;
+        # both are the inventory's order, so neither can disagree about which
+        # package is which.
+        self.write(
+            "package packages/magpie-bin magpie-bin",
+            "package packages/magpie-cli-bin magpie-cli-bin",
+        )
+        self.assertEqual(
+            self.read("pkglist_dirs").stdout.splitlines(),
+            ["packages/magpie-bin", "packages/magpie-cli-bin"],
+        )
+        self.assertEqual(
+            self.read("pkglist_names").stdout.splitlines(),
+            ["magpie-bin", "magpie-cli-bin"],
+        )
+
+    def test_a_line_that_is_not_the_frozen_shape_fails(self):
+        # The shape the producer writes is the contract; anything else is a
+        # protocol break, not a value to salvage.
+        self.write("magpie-bin")
+        result = self.read("pkglist_names")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not a 包清单 line", result.stderr)
+
+    def test_an_empty_list_is_no_packages(self):
+        self.write()
+        result = self.read("pkglist_dirs")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_a_missing_file_fails_loudly(self):
+        result = self.read("pkglist_dirs")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no such file", result.stderr)
 

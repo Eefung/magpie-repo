@@ -16,6 +16,7 @@ import contextlib
 import io
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -44,26 +45,36 @@ class InventoryAgreementTest(unittest.TestCase):
         self.assertNotIn("packages/magpie", workflow)
 
 
-class PackageDirsTest(unittest.TestCase):
-    def setUp(self):
-        self._cwd = os.getcwd()
-        self.addCleanup(os.chdir, self._cwd)
-        os.chdir(REPO)
+class PackageListTest(unittest.TestCase):
+    """`--packages` is the 包清单's only exit, and it carries the whole entry."""
 
-    def test_the_dirs_are_the_inventory_in_order(self):
-        self.assertEqual(
-            bump.package_dirs(bump.layout_for(REPO)),
-            [f"packages/{pkg}" for pkg in bump.PACKAGES],
-        )
-
-    def test_the_frozen_line_is_what_the_workflow_reads(self):
+    def entries(self) -> list[str]:
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
             self.assertEqual(bump.main(["--packages"]), 0)
+        return buffer.getvalue().splitlines()
+
+    def test_one_line_per_package_with_its_name(self):
+        # The pkgname travel with the directory: the release step used to read
+        # it back out of the PKGBUILD, a second source for a fact the inventory
+        # already holds as its keys.
         self.assertEqual(
-            buffer.getvalue().splitlines(),
-            ["packages=" + " ".join(f"packages/{pkg}" for pkg in bump.PACKAGES)],
+            self.entries(),
+            [f"package packages/{pkg} {pkg}" for pkg in bump.PACKAGES],
         )
+
+    def test_the_answer_does_not_depend_on_the_cwd(self):
+        # The value is named by the layout, not by whoever ran it. This test
+        # used to chdir to REPO first just to make the strings line up, which
+        # was the working directory leaking into the interface.
+        expected = self.entries()
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                self.assertEqual(self.entries(), expected)
+            finally:
+                os.chdir(cwd)
 
 
 if __name__ == "__main__":
