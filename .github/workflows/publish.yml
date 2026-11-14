@@ -115,6 +115,10 @@ jobs:
           fi
           # The dirs come from the 包清单 the check step wrote, not from this
           # file: a package added to the inventory is built without an edit here.
+          # They are named relative to the repository root, which is why this
+          # container mounts $PWD and works from /src. Those two facts are one
+          # assumption -- move the mount, keep the paths, and every build step
+          # resolves a directory that is not there.
           mapfile -t pkgdirs < <(pkglist_dirs /tmp/packages.txt)
           docker run --rm --volume "$PWD:/src" --workdir /src \
             archlinux:base-devel \

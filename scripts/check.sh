@@ -125,6 +125,9 @@ cat <<'EOF'
   in the publish job, and a real publish is what proves them. The seed takes
   only x86_64/*.pkg.tar.* across, so a file this repository still needs but
   does not write under that pattern would stop being served.
+- the container's workdir being the layout root: the 包清单 names directories
+  relative to the repository root and only the publish job's mount makes them
+  resolve. Nothing offline asserts the two agree.
 EOF
 
 if [ "$failures" -ne 0 ]; then
