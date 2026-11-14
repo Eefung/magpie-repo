@@ -48,7 +48,7 @@ sudo pacman -S magpie-cli-bin    # 终端版（静态，无 GUI 依赖），可�
 python3 scripts/bump.py --check                     # upstream=… / packaged … / bump=0|1
 python3 scripts/bump.py --render --version <版本>    # 生成 PKGBUILD 并打印 ver=<版本>；不给 --version 时取最新的已上传版本
 python3 -m unittest discover -s tests               # 离线单测，不联网也不进容器
-./scripts/check.sh                                  # 全部闸门：单测 + shellcheck + actionlint，本机有 makepkg 时再跑 probe
+./scripts/check.sh                                  # 全部闸门：单测 + shellcheck + ruff + actionlint，本机有 makepkg 时再跑 probe
 ./scripts/probe-repo-build.sh                       # 真 makepkg + 真 repo-add 跑构建、载荷核对与保留窗口，不需要容器与网络
 ./scripts/build-check.sh packages/magpie-bin        # 单包构建，装依赖后跑 --version 核对版本；最后三行是 pkgname= / pkgver= / artifact=
 

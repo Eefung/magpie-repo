@@ -3,9 +3,10 @@
 #
 #   ./scripts/check.sh
 #
-# Four gates: the offline tests, shellcheck over every shell script under
-# scripts/, actionlint over .github/workflows, and the probe -- the real
-# makepkg + repo-add chain, run when this machine has those tools.
+# Five gates: the offline tests, shellcheck over every shell script under
+# scripts/, ruff over the python that decides what gets published, actionlint
+# over .github/workflows, and the probe -- the real makepkg + repo-add chain,
+# run when this machine has those tools.
 #
 # The shell scripts are enumerated, not listed: a hand-written glob silently
 # skips a new directory, which is how scripts/lib/ went un-linted when it was
@@ -33,6 +34,7 @@ cache="${XDG_CACHE_HOME:-$HOME/.cache}/magpie-repo"
 # member at <cache>/<name>-v<version>/<member>.
 PINNED_TOOLS=(
     "shellcheck|0.11.0|8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198|https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz|shellcheck|1"
+    "ruff|0.17.5|7d261fc981a784668e19e9fa6ad437bfd95b67f2dc263fc1eab87d54d72fcc90|https://github.com/astral-sh/ruff/releases/download/0.17.5/ruff-x86_64-unknown-linux-gnu.tar.gz|ruff|1"
     "actionlint|1.7.12|8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8|https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz|actionlint|0"
 )
 
@@ -101,6 +103,18 @@ elif sc="$(pinned_tool shellcheck)"; then
     "$sc" -x -P "$here" "${shells[@]}" || failed "shellcheck"
 else
     failed "shellcheck (could not obtain the pinned copy)"
+fi
+
+heading "ruff"
+if rf="$(pinned_tool ruff)"; then
+    # F is pyflakes (undefined names, unused imports), E9 is syntax, EXE001 is a
+    # shebang without the executable bit. The rule set starts where the tree is
+    # already clean and grows from there: bump.py decides what gets published,
+    # and until this gate existed nothing linted it. --no-cache so a run leaves
+    # no .ruff_cache behind.
+    "$rf" check --no-cache --select F,E9,EXE001 "$here" "$root/tests" || failed "ruff"
+else
+    failed "ruff (could not obtain the pinned copy)"
 fi
 
 heading "actionlint"
