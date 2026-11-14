@@ -19,7 +19,6 @@ import urllib.error
 from email.message import Message
 from pathlib import Path
 from typing import Mapping
-from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
@@ -97,6 +96,7 @@ def layout_at(
     *,
     templates: Path | None = None,
     inventory: dict[str, str] | None = None,
+    arches: dict[str, str] | None = None,
 ) -> bump.Layout:
     """A layout pointing the renderer at a temporary tree.
 
@@ -110,6 +110,7 @@ def layout_at(
         templates=templates,
         packages_dir=root / "packages",
         inventory=inventory,
+        arches=arches,
         maintainer="Test Maintainer <test@example.invalid>",
     )
 
@@ -123,6 +124,7 @@ class LayoutForTest(unittest.TestCase):
             self.assertEqual(layout.templates, Path(tmp) / "templates")
             self.assertEqual(layout.packages_dir, Path(tmp) / "packages")
         self.assertEqual(layout.inventory, bump.PACKAGES)
+        self.assertEqual(layout.arches, bump.ARCHES)
         self.assertEqual(layout.maintainer, bump.DEFAULT_MAINTAINER)
 
     def test_an_override_moves_one_tree_only(self):
@@ -457,16 +459,16 @@ class TemplateArchesTest(unittest.TestCase):
         "}\n"
     )
 
-    def check(self, template: str) -> None:
-        bump.check_arches("magpie-bin", template, bump.placeholders(template))
+    def check(self, template: str, arches: dict[str, str] | None = None) -> None:
+        bump.check_arches("magpie-bin", template, bump.ARCHES if arches is None else arches)
 
     def test_a_template_that_agrees_with_the_table_passes(self):
         self.check(self.TEMPLATE)
 
     def test_an_arch_the_table_gained_names_the_template_that_lags(self):
-        with mock.patch.dict(bump.ARCHES, {"riscv64": "linux-riscv64"}):
-            with self.assertRaises(bump.BumpError) as caught:
-                self.check(self.TEMPLATE)
+        arches = {**bump.ARCHES, "riscv64": "linux-riscv64"}
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(self.TEMPLATE, arches)
         self.assertIn("magpie-bin", str(caught.exception))
         self.assertIn("riscv64", str(caught.exception))
 
@@ -519,7 +521,7 @@ class TemplateArchesTest(unittest.TestCase):
         for pkg in bump.PACKAGES:
             with self.subTest(pkg=pkg):
                 text = (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
-                bump.check_arches(pkg, text, bump.placeholders(text))
+                bump.check_arches(pkg, text, bump.ARCHES)
 
     def test_a_missing_placeholder_is_named(self):
         template = self.TEMPLATE.replace("'{{sha_linux-arm64}}'", "'" + "0" * 64 + "'")
@@ -530,12 +532,16 @@ class TemplateArchesTest(unittest.TestCase):
     def test_render_checks_the_arches_before_the_network(self):
         # The table gaining an arch means this repository's template lags, not
         # that upstream's release is missing an asset -- so say so without
-        # fetching anything.
-        with mock.patch.dict(bump.ARCHES, {"riscv64": "linux-riscv64"}):
-            with tempfile.TemporaryDirectory() as tmp:
-                fetch = FetchSpy({})
-                with self.assertRaises(bump.BumpError) as caught:
-                    bump.render("0.1.2", layout=layout_at(Path(tmp)), fetch=fetch)
+        # fetching anything. The table is handed in through the layout now; the
+        # test no longer monkeypatches the module to say "an arch table with
+        # riscv64 in it".
+        arches = {**bump.ARCHES, "riscv64": "linux-riscv64"}
+        with tempfile.TemporaryDirectory() as tmp:
+            fetch = FetchSpy({})
+            with self.assertRaises(bump.BumpError) as caught:
+                bump.render(
+                    "0.1.2", layout=layout_at(Path(tmp), arches=arches), fetch=fetch
+                )
         self.assertIn("riscv64", str(caught.exception))
         self.assertEqual(fetch.urls, [])
 

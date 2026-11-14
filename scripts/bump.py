@@ -66,7 +66,10 @@ PACKAGES = {
 
 # repo arch -> the suffix upstream puts in its asset names (magpie-linux-amd64).
 # One table: each template's arch=() and its sha_* placeholders are held to it,
-# so an arch cannot be added on one side only.
+# so an arch cannot be added on one side only. It is the default layout_for
+# hands to the render; nothing inside render() or check_arches reads it as a
+# module global any more, which is what made "a different arch table" untestable
+# without monkeypatching.
 ARCHES = {
     "x86_64": "linux-amd64",
     "aarch64": "linux-arm64",
@@ -80,13 +83,16 @@ class Layout:
     Every one of these was reachable from inside render() as a module global,
     so a caller had to learn four globals to use two parameters, and a test
     could only point the render at a temporary tree by monkeypatching the
-    module. The maintainer is read from the environment in main(), when the
-    layout is built -- not when this file is imported.
+    module. The arch table is here for the same reason, one refactor later: it
+    was the fifth global render() and check_arches both read. The maintainer is
+    read from the environment in main(), when the layout is built -- not when
+    this file is imported.
     """
 
     templates: Path
     packages_dir: Path
     inventory: Mapping[str, str]
+    arches: Mapping[str, str]
     maintainer: str
     root: Path
 
@@ -98,6 +104,7 @@ def layout_for(
     packages_dir: Path | None = None,
     maintainer: str = DEFAULT_MAINTAINER,
     inventory: Mapping[str, str] | None = None,
+    arches: Mapping[str, str] | None = None,
 ) -> Layout:
     """The one way a Layout is built, for production and for tests alike.
 
@@ -110,6 +117,7 @@ def layout_for(
         templates=root / "templates" if templates is None else templates,
         packages_dir=root / "packages" if packages_dir is None else packages_dir,
         inventory=dict(PACKAGES if inventory is None else inventory),
+        arches=dict(ARCHES if arches is None else arches),
         maintainer=maintainer,
         root=root,
     )
@@ -230,14 +238,14 @@ def template_suffixes(template: str) -> dict[str, str]:
     return dict(CASE_ARM_RE.findall(template))
 
 
-def check_arches(pkg: str, template: str, names: Sequence[str]) -> None:
+def check_arches(pkg: str, template: str, arches: Mapping[str, str]) -> None:
     """Hold a template's every arch-shaped part to the table, before fetching.
 
     Every package targets the same repo arches; a package that does not is a
-    change to ARCHES, not a template exception. Both directions bite, because
-    the arch a package claims and the checksum and source it carries have to be
-    about the same set: an arch added to the table with no template behind it,
-    and a template arch the table never heard of.
+    change to the arch table, not a template exception. Both directions bite,
+    because the arch a package claims and the checksum and source it carries
+    have to be about the same set: an arch added to the table with no template
+    behind it, and a template arch the table never heard of.
 
     The table is restated in the template four ways, so all four are checked:
     arch=(), source_{arch}=, sha256sums_{arch}= with its {{sha_suffix}}
@@ -245,27 +253,32 @@ def check_arches(pkg: str, template: str, names: Sequence[str]) -> None:
     suffix. Only the first, third and fourth used to be held; a table entry
     whose source_ array was forgotten rendered clean and failed inside the
     container, as a makepkg error pointing at something else.
+
+    The template's placeholders are read here rather than handed in: they follow
+    from the template, so asking the caller for them was an interface that could
+    disagree with the file it was describing.
     """
+    names = placeholders(template)
     declared = template_arches(template)
-    unknown = sorted(set(declared) - set(ARCHES))
+    unknown = sorted(set(declared) - set(arches))
     if unknown:
         raise BumpError(
             f"{pkg}: the template declares {', '.join(unknown)}, "
             "which the arch table knows no upstream suffix for"
         )
-    missing = sorted(set(ARCHES) - set(declared))
+    missing = sorted(set(arches) - set(declared))
     if missing:
         raise BumpError(f"{pkg}: the template leaves out {', '.join(missing)}")
 
     suffixes = template_suffixes(template)
-    strangers = sorted(set(suffixes) - set(ARCHES))
+    strangers = sorted(set(suffixes) - set(arches))
     if strangers:
         raise BumpError(
             f"{pkg}: package() has a case arm for {', '.join(strangers)}, "
             "which the arch table never heard of"
         )
 
-    for arch, suffix in ARCHES.items():
+    for arch, suffix in arches.items():
         if f"source_{arch}=" not in template:
             raise BumpError(f"{pkg}: the template has no source_{arch}= array")
         if f"sha256sums_{arch}=" not in template:
@@ -384,7 +397,7 @@ def render(
             # template for a package in its own inventory. Say which.
             raise BumpError(f"no template for {pkg}: {path} ({exc.strerror})") from exc
         names = placeholders(template)
-        check_arches(pkg, template, names)
+        check_arches(pkg, template, layout.arches)
         plans.append((pkg, prefix, template, names))
 
     sums = release_sums(version, fetch=fetch)
@@ -420,7 +433,7 @@ def render(
             name: value for name, value in supplied.items()
             if name in names and value is not None
         }
-        for suffix in ARCHES.values():
+        for suffix in layout.arches.values():
             asset = f"{prefix}-{suffix}"
             if asset not in sums:
                 raise BumpError(f"{pkg}: the release has no {asset}")
