@@ -17,6 +17,11 @@ dir="${1:?usage: build-check.sh <package dir>}"
 [ -d "$dir" ] || { echo "no such directory: $dir" >&2; exit 1; }
 cd "$dir"
 
+# A package file left by an earlier or failed run must not be published later:
+# build-repo.sh installs every *.pkg.tar.* it finds here and picks the newest
+# by version, so a stale build can outrank the one just made.
+rm -f ./*.pkg.tar.*
+
 # Keep the downloaded release binaries out of the package directory: makepkg
 # would otherwise drop them next to PKGBUILD, where they would be committed.
 # It lives inside the build directory on purpose: when this runs as root it is
