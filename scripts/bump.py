@@ -59,10 +59,6 @@ ARCH_LINE_RE = re.compile(r"^arch=\(([^)]*)\)\s*$", re.M)
 # The package() case arm that turns $CARCH into the upstream asset suffix:
 #     x86_64)  _suffix=amd64 ;;
 CASE_ARM_RE = re.compile(r"^\s*(\w+)\)\s*_suffix=([\w-]+)\s*;;", re.M)
-# A source_<arch>=() array, anchored at the line start so a commented-out
-# array is not mistaken for a live one. Both shapes the templates use land
-# here: one entry per line, and the whole array on one line.
-SOURCE_ARRAY_RE = r"^source_{arch}=\((.*?)\)\s*$"
 
 DEFAULT_MAINTAINER = "Eefung <eefung@tuta.io>"
 
@@ -294,6 +290,30 @@ def template_suffixes(template: str) -> dict[str, str]:
     return dict(CASE_ARM_RE.findall(template))
 
 
+def array_entries(template: str, key: str) -> list[str] | None:
+    """The raw entries of a `key=(...)` array, or None when there is no such array.
+
+    Anchored at the line start, so a commented-out array is not mistaken for a
+    live one, and read to the closing paren, so both shapes the templates use
+    parse: one entry per line, and the whole array on one line.
+
+    This is the one reader for every array a template declares. The fifth
+    restatement of the arch 表 -- `sha256sums_<arch>=` -- used to be probed for
+    with `in template` while the other four were parsed, so a commented-out
+    checksum array passed the guard and rendered a PKGBUILD whose source had no
+    integrity check at all.
+    """
+    match = re.search(rf"^{re.escape(key)}=\((.*?)\)\s*$", template, re.S | re.M)
+    if match is None:
+        return None
+    entries = []
+    for line in match.group(1).splitlines():
+        line = line.strip().rstrip(",").strip()
+        if line:
+            entries.append(line)
+    return entries
+
+
 def source_entries(template: str, arch: str) -> list[tuple[str, str]] | None:
     """The (file name, url) pairs a template's source_<arch>=() array carries.
 
@@ -303,19 +323,14 @@ def source_entries(template: str, arch: str) -> list[tuple[str, str]] | None:
     is called and where it comes from -- are both restatements of the arch
     table.
     """
-    match = re.search(
-        SOURCE_ARRAY_RE.format(arch=re.escape(arch)), template, re.S | re.M
-    )
-    if match is None:
+    entries = array_entries(template, f"source_{arch}")
+    if entries is None:
         return None
-    entries = []
-    for line in match.group(1).splitlines():
-        line = line.strip().rstrip(",").strip()
-        if not line:
-            continue
-        name, _, url = line.partition("::")
-        entries.append((name.strip().strip("'\""), url.strip().strip("'\"")))
-    return entries
+    pairs = []
+    for entry in entries:
+        name, _, url = entry.partition("::")
+        pairs.append((name.strip().strip("'\""), url.strip().strip("'\"")))
+    return pairs
 
 
 def check_pkgname(pkg: str, template: str) -> None:
@@ -352,10 +367,11 @@ def check_arches(pkg: str, template: str, arches: Mapping[str, str]) -> None:
     arch=(), the source_<arch>= array (its key, the file name it gives the
     download, and the asset its URL ends in), sha256sums_<arch>= with its
     {{sha_suffix}} placeholder, and the package() case block that turns $CARCH
-    into the same suffix. The source array used to be probed for with a
-    substring, so a commented-out array passed and an aarch64 entry pointing at
-    the amd64 asset rendered clean -- it took a checksum mismatch inside the
-    container to say so.
+    into the same suffix. Every one of them is read as an array now: the source
+    array used to be probed for with a substring, and the checksum array still
+    was, so a commented-out array passed and an aarch64 entry pointing at the
+    amd64 asset -- or a source with no checksums at all -- rendered clean. The
+    build container is what noticed, if anything did.
 
     The template's placeholders are read here rather than handed in: they follow
     from the template, so asking the caller for them was an interface that could
@@ -400,7 +416,7 @@ def check_arches(pkg: str, template: str, arches: Mapping[str, str]) -> None:
                     f"{pkg}: source_{arch} downloads {url}, "
                     f"which is not a {suffix} asset"
                 )
-        if f"sha256sums_{arch}=" not in template:
+        if array_entries(template, f"sha256sums_{arch}") is None:
             raise BumpError(f"{pkg}: the template has no sha256sums_{arch}= array")
         if f"sha_{suffix}" not in names:
             raise BumpError(

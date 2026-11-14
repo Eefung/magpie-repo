@@ -726,6 +726,15 @@ class TemplateArchesTest(unittest.TestCase):
             self.check(template)
         self.assertIn("source_aarch64", str(caught.exception))
 
+    def test_a_checksum_array_that_is_only_a_comment_is_named(self):
+        # The fifth restatement was still read with `in template`, so this one
+        # passed: source_aarch64 was live with no checksums for it, and the
+        # failure landed on whoever built aarch64 -- which CI never does.
+        template = self.TEMPLATE.replace("sha256sums_aarch64=(", "# retired sha256sums_aarch64=(")
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(template)
+        self.assertIn("sha256sums_aarch64", str(caught.exception))
+
     def test_the_real_template_is_read_past_its_first_line(self):
         # magpie-bin spreads source_x86_64 over several lines; the guard has to
         # read the array, not just find the key.
