@@ -117,9 +117,10 @@ heading "not covered here"
 cat <<'EOF'
 - build-check.sh's root branch (useradd / su / chown and the depends install
   behind it): it only exists inside the publish container, so a publish run
-  proves it. The rest of build-check.sh runs offline in
-  tests/test_build_check.py -- build-repo.sh's window and database in
-  tests/test_build_repo.py, the 载荷核对 in tests/test_pkg_sh.py.
+  proves it. The rest of that path runs without root: the offline tests drive
+  the scripts against stubs (tests/test_build_check.py, tests/test_build_repo.py,
+  tests/test_pkg_sh.py), and scripts/probe-repo-build.sh runs the real makepkg
+  and repo-add against a synthesized package -- no container, no network.
 - the publish steps themselves -- seeding repo/ from the previous gh-pages
   tree, the force push, the Release, the commit back to main: they only exist
   in the publish job, and a real publish is what proves them. The seed takes
