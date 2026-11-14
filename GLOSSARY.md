@@ -32,5 +32,9 @@ _Avoid_: 仓库（会和 git 仓库混淆）
 软件源里每个包同时保留的版本数，`KEEP=2`。旧版本只给刚同步过旧 db 的客户端兜底，db 本身只列当前版。
 _Avoid_: 历史版本、归档
 
+**包文件**：
+软件源 `x86_64/` 里的 `.pkg.tar.zst`，名字恒为 `pkgname-pkgver-pkgrel-arch`，由 makepkg 决定。排序、保留窗口、db 条目读的是同一个顺序。
+_Avoid_: 安装包、构建产物
+
 **builder**：
 容器里跑 makepkg 的非特权账户——makepkg 拒绝以 root 运行。

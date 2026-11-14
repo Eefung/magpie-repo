@@ -18,3 +18,17 @@ pkg_field() {
     [ -n "$value" ] || { echo "no ${name}= in ${file}" >&2; return 1; }
     printf '%s\n' "$value"
 }
+
+# pkgfiles <repo dir> <pkgname> -- that package's files in that directory,
+# oldest version first. The naming (pkgname-pkgver-pkgrel-arch) and the
+# ordering are one rule, so it lives here: the retention window takes the head
+# of this list and the database entry takes its tail, and neither can disagree
+# with the other about which build is current.
+pkgfiles() {
+    local out="$1" pkgname="$2"
+    local -a files
+    # shellcheck disable=SC2012  # names here are pkgname-pkgver-pkgrel-arch
+    mapfile -t files < <(ls -1 "$out/$pkgname"-[0-9]*.pkg.tar.* 2>/dev/null | sort -V)
+    [ "${#files[@]}" -gt 0 ] || return 0
+    printf '%s\n' "${files[@]}"
+}

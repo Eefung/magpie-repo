@@ -55,8 +55,7 @@ done
 prune() {
     local pkgname="$1" file
     local -a files
-    # shellcheck disable=SC2012  # package filenames are pkgname-pkgver-pkgrel-arch
-    mapfile -t files < <(ls -1 "$out/$pkgname"-[0-9]*.pkg.tar.* 2>/dev/null | sort -V)
+    mapfile -t files < <(pkgfiles "$out" "$pkgname")
     [ "${#files[@]}" -gt "$KEEP" ] || return 0
     for file in "${files[@]:0:${#files[@]}-KEEP}"; do
         echo "pruning $(basename "$file")"
@@ -74,12 +73,7 @@ done
 # window), but an entry in the db would also let a pinned install reach back
 # to them, which is not what the window is for.
 newest() {
-    local pkgname="$1"
-    local -a files
-    # shellcheck disable=SC2012  # package filenames are pkgname-pkgver-pkgrel-arch
-    mapfile -t files < <(ls -1 "$out/$pkgname"-[0-9]*.pkg.tar.* 2>/dev/null | sort -V)
-    [ "${#files[@]}" -gt 0 ] && printf '%s\n' "${files[${#files[@]}-1]}"
-    return 0
+    pkgfiles "$out" "$1" | tail -1
 }
 mapfile -t current < <(for dir in "$@"; do newest "$(pkg_field "$dir/PKGBUILD" pkgname)"; done)
 [ "${#current[@]}" -gt 0 ] || { echo "no package files to put in the database" >&2; exit 1; }
