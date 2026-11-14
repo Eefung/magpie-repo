@@ -14,12 +14,16 @@
 #
 # It owns its directory from start to finish. Whatever the build leaves behind
 # (src/, pkg/, .srcdest/, .SRCINFO) is removed on every exit path, and the one
-# thing that survives is the package file -- because the caller is told where it
-# is by the frozen line
+# thing that survives is the package file. What the caller gets instead of the
+# directory's shape is three frozen lines, the last one always last:
 #
+#   pkgname=<pkgname>
+#   pkgver=<pkgver>
 #   artifact=<absolute path>
 #
-# instead of having to interpret the shape the directory was left in.
+# They are the whole handover: build-repo.sh takes the name from them instead of
+# reading PKGBUILD a second time, and this is the module that ran makepkg, so it
+# is the one that knows what it built.
 set -euo pipefail
 
 # shellcheck source=lib/pkg.sh
@@ -110,6 +114,7 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 
 pkgver="$(pkg_field PKGBUILD pkgver)"
+pkgname="$(pkg_field PKGBUILD pkgname)"
 
 # Running the program only proves it loads. The point of the check is that the
 # payload reports the 版本 being packaged, so a binary that came out of the
@@ -120,7 +125,9 @@ pkgver="$(pkg_field PKGBUILD pkgver)"
 payload_reports "$artifact" "$pkgver" >/dev/null || exit 1
 echo "ok: $(basename "$artifact") reports $pkgver"
 
-# The last line is the one fact the caller needs, and the one thing the trap
-# above keeps for it: only a run that reaches this line leaves a file behind.
+# The lines the caller reads, and the one thing the trap above keeps for it:
+# only a run that reaches here leaves a file behind.
 keep="$artifact"
+echo "pkgname=$pkgname"
+echo "pkgver=$pkgver"
 echo "artifact=$artifact"

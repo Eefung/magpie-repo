@@ -23,15 +23,20 @@ SCRIPT = REPO / "scripts" / "build-repo.sh"
 
 STUB_BUILD_CHECK = """\
 #!/usr/bin/env bash
-# Stands in for build-check.sh: makes the file it would have built and hands
-# back its path, the way the real one does.
+# Stands in for build-check.sh: names the file makepkg would have made, makes
+# it, and hands back the same three frozen lines the real one prints. The two
+# fields come from pkg.sh, not from a sed of its own -- the naming rule has one
+# reader, and a stub that spelled pkgver its own way was a second copy of it.
 set -euo pipefail
 dir="$1"
-pkgname="$(sed -n 's/^pkgname=//p' "$dir/PKGBUILD" | head -1 | tr -d "'\\"")"
-pkgver="$(sed -n 's/^pkgver=//p' "$dir/PKGBUILD" | head -1 | tr -d "'\\"")"
+source "${PKG_SH:?}"
+pkgname="$(pkg_field "$dir/PKGBUILD" pkgname)"
+pkgver="$(pkg_field "$dir/PKGBUILD" pkgver)"
 artifact="$dir/$pkgname-$pkgver-1-x86_64.pkg.tar.zst"
 : > "$artifact"
 echo "ok: $(basename "$artifact")"
+echo "pkgname=$pkgname"
+echo "pkgver=$pkgver"
 echo "artifact=$artifact"
 """
 
@@ -79,6 +84,7 @@ class BuildRepoTest(unittest.TestCase):
     def run_script(self, build_check: Path | None = None) -> subprocess.CompletedProcess:
         env = dict(os.environ)
         env["BUILD_CHECK"] = str(build_check or self.stub_build)
+        env["PKG_SH"] = str(REPO / "scripts" / "lib" / "pkg.sh")
         env["REPO_ADD_LOG"] = str(self.record)
         env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
         return subprocess.run(

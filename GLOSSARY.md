@@ -13,8 +13,12 @@ _Avoid_: 官方、源仓库
 _Avoid_: 版本号、tag
 
 **包清单**：
-本仓库发布的包组成的集合——目录名，以及它们在上游资产名里的前缀。渲染、`--check` 与打包都从它取，`--packages` 是它唯一的出口：一行一个包，`package <相对仓库根的目录> <pkgname>`。目录给打包步骤，`pkgname` 给发布步骤，两者都不在 workflow 里出现第二次。`pkgname` 同时是包的目录名、清单的 key 与模板里 `pkgname=` 的字面值：渲染期把模板钉到 key 上，不等就不写盘，所以打包步骤从它正在构建的那份 PKGBUILD 读出的名字，与发布步骤手里的 key 是同一个值。
+本仓库发布的包组成的集合——目录名，以及它们在上游资产名里的前缀。渲染、`--check` 与打包都从它取，`--packages` 是它唯一的出口：一行一个包，`package <相对仓库根的目录> <pkgname>`。目录给打包步骤，`pkgname` 给发布步骤，两者都不在 workflow 里出现第二次。`pkgname` 同时是包的目录名、清单的 key 与模板里 `pkgname=` 的字面值：渲染期把模板钉到 key 上，不等就不写盘；渲染出的 PKGBUILD 又由 `tests/test_templates.py` 钉在模板上，所以 `build-check` 从 PKGBUILD 读出的 `pkgname=`（作为冻结行交出）与发布步骤手里的 key 是同一个值。
 _Avoid_: 包列表、packages 变量
+
+**冻结行**：
+生产者打印一次、读者不再回头解析的 `name=value` 行：`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`build-check` 的 `pkgname=` / `pkgver=` / `artifact=`、`--check` 的 `bump=`。读它只走 `scripts/lib/pkg.sh` 的 `line_field` 与 `pkglist_field`：重复一行是协议断了，空值算失败，缺行算什么由调用方定（`|| true` 加默认值）。措辞是契约的那几条之外，其余是日志。
+_Avoid_: 输出格式、stdout
 
 **arch 表**：
 `ARCHES`——本仓库发布的 arch 与上游资产名后缀的对应（`x86_64` 对 `linux-amd64`）。模板里 `arch=()`、`source_<arch>=`（文件名后缀与下载 URL 两处）、`sha256sums_<arch>=` 与 `package()` 的 `case` 四处都受它约束：加一个 arch 是改这张表，不是给某个模板开例外。渲染前的 `check_arches` 逐条比，不是查子串。

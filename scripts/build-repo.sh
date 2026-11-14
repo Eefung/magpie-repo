@@ -25,13 +25,16 @@ KEEP="${KEEP:-2}"          # versions of each package kept in the repository
 out="$(mkdir -p "$out" && cd "$out" && pwd)"
 
 # --- build -------------------------------------------------------------------
-# build-check owns its package directory and answers with one line: where the
-# package file it made is. Taking that path is the whole handover -- no globbing
-# for whatever happens to be lying there, no guessing by timestamp.
+# build-check owns its package directory and answers with frozen lines: which
+# package it just built and where the package file is. Taking those is the whole
+# handover -- no globbing for whatever happens to be lying there, no guessing by
+# timestamp, and no second read of the PKGBUILD for a name the producer already
+# had.
 # BUILD_CHECK is the one seam: tests point it at a stub so this script's window
 # and database handling can run offline, the way build-check cannot.
 BUILD_CHECK="${BUILD_CHECK:-$here/build-check.sh}"
 built=""
+built_name=""
 build_one() {
     local dir="$1" log
     log="$(mktemp)"
@@ -42,8 +45,10 @@ build_one() {
         return 1
     fi
     cat "$log"
-    # Not `local`: the caller moves the file this names.
-    if ! built="$(line_field artifact "$log")"; then
+    # Not `local`: the caller moves the file this names, and files the package
+    # under the name this names.
+    if ! built="$(line_field artifact "$log")" \
+        || ! built_name="$(line_field pkgname "$log")"; then
         rm -f "$log"
         echo "building $dir failed" >&2
         return 1
@@ -58,7 +63,7 @@ declare -a pkgnames=()
 for dir in "$@"; do
     build_one "$dir"
     mv -f "$built" "$out/"
-    pkgnames+=("$(pkg_field "$dir/PKGBUILD" pkgname)")
+    pkgnames+=("$built_name")
 done
 
 # --- keep only the newest KEEP builds of every package ------------------------

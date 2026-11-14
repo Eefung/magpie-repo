@@ -106,6 +106,11 @@ class BuildCheckTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         artifact = self.artifact_of(result)
         self.assertTrue(artifact.is_file(), result.stdout)
+        # The handover build-repo.sh reads: which package, which version, and
+        # where the file is -- the last of the three, always last. The name is
+        # here so the consumer does not read PKGBUILD a second time.
+        self.assertIn("pkgname=magpie-bin\n", result.stdout)
+        self.assertIn(f"pkgver={self.pkgver()}\n", result.stdout)
         # The one thing the caller is promised, and the only thing left: no
         # src/, pkg/, .srcdest/, .SRCINFO and no second package file.
         self.assertEqual(
