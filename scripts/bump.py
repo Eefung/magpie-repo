@@ -18,12 +18,13 @@ The network enters through an injected `fetch`, so the decisions -- which
 version wins, which checksum goes where, whether a template and its values
 agree -- are exercised offline: python3 -m unittest discover -s tests
 
-Each mode ends with frozen lines a caller reads instead of re-deriving it from
-the files: `--check` prints `upstream=`, `packaged <pkg>=`, `bump=` and
-`behind=`; `--render` prints `ver=<version>`; `--packages` prints
-`package <dir> <pkgname>`, one line per package. The workflow reads those
-through pkg.sh and nothing else, so the wording is a contract -- change it
-with the reader.
+Two facts leave through frozen lines, because a caller reads them instead of
+re-deriving them from the files: `--render` prints `ver=<version>`, and
+`--check` prints `bump=0|1`. `--packages` prints `package <dir> <pkgname>`, one
+line per package, read through pkglist_field. Those are contracts -- change one
+with its reader in pkg.sh. The rest of `--check`'s output (`upstream=`,
+`packaged <pkg>=`, `behind=`) is a log for whoever reads the run: reword it
+freely, and let the tests assert what it means rather than how it reads.
 
 Stdlib only: runs on any python3 in CI and on the user's machine alike.
 """

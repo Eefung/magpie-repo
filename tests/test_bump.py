@@ -400,7 +400,13 @@ class PackagedVersionsTest(unittest.TestCase):
 
 
 class CheckTest(unittest.TestCase):
-    """The stdout protocol: frozen for the workflow, warnings left free."""
+    """What `--check` says: the frozen line, and the log's meaning.
+
+    `bump=` is what the workflow reads through pkg.sh, so its shape is a
+    contract. The rest of the output is a log for whoever reads the run --
+    this class used to assert all five lines verbatim and in order, which made
+    a reworded prose line a test failure with no caller behind it.
+    """
 
     def lines(self, fetch, out_root) -> list[str]:
         buffer = io.StringIO()
@@ -408,47 +414,60 @@ class CheckTest(unittest.TestCase):
             bump.check(layout=layout_at(out_root), fetch=fetch)
         return buffer.getvalue().splitlines()
 
+    def log_of(self, fetch, out_root) -> dict:
+        """The log's meaning: what was compared, and what it concluded."""
+        parsed = {
+            "upstream": None,
+            "packaged": {},
+            "bump": None,
+            "behind": set(),
+            "warnings": [],
+        }
+        for line in self.lines(fetch, out_root):
+            if line.startswith("upstream="):
+                parsed["upstream"] = line.removeprefix("upstream=")
+            elif line.startswith("packaged "):
+                pkg, _, ver = line.removeprefix("packaged ").partition("=")
+                parsed["packaged"][pkg] = ver
+            elif line.startswith("bump="):
+                parsed["bump"] = line.removeprefix("bump=")
+            elif line.startswith("behind="):
+                parsed["behind"] = set(line.removeprefix("behind=").split())
+            elif line.startswith("warning:"):
+                parsed["warnings"].append(line)
+        return parsed
+
     def test_reports_every_package_that_is_behind(self):
         fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
         with tempfile.TemporaryDirectory() as tmp:
             root = staged_root(Path(tmp), {"magpie-bin": "0.1.9", "magpie-cli-bin": "0.1.9"})
-            self.assertEqual(
-                self.lines(fetch, root),
-                [
-                    "upstream=0.1.10",
-                    "packaged magpie-bin=0.1.9",
-                    "packaged magpie-cli-bin=0.1.9",
-                    "bump=1",
-                    "behind=magpie-bin magpie-cli-bin",
-                ],
-            )
+            log = self.log_of(fetch, root)
+        self.assertEqual(log["upstream"], "0.1.10")
+        self.assertEqual(log["packaged"], {"magpie-bin": "0.1.9", "magpie-cli-bin": "0.1.9"})
+        self.assertEqual(log["bump"], "1")
+        self.assertEqual(log["behind"], {"magpie-bin", "magpie-cli-bin"})
 
     def test_says_nothing_to_do_when_the_versions_match(self):
         fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
         with tempfile.TemporaryDirectory() as tmp:
             root = staged_root(Path(tmp), {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
-            self.assertEqual(
-                self.lines(fetch, root),
-                [
-                    "upstream=0.1.10",
-                    "packaged magpie-bin=0.1.10",
-                    "packaged magpie-cli-bin=0.1.10",
-                    "bump=0",
-                ],
-            )
+            log = self.log_of(fetch, root)
+        self.assertEqual(log["bump"], "0")
+        self.assertEqual(log["behind"], set())
+        self.assertEqual(
+            log["packaged"], {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"}
+        )
 
     def test_treats_a_missing_pkgbuild_as_behind(self):
         fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(
-                self.lines(fetch, Path(tmp)),
-                [
-                    "upstream=0.1.10",
-                    "warning: no rendered PKGBUILD yet",
-                    "bump=1",
-                    "behind=magpie-bin magpie-cli-bin",
-                ],
-            )
+            log = self.log_of(fetch, Path(tmp))
+        # No PKGBUILD on disk at all: nothing to report as packaged, and the
+        # reader is warned rather than left to read an empty section.
+        self.assertEqual(log["packaged"], {})
+        self.assertEqual(len(log["warnings"]), 1)
+        self.assertEqual(log["bump"], "1")
+        self.assertEqual(log["behind"], {"magpie-bin", "magpie-cli-bin"})
 
     def test_one_missing_pkgbuild_is_still_behind(self):
         # The other package is current, so only the absent one is behind; a
@@ -456,15 +475,10 @@ class CheckTest(unittest.TestCase):
         fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
         with tempfile.TemporaryDirectory() as tmp:
             root = staged_root(Path(tmp), {"magpie-bin": "0.1.10"})
-            self.assertEqual(
-                self.lines(fetch, root),
-                [
-                    "upstream=0.1.10",
-                    "packaged magpie-bin=0.1.10",
-                    "bump=1",
-                    "behind=magpie-cli-bin",
-                ],
-            )
+            log = self.log_of(fetch, root)
+        self.assertEqual(log["packaged"], {"magpie-bin": "0.1.10"})
+        self.assertEqual(log["bump"], "1")
+        self.assertEqual(log["behind"], {"magpie-cli-bin"})
 
 
 class TemplatePkgnameTest(unittest.TestCase):
