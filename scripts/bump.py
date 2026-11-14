@@ -541,7 +541,19 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    fetch: Fetch = http_fetch,
+    layout: Layout | None = None,
+) -> int:
+    """The entry point CI calls: argv in, 冻结行 and an exit code out.
+
+    argv, fetch and the layout are parameters so a test can drive the same door
+    the workflow drives. Before this, `fetch` stopped one level below: the
+    tests went in through check() and render() directly, and the two things CI
+    actually reads -- the frozen lines and the exit code -- were never run.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true", help="compare packaged and upstream versions")
@@ -549,16 +561,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--packages", action="store_true", help="print the package directories to build")
     parser.add_argument("--version", help="render this version instead of upstream's latest")
     args = parser.parse_args(argv)
-
     try:
-        layout = layout_for(maintainer=os.environ.get("MAINTAINER", DEFAULT_MAINTAINER))
+        if layout is None:
+            layout = layout_for(maintainer=os.environ.get("MAINTAINER", DEFAULT_MAINTAINER))
         if args.packages:
             for directory, pkg in package_entries(layout):
                 log(f"package {directory} {pkg}")
             return 0
         if args.check:
-            return check(layout=layout)
-        render(args.version or latest_version(), layout=layout)
+            return check(layout=layout, fetch=fetch)
+        render(args.version or latest_version(fetch=fetch), layout=layout, fetch=fetch)
         return 0
     except BumpError as exc:
         sys.exit(str(exc))

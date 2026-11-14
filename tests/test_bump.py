@@ -481,6 +481,91 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(log["behind"], {"magpie-cli-bin"})
 
 
+class MainTest(unittest.TestCase):
+    """The process boundary: argv in, 冻结行 and an exit code out.
+
+    CI reads exactly those two things, and nothing drove the entry point that
+    prints them: every other class calls check()/render() one level below, so a
+    swallowed exit code kept the suite green. `fetch` and the layout are handed
+    to main() now, which is what lets this class exist.
+    """
+
+    VERSION = "0.1.2"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.layout = layout_at(self.root)
+
+    def table(self, version: str = VERSION) -> dict:
+        return {
+            sums_url(version): sums_body(
+                {
+                    "magpie-linux-amd64": "1" * 64,
+                    "magpie-linux-arm64": "2" * 64,
+                    "magpie-cli-linux-amd64": "3" * 64,
+                    "magpie-cli-linux-arm64": "4" * 64,
+                }
+            ),
+            license_url(version): b"license",
+            bump.ICON_URL: b"icon",
+        }
+
+    def cli(self, *argv, fetch) -> tuple[object, str]:
+        """Run the entry point; return its exit code and what it printed."""
+        buffer = io.StringIO()
+        code: object = 0
+        with contextlib.redirect_stdout(buffer):
+            try:
+                code = bump.main(list(argv), fetch=fetch, layout=self.layout)
+            except SystemExit as exc:
+                code = exc.code
+        return code, buffer.getvalue()
+
+    def test_check_hands_over_both_frozen_lines(self):
+        fetch = FetchSpy({**version_sources(github=self.VERSION, site=self.VERSION), **self.table()})
+        code, out = self.cli("--check", fetch=fetch)
+        self.assertEqual(code, 0)
+        self.assertIn(f"upstream={self.VERSION}", out.splitlines())
+        self.assertIn("bump=1", out.splitlines())
+
+    def test_render_writes_and_hands_over_the_version(self):
+        code, out = self.cli("--render", "--version", self.VERSION, fetch=FetchSpy(self.table()))
+        self.assertEqual(code, 0)
+        self.assertIn(f"ver={self.VERSION}", out.splitlines())
+        for pkg in bump.PACKAGES:
+            self.assertIn(
+                f"pkgver={self.VERSION}",
+                (self.root / "packages" / pkg / "PKGBUILD").read_text(),
+            )
+
+    def test_a_bump_error_is_one_line_and_not_a_zero_exit(self):
+        # The exit code is what makes the workflow step fail; a zero here turns
+        # a broken render into "nothing to publish".
+        fetch = FetchSpy(self.table())
+        code, _ = self.cli("--render", "--version", "0.1.2-rc1", fetch=fetch)
+        self.assertIsInstance(code, str)
+        self.assertIn("digits separated by dots", str(code))
+        self.assertEqual(fetch.urls, [])
+
+    def test_a_http_error_is_one_line_and_not_a_zero_exit(self):
+        url = sums_url(self.VERSION)
+        fetch = FetchSpy({url: urllib.error.HTTPError(url, 403, "blocked", Message(), None)})
+        code, _ = self.cli("--render", "--version", self.VERSION, fetch=fetch)
+        self.assertIsInstance(code, str)
+        self.assertIn("HTTP 403", str(code))
+
+    def test_a_network_error_is_one_line_and_not_a_zero_exit(self):
+        table: dict[str, bytes | None | BaseException] = {
+            sums_url(self.VERSION): sums_body({"magpie-linux-amd64": "1" * 64}),
+            license_url(self.VERSION): urllib.error.URLError("no route to host"),
+        }
+        code, _ = self.cli("--render", "--version", self.VERSION, fetch=FetchSpy(table))
+        self.assertIsInstance(code, str)
+        self.assertIn("network error", str(code))
+
+
 class TemplatePkgnameTest(unittest.TestCase):
     """A template's literal pkgname= is the inventory key it is filed under."""
 
