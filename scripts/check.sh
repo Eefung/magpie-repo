@@ -15,9 +15,10 @@
 # meaning "the gate did not run". Each digest is the sha256 of the release
 # asset as fetched at pin time; bump the version and the digest together.
 #
-# What this cannot reach: the package build. build-check.sh's root branch
-# (useradd / su / chown) only exists inside the publish job's container, so a
-# change there is proven by a publish run rather than by this script.
+# What this cannot reach: build-check.sh's root branch (useradd / su / chown),
+# which only exists inside the publish job's container. The rest of the package
+# build -- the retention window, the database entry, the checksum file -- runs
+# offline in tests/test_build_repo.py, against the real build-repo.sh.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -108,8 +109,9 @@ fi
 
 heading "not covered here"
 cat <<'EOF'
-- the package build: build-repo.sh in the Arch container, including
-  build-check.sh's root branch (useradd / su / chown). A publish run proves it.
+- build-check.sh's root branch (useradd / su / chown): it only exists in the
+  publish job's container, so a publish run proves it. build-repo.sh's window,
+  database and checksums run offline in tests/test_build_repo.py.
 EOF
 
 if [ "$failures" -ne 0 ]; then

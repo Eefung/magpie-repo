@@ -29,11 +29,14 @@ root="$(dirname "$out")"
 # build-check owns its package directory and answers with one line: where the
 # package file it made is. Taking that path is the whole handover -- no globbing
 # for whatever happens to be lying there, no guessing by timestamp.
+# BUILD_CHECK is the one seam: tests point it at a stub so this script's window,
+# database and checksum handling can run offline, the way build-check cannot.
+BUILD_CHECK="${BUILD_CHECK:-$here/build-check.sh}"
 built=""
 build_one() {
     local dir="$1" log
     log="$(mktemp)"
-    if ! "$here/build-check.sh" "$dir" >"$log" 2>&1; then
+    if ! "$BUILD_CHECK" "$dir" >"$log" 2>&1; then
         cat "$log" >&2
         rm -f "$log"
         echo "building $dir failed" >&2
