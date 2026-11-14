@@ -100,15 +100,37 @@ def layout_at(
 ) -> bump.Layout:
     """A layout pointing the renderer at a temporary tree.
 
-    Templates default to the repository's own: the tests are about what gets
-    filled in, not about keeping a second copy of them in step.
+    Only the output directory moves: the templates and the inventory are the
+    repository's own unless a test overrides them. This goes through the
+    production constructor now, so the defaults under test are the ones that
+    ship.
     """
-    return bump.Layout(
-        templates=REPO / "templates" if templates is None else templates,
+    return bump.layout_for(
+        REPO,
+        templates=templates,
         packages_dir=root / "packages",
-        inventory=dict(bump.PACKAGES if inventory is None else inventory),
+        inventory=inventory,
         maintainer="Test Maintainer <test@example.invalid>",
     )
+
+
+class LayoutForTest(unittest.TestCase):
+    """The production constructor's defaults, exercised rather than assumed."""
+
+    def test_both_trees_come_from_the_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            layout = bump.layout_for(Path(tmp))
+            self.assertEqual(layout.templates, Path(tmp) / "templates")
+            self.assertEqual(layout.packages_dir, Path(tmp) / "packages")
+        self.assertEqual(layout.inventory, bump.PACKAGES)
+        self.assertEqual(layout.maintainer, bump.DEFAULT_MAINTAINER)
+
+    def test_an_override_moves_one_tree_only(self):
+        # What the tests need: the repository's templates, the output elsewhere.
+        with tempfile.TemporaryDirectory() as tmp:
+            layout = bump.layout_for(Path(tmp), packages_dir=Path(tmp) / "out")
+            self.assertEqual(layout.templates, Path(tmp) / "templates")
+            self.assertEqual(layout.packages_dir, Path(tmp) / "out")
 
 
 class HighestTest(unittest.TestCase):

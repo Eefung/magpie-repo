@@ -90,12 +90,21 @@ class Layout:
 def layout_for(
     root: Path = ROOT,
     *,
+    templates: Path | None = None,
+    packages_dir: Path | None = None,
     maintainer: str = DEFAULT_MAINTAINER,
     inventory: Mapping[str, str] | None = None,
 ) -> Layout:
+    """The one way a Layout is built, for production and for tests alike.
+
+    A test that needs the output somewhere else, or a different template tree,
+    overrides that one root and leaves the rest of the production defaults
+    alone. Before this, tests hand-assembled a Layout, so every default lived
+    twice and a field added here had to be added there too.
+    """
     return Layout(
-        templates=root / "templates",
-        packages_dir=root / "packages",
+        templates=root / "templates" if templates is None else templates,
+        packages_dir=root / "packages" if packages_dir is None else packages_dir,
         inventory=dict(PACKAGES if inventory is None else inventory),
         maintainer=maintainer,
     )
