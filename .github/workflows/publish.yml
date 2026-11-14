@@ -25,31 +25,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Run the offline tests
-        run: python3 -m unittest discover -s tests -v
-      # Nothing else reads the shell scripts or this file: the tests cover
-      # bump.py only, so a broken run: block or a quoting slip would first show
-      # up as a failed publish at 04:17 UTC.
-      - name: Lint the shell scripts
-        # -x follows `source` into the shared library, and -P tells it where to
-        # look: the scripts name it `lib/pkg.sh`, relative to their own
-        # directory, so a bare run would resolve it against the cwd and skip it.
-        run: shellcheck -x -P scripts scripts/*.sh scripts/lib/*.sh
-      - name: Lint the workflow
-        env:
-          VERSION: "1.7.12"
-          # sha256 of actionlint_<VERSION>_linux_amd64.tar.gz, taken from that
-          # release's checksums file; bump both together.
-          SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
-        run: |
-          set -euo pipefail
-          curl -sSLo "$RUNNER_TEMP/actionlint.tgz" \
-            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
-          echo "${SHA256}  $RUNNER_TEMP/actionlint.tgz" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP" actionlint
-          # The runner has shellcheck on PATH, so actionlint lints every run:
-          # block in here as well, not just the schema.
-          "$RUNNER_TEMP/actionlint"
+      # The gates live in scripts/check.sh, pins and all, so a red run here
+      # reproduces with `./scripts/check.sh` locally -- same commands, same
+      # linter versions. That is why no lint command appears in this file.
+      - name: Run the checks
+        run: ./scripts/check.sh
 
   publish:
     needs: test

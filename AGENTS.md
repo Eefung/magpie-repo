@@ -16,6 +16,12 @@ issue 与 spec 都放 GitHub Issues（`Eefung/magpie-repo`），用 `gh` CLI 操
 
 single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详见 `docs/agents/domain.md`。
 
+## 检查
+
+推送前跑 `scripts/check.sh`：它就是 CI `test` job 的全部闸门（离线单测、shellcheck、actionlint），两个 linter 由脚本按固定版本下到 `~/.cache/magpie-repo`，所以本机没装也跑得动、且与 runner 同版本。它跑不到的是打包——`build-check.sh` 的 root 分支只在 publish 的容器里存在，那一支由发布运行证明。
+
+`publish.yml` 的 `paths` 含 `scripts/**`、`tests/**`、`templates/**`，所以这些改动推送后会触发一次 publish，可能直接发一版。这类提交单独推，一次提交只做一件事。
+
 ## 提交
 
 遵循[约定式提交](https://www.conventionalcommits.org/zh-hans/v1.0.0/)：`type(scope): 描述`，描述用中文，句末不加句号。
