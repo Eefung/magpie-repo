@@ -565,6 +565,12 @@ class MainTest(unittest.TestCase):
         self.assertIsInstance(code, str)
         self.assertIn("network error", str(code))
 
+    def test_a_version_beside_check_is_refused(self):
+        # It used to be accepted and silently ignored, which reads as "check
+        # this version" and does nothing of the sort.
+        code, _ = self.cli("--check", "--version", self.VERSION, fetch=FetchSpy({}))
+        self.assertEqual(code, 2)
+
 
 class TemplatePkgnameTest(unittest.TestCase):
     """A template's literal pkgname= is the inventory key it is filed under."""

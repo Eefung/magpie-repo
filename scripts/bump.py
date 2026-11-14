@@ -561,6 +561,11 @@ def main(
     mode.add_argument("--packages", action="store_true", help="print the package directories to build")
     parser.add_argument("--version", help="render this version instead of upstream's latest")
     args = parser.parse_args(argv)
+    # --version used to be accepted beside --check and silently ignored, which
+    # reads as "check this version" and does nothing of the sort.
+    if args.version and not args.render:
+        parser.error("--version only applies to --render")
+
     try:
         if layout is None:
             layout = layout_for(maintainer=os.environ.get("MAINTAINER", DEFAULT_MAINTAINER))
