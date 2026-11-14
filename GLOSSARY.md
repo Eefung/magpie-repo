@@ -37,7 +37,7 @@ _Avoid_: 编译
 _Avoid_: 过期、不同步
 
 **软件源**：
-gh-pages 上 `x86_64/` 目录与 `magpie.db` 合起来的东西，pacman 的 `[magpie]` 段指向它。
+gh-pages 上 `x86_64/` 目录与 `magpie.db` 合起来的东西，pacman 的 `[magpie]` 段指向它。目录按 arch 分，今天只有一个：workflow 的 `ARCH` 是这份名字唯一的出处，arch 表 管的是另一半（上游资产后缀）。
 _Avoid_: 仓库（会和 git 仓库混淆）
 
 **保留窗口**：

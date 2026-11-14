@@ -148,7 +148,7 @@ cat <<'EOF'
 - the publish steps themselves -- seeding repo/ from the previous gh-pages
   tree, the force push, the Release, the commit back to main: they only exist
   in the publish job, and a real publish is what proves them. The seed takes
-  only x86_64/*.pkg.tar.* across, so a file this repository still needs but
+  only $ARCH/*.pkg.tar.* across, so a file this repository still needs but
   does not write under that pattern would stop being served.
 EOF
 

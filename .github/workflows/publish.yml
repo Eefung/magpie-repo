@@ -43,6 +43,11 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PAGES_URL: https://eefung.github.io/magpie-repo
+      # The arch this 软件源 serves: one directory per arch on gh-pages, and the
+      # only place the served name is spelled. The arch 表 owns the other half
+      # (repo arch to upstream asset suffix); adding an arch means this env and
+      # a second docker build, not nine edits across four steps.
+      ARCH: x86_64
     steps:
       - uses: actions/checkout@v7
 
@@ -116,8 +121,8 @@ jobs:
           # the package files below, so it has nothing to gain from the seed.
           if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
             git fetch --depth 1 origin gh-pages
-            git archive FETCH_HEAD | tar -x -C repo --wildcards 'x86_64/*.pkg.tar.*'
-            echo "previous repository:"; ls repo/x86_64 || true
+            git archive FETCH_HEAD | tar -x -C repo --wildcards "$ARCH/*.pkg.tar.*"
+            echo "previous repository:"; ls "repo/$ARCH" || true
           else
             echo "no gh-pages yet, starting a fresh repository"
           fi
@@ -130,8 +135,8 @@ jobs:
           mapfile -t pkgdirs < <(pkglist_dirs /tmp/packages.txt)
           docker run --rm --volume "$PWD:/src" --workdir /src \
             archlinux:base-devel \
-            ./scripts/build-repo.sh repo/x86_64 "${pkgdirs[@]}"
-          du -sh repo/x86_64; ls -l repo/x86_64
+            ./scripts/build-repo.sh "repo/$ARCH" "${pkgdirs[@]}"
+          du -sh "repo/$ARCH"; ls -l "repo/$ARCH"
           git status --short
 
       - name: Publish the pacman repository to gh-pages
@@ -151,7 +156,7 @@ jobs:
           # of every 30 MB package it ever served.
           git push --quiet --force \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:gh-pages
-          echo "repository published: $PAGES_URL/x86_64"
+          echo "repository published: $PAGES_URL/$ARCH"
 
       # Before the commit, deliberately: a failure here leaves main at the old
       # pkgver, so the next run retries. With the commit first, a failed
@@ -173,9 +178,9 @@ jobs:
           # generated from it, so this file never spells a package name out.
           mapfile -t pkgnames < <(pkglist_names /tmp/packages.txt)
           cat > /tmp/notes.md <<EOF
-          magpie $ver 的 x86_64 pacman 软件包。
+          magpie $ver 的 $ARCH pacman 软件包。
 
-          仓库：$PAGES_URL/x86_64
+          仓库：$PAGES_URL/$ARCH
 
               # 先同步所有源（含 [magpie]），别单独 -Sy
               sudo pacman -Syu
@@ -185,18 +190,18 @@ jobs:
           校验和见下方的 SHA256SUMS；上游版本说明见
           https://github.com/yetone/magpie-releases/releases/tag/v$ver
           EOF
-          # Only this version: repo/x86_64 also carries the previous build for
+          # Only this version: repo/$ARCH also carries the previous build for
           # the retention window, and those do not belong in this release.
           assets=()
           for pkgname in "${pkgnames[@]}"; do
-            mapfile -t -O "${#assets[@]}" assets < <(pkgfiles_at repo/x86_64 "$pkgname" "$ver")
+            mapfile -t -O "${#assets[@]}" assets < <(pkgfiles_at "repo/$ARCH" "$pkgname" "$ver")
           done
           if [ "${#assets[@]}" -eq 0 ]; then
-            echo "no package files for v$ver in repo/x86_64" >&2
+            echo "no package files for v$ver in repo/$ARCH" >&2
             exit 1
           fi
           mkdir -p /tmp/rel
-          (cd repo/x86_64 && sha256sum -- "${assets[@]##*/}" > /tmp/rel/SHA256SUMS)
+          (cd "repo/$ARCH" && sha256sum -- "${assets[@]##*/}" > /tmp/rel/SHA256SUMS)
           gh release create "v$ver" \
             --title "magpie $ver" \
             --notes-file /tmp/notes.md \

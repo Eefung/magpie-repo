@@ -88,6 +88,20 @@ class ContainerWorkdirTest(unittest.TestCase):
             self.assertTrue((REPO / directory).is_dir(), directory)
 
 
+class ServedArchTest(unittest.TestCase):
+    """The 软件源's arch directory is declared once.
+
+    GLOSSARY puts the arch set on the arch 表 and says adding one is a change to
+    that table, not to a step. The served directory was spelled nine times over
+    four steps, so a second arch meant a grep hunt rather than one env.
+    """
+
+    def test_the_workflow_spells_the_served_arch_on_one_line(self):
+        workflow = (REPO / ".github" / "workflows" / "publish.yml").read_text()
+        hits = [line.strip() for line in workflow.splitlines() if "x86_64" in line]
+        self.assertEqual(hits, ["ARCH: x86_64"], hits)
+
+
 class PackageListTest(unittest.TestCase):
     """`--packages` is the 包清单's only exit, and it carries the whole entry."""
 
