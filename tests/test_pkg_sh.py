@@ -12,6 +12,7 @@ tested here too instead of only inside a publish run.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import shlex
 import subprocess
@@ -354,6 +355,79 @@ class PkglistTest(unittest.TestCase):
         result = self.read("pkglist_dirs")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no such file", result.stderr)
+
+
+class FrozenLineJoinTest(unittest.TestCase):
+    """One test per frozen line, with the producer's real output in the reader.
+
+    Every test on either side pins its own literal: the producer's test asserts
+    the string it prints, the reader's test writes its own fixture. A producer
+    change that keeps its own test happy therefore leaves the pipeline's real
+    reader rejecting lines while the suite stays green -- adding a fourth column
+    to the 包清单 did exactly that, and the build step would have died on it.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name)
+
+    def run_lib(self, script: str) -> list[str]:
+        result = call(script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.splitlines()
+
+    def test_the_package_list_reaches_its_reader(self):
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            self.assertEqual(bump.main(["--packages"]), 0)
+        listing = self.dir / "packages.txt"
+        listing.write_text(buffer.getvalue())
+
+        self.assertEqual(
+            self.run_lib(f"pkglist_dirs {shlex.quote(str(listing))}"),
+            [f"packages/{pkg}" for pkg in bump.PACKAGES],
+        )
+        self.assertEqual(
+            self.run_lib(f"pkglist_names {shlex.quote(str(listing))}"),
+            list(bump.PACKAGES),
+        )
+
+    def test_the_rendered_version_reaches_its_reader(self):
+        version = "0.1.2"
+        root = self.dir / "tree"
+        layout = bump.layout_for(
+            root,
+            templates=REPO / "templates",
+            packages_dir=root / "packages",
+            maintainer="Test Maintainer <test@example.invalid>",
+        )
+        sums = {
+            "magpie-linux-amd64": "1" * 64,
+            "magpie-linux-arm64": "2" * 64,
+            "magpie-cli-linux-amd64": "3" * 64,
+            "magpie-cli-linux-arm64": "4" * 64,
+        }
+        table = {
+            f"{bump.RELEASES}/download/v{version}/SHA256SUMS": "".join(
+                f"{digest}  {name}\n" for name, digest in sums.items()
+            ).encode(),
+            f"{bump.SOURCE_REPO}/v{version}/LICENSE": b"license",
+            bump.ICON_URL: b"icon",
+        }
+
+        def fetch(url: str, *, missing_ok: bool = False) -> bytes:
+            return table[url]
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            bump.render(version, layout=layout, fetch=fetch)
+        render_txt = self.dir / "render.txt"
+        render_txt.write_text(buffer.getvalue())
+
+        self.assertEqual(
+            self.run_lib(f"line_field ver {shlex.quote(str(render_txt))}"), [version]
+        )
 
 
 class PayloadTest(unittest.TestCase):
