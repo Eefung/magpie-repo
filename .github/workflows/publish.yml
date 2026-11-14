@@ -46,18 +46,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: What is upstream at?
+      - name: What is upstream at, and what gets packaged
         id: upstream
         env:
           WANTED: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          # shellcheck source=scripts/lib/pkg.sh
+          source scripts/lib/pkg.sh
           python3 scripts/bump.py --check | tee /tmp/check.txt
+          python3 scripts/bump.py --packages > /tmp/packages.txt
+          # The package dirs come from the inventory, not from this file: a
+          # package added there is built without anyone editing the YAML.
+          pkgdirs="$(line_field packages /tmp/packages.txt)"
+          echo "PKGDIRS=$pkgdirs" >> "$GITHUB_ENV"
           bump=0
           if [ -n "$WANTED" ]; then
             echo "asked for $WANTED"; bump=1
           else
-            bump="$(sed -n 's/^bump=//p' /tmp/check.txt)"
+            # --check always prints bump= on success, so an absent line is the
+            # check failing to finish, not "nothing to do". Default it here
+            # where the choice is visible rather than inside the reader.
+            bump="$(line_field bump /tmp/check.txt || true)"
+            bump="${bump:-0}"
           fi
           echo "bump=$bump" >> "$GITHUB_OUTPUT"
 
@@ -97,9 +108,11 @@ jobs:
           else
             echo "no gh-pages yet, starting a fresh repository"
           fi
+          # The dirs were handed over by the check step, from the inventory.
+          read -r -a pkgdirs <<< "$PKGDIRS"
           docker run --rm --volume "$PWD:/src" --workdir /src \
             archlinux:base-devel \
-            ./scripts/build-repo.sh repo/x86_64 packages/magpie-bin packages/magpie-cli-bin
+            ./scripts/build-repo.sh repo/x86_64 "${pkgdirs[@]}"
           du -sh repo/x86_64; ls -l repo/x86_64
           git status --short
 

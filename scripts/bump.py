@@ -7,6 +7,7 @@ published checksums -- no compilation.
 
     ./scripts/bump.py --check            # packaged vs upstream
     ./scripts/bump.py --render           # write both PKGBUILDs for the latest
+    ./scripts/bump.py --packages         # the package directories to build
     ./scripts/bump.py --render --version 0.1.3702
 
 Checksums come from the release's own SHA256SUMS asset (which the site's
@@ -17,10 +18,12 @@ The network enters through an injected `fetch`, so the decisions -- which
 version wins, which checksum goes where, whether a template and its values
 agree -- are exercised offline: python3 -m unittest discover -s tests
 
-Both modes end with one frozen line a caller reads instead of re-deriving it
+Each mode ends with one frozen line a caller reads instead of re-deriving it
 from the files: `--check` prints `upstream=`, `packaged <pkg>=`, `bump=` and
-`behind=`; `--render` prints `ver=<version>`. The workflow scrapes those lines
-and nothing else, so the wording is a contract -- change it with the reader.
+`behind=`; `--render` prints `ver=<version>`; `--packages` prints
+`packages=<dir> ...`. The workflow scrapes those lines through pkg.sh's
+`line_field` and nothing else, so the wording is a contract -- change it with
+the reader.
 
 Stdlib only: runs on any python3 in CI and on the user's machine alike.
 """
@@ -243,6 +246,17 @@ def shown(path: Path) -> str:
         return str(path)
 
 
+def package_dirs(layout: Layout) -> list[str]:
+    """The package directories to build, in inventory order.
+
+    The build step used to spell these out, so a package added to the inventory
+    was rendered and committed but never packaged, and nothing compared the two
+    lists: the next `--check` saw it current and printed `bump=0` for good.
+    This is the one place the answer is written down.
+    """
+    return [shown(layout.packages_dir / pkg) for pkg in layout.inventory]
+
+
 def render(
     version: str,
     *,
@@ -345,11 +359,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true", help="compare packaged and upstream versions")
     mode.add_argument("--render", action="store_true", help="rewrite the PKGBUILDs")
+    mode.add_argument("--packages", action="store_true", help="print the package directories to build")
     parser.add_argument("--version", help="render this version instead of upstream's latest")
     args = parser.parse_args(argv)
 
     try:
         layout = layout_for(maintainer=os.environ.get("MAINTAINER", DEFAULT_MAINTAINER))
+        if args.packages:
+            log("packages=" + " ".join(package_dirs(layout)))
+            return 0
         if args.check:
             return check(layout=layout)
         render(args.version or latest_version(), layout=layout)
