@@ -4,6 +4,11 @@
 #   ./scripts/build-repo.sh <repo x86_64 dir> <package dir>...
 #   ./scripts/build-repo.sh repo/x86_64 packages/magpie-bin packages/magpie-cli-bin
 #
+# Every package of that tree is named here. A 包文件 whose package this run does
+# not build belongs to a package that left the 包清单, and it is retired --
+# deleted -- because the 包清单 is the ledger, not the directory. Passing a
+# subset of the inventory therefore deletes the rest.
+#
 # The result is what GitHub Pages serves, so pacman needs the database to be
 # named after the repository section: REPO_NAME=magpie → magpie.db.tar.gz must
 # sit next to the packages and be reachable at <Server>/magpie.db. The name is
