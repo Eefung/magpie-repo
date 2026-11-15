@@ -6,7 +6,10 @@
 #
 # The result is what GitHub Pages serves, so pacman needs the database to be
 # named after the repository section: REPO_NAME=magpie → magpie.db.tar.gz must
-# sit next to the packages and be reachable at <Server>/magpie.db.
+# sit next to the packages and be reachable at <Server>/magpie.db. The name is
+# required rather than defaulted: CI passes it from the workflow, and a default
+# equal to the declared value made "the env arrived" and "the default was used"
+# produce identical runs, so no publish could prove either.
 #
 # The database is always rebuilt from the package files present, which keeps it
 # free of entries for packages that were pruned.
@@ -20,7 +23,7 @@ out="${1:?usage: build-repo.sh <repo x86_64 dir> <package dir>...}"
 shift
 [ "$#" -gt 0 ] || { echo "name at least one package directory" >&2; exit 2; }
 
-REPO_NAME="${REPO_NAME:-magpie}"
+REPO_NAME="${REPO_NAME:?build-repo.sh needs REPO_NAME: the 软件源 section name}"
 KEEP="${KEEP:-2}"          # versions of each package kept in the repository
 out="$(mkdir -p "$out" && cd "$out" && pwd)"
 

@@ -52,7 +52,7 @@ python3 -m unittest discover -s tests               # 离线单测，不联网�
 ./scripts/probe-repo-build.sh                       # 真 makepkg + 真 repo-add 跑构建、载荷核对与保留窗口，不需要容器与网络
 ./scripts/build-check.sh packages/magpie-bin        # 单包构建，装依赖后跑 --version 核对版本；最后两行是 pkgname= / artifact=
 
-./scripts/build-repo.sh /tmp/magpie-repo/x86_64 packages/magpie-bin packages/magpie-cli-bin
+REPO_NAME=magpie ./scripts/build-repo.sh /tmp/magpie-repo/x86_64 packages/magpie-bin packages/magpie-cli-bin
 python3 -m http.server -d /tmp/magpie-repo 8765     # 再用临时 pacman.conf 从 http 试装
 
 gh workflow run publish.yml                         # 立刻发布，version 留空＝上游最新

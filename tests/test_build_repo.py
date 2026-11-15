@@ -4,8 +4,8 @@
 `build-repo.sh` only ran inside the publish container. The retention window and
 the database entry are filename arithmetic over a directory, so the real script
 runs offline with a stub build-check and a stub repo-add (`BUILD_CHECK`, and
-PATH). What stays uncovered is `build-check.sh`'s root branch (useradd / su /
-chown), which needs the container.
+PATH). What stays uncovered is the tools `BUILD_AS=root` calls (useradd / su /
+chown / pacman); the adapter around them runs in tests/test_build_check.py.
 
     python3 -m unittest discover -s tests
 """
@@ -24,9 +24,11 @@ SCRIPT = REPO / "scripts" / "build-repo.sh"
 STUB_BUILD_CHECK = """\
 #!/usr/bin/env bash
 # Stands in for build-check.sh: names the file makepkg would have made, makes
-# it, and hands back the same three frozen lines the real one prints. The two
-# fields come from pkg.sh, not from a sed of its own -- the naming rule has one
-# reader, and a stub that spelled pkgver its own way was a second copy of it.
+# it, and hands back the same two frozen lines the real one prints. The fields
+# come from pkg.sh, not from a sed of its own -- the naming rule has one reader,
+# and a stub that spelled pkgver its own way was a second copy of it. The lines
+# are the two the real script prints: pkgver= left the handover when nothing
+# read it, and a stub still printing it would be pretending otherwise.
 set -euo pipefail
 dir="$1"
 source "${PKG_SH:?}"
@@ -36,7 +38,6 @@ artifact="$dir/$pkgname-$pkgver-1-x86_64.pkg.tar.zst"
 : > "$artifact"
 echo "ok: $(basename "$artifact")"
 echo "pkgname=$pkgname"
-echo "pkgver=$pkgver"
 echo "artifact=$artifact"
 """
 
@@ -81,12 +82,20 @@ class BuildRepoTest(unittest.TestCase):
     def seed(self, version: str) -> None:
         (self.out / f"magpie-bin-{version}-1-x86_64.pkg.tar.zst").touch()
 
-    def run_script(self, build_check: Path | None = None) -> subprocess.CompletedProcess:
+    def run_script(
+        self, build_check: Path | None = None, *, repo_name: str | None = "testrepo"
+    ) -> subprocess.CompletedProcess:
         env = dict(os.environ)
         env["BUILD_CHECK"] = str(build_check or self.stub_build)
         env["PKG_SH"] = str(REPO / "scripts" / "lib" / "pkg.sh")
         env["REPO_ADD_LOG"] = str(self.record)
         env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
+        # A name of its own, not the repository's: the database's file name is
+        # what proves the variable crossed into the script and reached repo-add.
+        # With the real name a run could not tell a passed value from a default.
+        env.pop("REPO_NAME", None)
+        if repo_name is not None:
+            env["REPO_NAME"] = repo_name
         return subprocess.run(
             ["bash", str(SCRIPT), str(self.out), str(self.pkgdir)],
             cwd=self.root,
@@ -122,6 +131,9 @@ class BuildRepoTest(unittest.TestCase):
         # the same directory the database is rebuilt from.
         self.assertEqual(self.database_entries(), ["magpie-bin-0.1.10-1-x86_64.pkg.tar.zst"])
         self.assertIn("pruning magpie-bin-0.1.8-1-x86_64.pkg.tar.zst", result.stdout)
+        # The database is filed under the name it was given, not under the
+        # script's own idea of one.
+        self.assertTrue((self.out / "testrepo.db.tar.gz").is_file())
         # Nothing outside the directory it was given: the checksum file the
         # release publishes is built by the release step out of that 版本's
         # 包文件, not here out of whatever happens to be on disk.
@@ -139,7 +151,21 @@ class BuildRepoTest(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.database_entries(), [])
-        self.assertFalse((self.out / "magpie.db.tar.gz").exists())
+        self.assertFalse((self.out / "testrepo.db.tar.gz").exists())
+
+    def test_a_run_without_the_section_name_is_refused(self):
+        # The workflow passes it with `-e REPO_NAME`. While the script carried a
+        # default equal to the declared value, a step that forgot the flag
+        # produced the same tree as one that passed it, so a publish could not
+        # tell the two apart; now it fails before the build.
+        self.stage("0.1.10")
+
+        result = self.run_script(repo_name=None)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("REPO_NAME", result.stderr)
+        self.assertEqual(self.files_on_disk(), [])
+        self.assertEqual(self.database_entries(), [])
 
 
 if __name__ == "__main__":

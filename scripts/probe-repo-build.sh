@@ -18,11 +18,16 @@
 # window and the database entry, which is where a broken prune() hides.
 set -euo pipefail
 
-REPO="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+REPO="$(cd "${1:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd)"
 PKG="magpie-bin"                 # pkgname the fixture pretends to be
 BIN="usr/bin/magpie"             # path inside the package the build check asserts on
 VER="0.1.2"                      # version the fixture builds
 OLD="0.1.1"                      # version seeded as the retention window
+# A name of its own, not the repository's: the database's file name is what
+# proves REPO_NAME crossed into the script and reached repo-add, and with the
+# real name the probe could not tell a passed variable from a defaulted one.
+REPO_NAME="probe"
+export REPO_NAME
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -68,7 +73,7 @@ run() { ./scripts/build-repo.sh repo/x86_64 packages/fixture; }
 # What case 1 and case 4 claim, asked of the tree rather than read by eye --
 # printing the state and letting a human compare was how a broken retention
 # window passed this probe with exit 0.
-db_entries() { bsdtar -xOf repo/x86_64/magpie.db.tar.gz | grep -c 'pkg.tar.zst' || true; }
+db_entries() { bsdtar -xOf "repo/x86_64/$REPO_NAME.db.tar.gz" | grep -c 'pkg.tar.zst' || true; }
 disk_files() { find repo/x86_64 -name '*.pkg.tar.zst' | wc -l; }
 
 # expect <expected> <actual> <label>
@@ -90,7 +95,7 @@ expect_gone() {
 }
 
 show() {
-    bsdtar -xOf repo/x86_64/magpie.db.tar.gz 2>/dev/null | grep 'pkg.tar.zst' | sed 's/^/  db:   /'
+    bsdtar -xOf "repo/x86_64/$REPO_NAME.db.tar.gz" 2>/dev/null | grep 'pkg.tar.zst' | sed 's/^/  db:   /'
     find repo/x86_64 -name '*.pkg.tar.zst' | sort | sed 's|.*/|  disk: |'
 }
 
