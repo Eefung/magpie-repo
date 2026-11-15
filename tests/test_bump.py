@@ -12,6 +12,7 @@ import contextlib
 import hashlib
 import io
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -566,6 +567,58 @@ class CheckTest(unittest.TestCase):
         self.assertIn("magpie-cli-bin", str(caught.exception))
         self.assertIn("re-render", str(caught.exception))
         # This repository's own problem, so it is reported before the network.
+        self.assertEqual(fetch.urls, [])
+
+    def test_a_template_that_no_longer_fits_is_reported_before_the_network(self):
+        """The other half of "is this tree sound", in the mode the pipeline runs.
+
+        Each drift here edits the template *and* its committed PKGBUILD together,
+        so `values_of` still matches and the drift guard is satisfied: what
+        catches it is `read_template`, which the render used to be the only
+        caller of. Reaching it from `--check` is the fix -- the tree stops
+        reading sound, instead of the failure waiting for the next 版本.
+        """
+        drifts = {
+            "arch=('x86_64')": ("arch=()", "leaves out x86_64"),
+            "pkgname=magpie-bin": ("pkgname=magpie-other", "files it as magpie-bin"),
+        }
+        for old, (new, message) in drifts.items():
+            with self.subTest(drift=old):
+                fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = staged_root(
+                        Path(tmp), {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"}
+                    )
+                    templates = Path(tmp) / "templates"
+                    shutil.copytree(REPO / "templates", templates)
+                    for path in (
+                        templates / "magpie-bin.PKGBUILD.in",
+                        root / "packages" / "magpie-bin" / "PKGBUILD",
+                    ):
+                        text = path.read_text()
+                        self.assertIn(old, text)
+                        path.write_text(text.replace(old, new))
+
+                    with self.assertRaises(bump.BumpError) as caught:
+                        bump.check(layout=layout_at(root, templates=templates), fetch=fetch)
+
+                self.assertIn("magpie-bin", str(caught.exception))
+                self.assertIn(message, str(caught.exception))
+                self.assertEqual(fetch.urls, [])
+
+    def test_every_template_is_read_even_before_it_is_rendered(self):
+        # A package never rendered is 落后, not drift -- but its template is one
+        # this repository will render, so a template that cannot render is the
+        # entry check's problem too.
+        fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
+        with tempfile.TemporaryDirectory() as tmp:
+            templates = Path(tmp) / "templates"
+            shutil.copytree(REPO / "templates", templates)
+            path = templates / "magpie-cli-bin.PKGBUILD.in"
+            path.write_text(path.read_text().replace("arch=('x86_64')", "arch=('aarch64')"))
+            with self.assertRaises(bump.BumpError) as caught:
+                bump.check(layout=layout_at(Path(tmp), templates=templates), fetch=fetch)
+        self.assertIn("magpie-cli-bin", str(caught.exception))
         self.assertEqual(fetch.urls, [])
 
 

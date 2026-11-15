@@ -607,6 +607,20 @@ def package_entries(layout: Layout) -> list[tuple[str, str]]:
     ]
 
 
+def template_text(layout: Layout, pkg: str) -> str:
+    """A package's template as written, or the failure that names the package.
+
+    Two modes read it -- the render, and the entry check's drift guard -- and
+    both have to say the same thing when a layout points at a tree without one.
+    Before this, the same five lines (and the same message) lived in both.
+    """
+    path = layout.templates / f"{pkg}.PKGBUILD.in"
+    try:
+        return path.read_text()
+    except OSError as exc:
+        raise BumpError(f"no template for {pkg}: {path} ({exc.strerror})") from exc
+
+
 def render(
     version: str,
     *,
@@ -625,13 +639,7 @@ def render(
     # such asset" or found after the gh-pages push.
     plans = []
     for pkg, prefix in layout.inventory.items():
-        path = layout.templates / f"{pkg}.PKGBUILD.in"
-        try:
-            text = path.read_text()
-        except OSError as exc:
-            # A layout is handed in now, so it can point at a tree that has no
-            # template for a package in its own inventory. Say which.
-            raise BumpError(f"no template for {pkg}: {path} ({exc.strerror})") from exc
+        text = template_text(layout, pkg)
         plans.append((pkg, read_template(pkg=pkg, prefix=prefix, text=text, arches=layout.arches)))
 
     sums = release_sums(version, fetch=fetch)
@@ -723,7 +731,7 @@ def values_of(template: str, rendered: str) -> dict[str, str]:
 
 
 def check_templates(layout: Layout) -> None:
-    """Every rendered PKGBUILD is still its template with values filled in.
+    """Is this tree sound? The template's own rules, then the drift guard.
 
     `--check` answered one question -- is the packaged 版本 behind 上游 -- and
     that is by design (GLOSSARY: 落后). The other edge of 渲染 went unasked in
@@ -732,18 +740,26 @@ def check_templates(layout: Layout) -> None:
     started found `bump=0` and printed "nothing to publish". The test job caught
     it; the entry check did not, and it is the entry check that decides.
 
+    It also asked only half of that: `values_of` proves the committed PKGBUILD
+    is still some render of the template, while every rule about the template
+    itself -- its `pkgname=`, its `arch=()` against the arch 表, its case arms,
+    its source and checksum arrays -- lived in `read_template`, which only the
+    render calls, and the render only runs when `bump=1`. So a template edited
+    to name another package, or to drop an arch, left the tree reading sound
+    until 上游 moved, and the run that finally rendered died at step 2. The two
+    doors are one now: the entry check asks what the render asks.
+
     A package with no PKGBUILD is not drift -- it has never been rendered, and
-    check() already reports that as 落后.
+    check() already reports that as 落后 -- but its template is still a template
+    this repository will render, so it is still read.
     """
-    for pkg in layout.inventory:
+    for pkg, prefix in layout.inventory.items():
+        text = template_text(layout, pkg)
+        read_template(pkg=pkg, prefix=prefix, text=text, arches=layout.arches)
+
         pkgbuild = layout.packages_dir / pkg / "PKGBUILD"
         if not pkgbuild.exists():
             continue
-        template = layout.templates / f"{pkg}.PKGBUILD.in"
-        try:
-            text = template.read_text()
-        except OSError as exc:
-            raise BumpError(f"no template for {pkg}: {template} ({exc.strerror})") from exc
         try:
             values_of(text, pkgbuild.read_text())
         except BumpError as exc:
