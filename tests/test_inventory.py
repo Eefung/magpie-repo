@@ -447,7 +447,9 @@ class SeedTest(unittest.TestCase):
     """
 
     WORKFLOW = REPO / ".github" / "workflows" / "publish.yml"
-    SEED_RE = re.compile(r"git archive FETCH_HEAD \| tar -x -C repo --wildcards \"[^\"]+\"")
+    SEED_RE = re.compile(
+        r'git archive FETCH_HEAD \| tar -x -C \S+ --wildcards "[^"]+"'
+    )
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -498,8 +500,8 @@ class SeedTest(unittest.TestCase):
             [
                 "bash",
                 "-c",
-                f'set -euo pipefail; source {LIB}; ARCH=x86_64; '
-                f'mkdir -p repo; {self.seed_line()}',
+                f'set -euo pipefail; source {LIB}; ARCH=x86_64; TREE=repo; '
+                f'mkdir -p "$TREE"; {self.seed_line()}',
             ],
             cwd=self.work,
             text=True,
@@ -507,15 +509,38 @@ class SeedTest(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+        tree = self.work / workflow.env()["TREE"]
         seeded = sorted(
-            str(path.relative_to(self.work / "repo"))
-            for path in (self.work / "repo").rglob("*")
+            str(path.relative_to(tree))
+            for path in tree.rglob("*")
             if path.is_file()
         )
         self.assertEqual(seeded, [f"x86_64/{name}" for name in expected])
         # The decoys: a signature is not a 包文件, and a stray file is not seeded.
         self.assertNotIn("x86_64/magpie-bin-0.1.10-1-x86_64.pkg.tar.zst.sig", seeded)
         self.assertNotIn("SHA256SUMS", seeded)
+
+
+class PublishTreeTest(unittest.TestCase):
+    """The tree the 软件源 is assembled in is declared once, like its arch.
+
+    `repo` was the one name of the thing this repository serves that nothing
+    owned: three steps spelled it eight times, so moving the tree -- which is
+    what a second arch with a different layout asks for (ADR-0003) -- meant
+    editing every one of them, and a step could disagree with the seed about
+    where the tree was. The env declares it; the steps reference it.
+    """
+
+    def test_the_tree_is_declared_in_the_env(self):
+        self.assertEqual(workflow.env()["TREE"], "repo")
+
+    def test_no_step_spells_the_tree(self):
+        # The shapes that were there before, not a general "no repo in this
+        # file": PAGES_URL, the push URL and `origin` all legitimately carry
+        # the word.
+        text = workflow.text()
+        for shape in ("mkdir -p repo", "-C repo", "cd repo", '"repo/'):
+            self.assertNotIn(shape, text)
 
 
 class WorkflowShellTest(unittest.TestCase):

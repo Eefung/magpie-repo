@@ -43,15 +43,21 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PAGES_URL: https://eefung.github.io/magpie-repo
-      # The two names this 软件源 is served under: the directory (arch) and the
-      # section / database name. They are declared here, once, and the README's
-      # install block is held to them by tests/test_inventory.py -- pacman keys
-      # the section off the database's file name, so `[magpie]` and
-      # magpie.db.tar.gz are one fact, not two. The arch 表 owns the other half
-      # (repo arch to upstream asset suffix); adding an arch means this env and
-      # a second docker build, not nine edits across four steps.
+      # The three names this 软件源 is served under: the arch directory, the
+      # section / database name, and the tree they are assembled in. They are
+      # declared here, once, and the README's install block is held to the first
+      # two by tests/test_inventory.py -- pacman keys the section off the
+      # database's file name, so `[magpie]` and magpie.db.tar.gz are one fact,
+      # not two. The arch 表 owns the other half (repo arch to upstream asset
+      # suffix); adding an arch means this env and a second docker build, not
+      # nine edits across four steps.
       ARCH: x86_64
       REPO_NAME: magpie
+      # The tree the run assembles. `repo` used to be spelled in three steps and
+      # eight places, so moving it -- or a second arch that wants a different
+      # layout -- meant editing every one, and the seed could disagree with the
+      # build about where the tree was.
+      TREE: repo
     steps:
       - uses: actions/checkout@v7
 
@@ -111,7 +117,7 @@ jobs:
           set -euo pipefail
           # shellcheck source=scripts/lib/pkg.sh
           source scripts/lib/pkg.sh
-          mkdir -p repo
+          mkdir -p "$TREE"
           # Carry the last published 包文件 over, so an upgrade in flight does
           # not 404 and the retention window has something to keep. Only the
           # package files: the tree is cumulative, so anything else would be
@@ -123,8 +129,8 @@ jobs:
           # build-repo prunes is how a retired package gets served forever.
           if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
             git fetch --depth 1 origin gh-pages
-            git archive FETCH_HEAD | tar -x -C repo --wildcards "$ARCH/$(pkgfile_pattern)"
-            echo "previous repository:"; ls "repo/$ARCH" || true
+            git archive FETCH_HEAD | tar -x -C "$TREE" --wildcards "$ARCH/$(pkgfile_pattern)"
+            echo "previous repository:"; ls "$TREE/$ARCH" || true
           else
             echo "no gh-pages yet, starting a fresh repository"
           fi
@@ -151,8 +157,8 @@ jobs:
           docker run --rm --volume "$PWD:/src" --workdir /src \
             -e REPO_NAME \
             archlinux:base-devel \
-            ./scripts/build-repo.sh "repo/$ARCH" "${pkgdirs[@]}"
-          du -sh "repo/$ARCH"; ls -l "repo/$ARCH"
+            ./scripts/build-repo.sh "$TREE/$ARCH" "${pkgdirs[@]}"
+          du -sh "$TREE/$ARCH"; ls -l "$TREE/$ARCH"
           git status --short
 
       - name: Publish the pacman repository to gh-pages
@@ -164,7 +170,7 @@ jobs:
           # scripts/publish-pages.sh's answer, and it runs offline against a
           # bare repository in tests/test_publish_pages.py. What is left here
           # is the one part a publish run still proves: the token URL.
-          ./scripts/publish-pages.sh "repo" "$ver" \
+          ./scripts/publish-pages.sh "$TREE" "$ver" \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           echo "repository published: $PAGES_URL/$ARCH"
 
@@ -187,7 +193,7 @@ jobs:
           # come from the 包清单 -- is scripts/release.sh's answer. gh is what is
           # left here, and it is the only part a publish run can prove.
           packages="$(line_field packages /tmp/up.txt)"
-          ./scripts/release.sh "repo/$ARCH" "$ver" "$packages" /tmp/rel \
+          ./scripts/release.sh "$TREE/$ARCH" "$ver" "$packages" /tmp/rel \
             > /tmp/release.txt
           cat /tmp/release.txt
           mapfile -t assets < "$(line_field assets /tmp/release.txt)"

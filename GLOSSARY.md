@@ -41,7 +41,7 @@ _Avoid_: 编译
 _Avoid_: 过期、不同步
 
 **软件源**：
-gh-pages 上 `x86_64/` 目录与 `magpie.db` 合起来的东西，pacman 的 `[magpie]` 段指向它。目录按 arch 分，今天只有一个：workflow 的 `ARCH`（目录名）与 `REPO_NAME`（节名，也就是 db 的文件名）是这两个名字唯一的出处，`REPO_NAME` 还跨进容器交给 `build-repo.sh`。README 的安装段是同一组事实的第四份抄写，也是用户唯一照着敲的那份，由 `tests/test_inventory.py` 逐字对账。arch 表 管的是另一半（上游资产后缀）。
+gh-pages 上 `x86_64/` 目录与 `magpie.db` 合起来的东西，pacman 的 `[magpie]` 段指向它。目录按 arch 分，今天只有一个：workflow 的 `ARCH`（目录名）、`REPO_NAME`（节名，也就是 db 的文件名）与 `TREE`（这次运行组装它的那棵树）是这三个名字唯一的出处，`REPO_NAME` 与 `TREE` 还跨进容器或脚本交给下一步。README 的安装段是同一组事实的第四份抄写，也是用户唯一照着敲的那份，由 `tests/test_inventory.py` 逐字对账。arch 表 管的是另一半（上游资产后缀）。
 _Avoid_: 仓库（会和 git 仓库混淆）
 
 **保留窗口**：
