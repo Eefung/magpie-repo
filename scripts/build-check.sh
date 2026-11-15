@@ -8,9 +8,10 @@
 # container CI uses and as a normal user on a dev machine -- makepkg refuses to
 # run as root, so the root case drops to an unprivileged builder account.
 #
-# As root it also installs the package's own `depends` before running the
-# binary: that is what turns "--version prints the new version" into a real
-# check that the dependency list is complete.
+# Which of the two it is, is decided once, in `BUILD_AS`. The privileged
+# knowledge -- who builds, who owns the directory, who installs the dependencies
+# -- lives behind four functions, so the container-only half can be read in one
+# place and reached offline with stubs (tests/test_build_check.py).
 #
 # It owns its directory from start to finish. Whatever the build leaves behind
 # (src/, pkg/, .srcdest/) is removed on every exit path, and the one thing that
@@ -42,6 +43,57 @@ artifact=""
 # so a failure after the package file exists still leaves nothing behind.
 keep=""
 
+# --- who builds, and who owns the directory --------------------------------
+# One question, asked once. Everything privileged sits behind these four
+# functions: `adopt` takes the directory for the builder account, `as_builder`
+# runs a command as it, `install_depends` installs what the package declares,
+# and `hand_over` gives the directory back.
+#
+# It used to be four separate `[ "$(id -u)" -eq 0 ]` tests strung between a
+# prelude and a trap -- they could not be read together, so the half that only
+# runs inside the publish container was read by nobody. BUILD_AS names the
+# adapter instead, which is what lets a test take the root path with `su`,
+# `useradd`, `chown` and `pacman` stubbed on PATH. The publish run still proves
+# the real ones; the seam only moves how much of the script is unreadable.
+case "${BUILD_AS:-auto}" in
+    auto) if [ "$(id -u)" -eq 0 ]; then BUILD_AS=root; else BUILD_AS=user; fi ;;
+    root | user) ;;
+    *) echo "BUILD_AS must be root or user, not '$BUILD_AS'" >&2; exit 2 ;;
+esac
+
+hand_over() {
+    [ "$BUILD_AS" = root ] || return 0
+    chown -R "$1" "$pkgdir"
+}
+
+adopt() {
+    [ "$BUILD_AS" = root ] || return 0
+    id builder >/dev/null 2>&1 || useradd -m builder
+    chown -R builder "$pkgdir"
+}
+
+# Arguments go in one by one and are quoted on the way through, so nothing here
+# formats a command string.
+as_builder() {
+    if [ "$BUILD_AS" = root ]; then
+        su builder -s /bin/bash -c "$(printf '%q ' "$@")"
+    else
+        "$@"
+    fi
+}
+
+# A bare container has no GTK/WebKit, so the desktop build cannot even load
+# without its runtime dependencies; installing them from the PKGBUILD is the
+# point of the check, not an inconvenience it works around. On a developer's
+# machine they are already there, which is the whole difference between the two
+# adapters.
+install_depends() {
+    [ "$BUILD_AS" = root ] || return 0
+    [ "$#" -gt 0 ] || return 0
+    echo "installing the package's own depends: $*"
+    pacman -Syu --noconfirm --needed "$@" >/dev/null
+}
+
 # A package file left by an earlier run must not be published later, so the
 # directory starts empty of them. The trap keeps that true for this run's own
 # leftovers: on failure nothing survives, on success exactly one file does.
@@ -57,9 +109,7 @@ cleanup() {
     done
     # As root, makepkg ran as `builder`; hand the directory back to whoever
     # owned it before this script touched it.
-    if [ "$(id -u)" -eq 0 ]; then
-        chown -R "$owner" "$pkgdir"
-    fi
+    hand_over "$owner"
 }
 trap cleanup EXIT
 
@@ -70,32 +120,19 @@ trap cleanup EXIT
 export SRCDEST="${SRCDEST:-$pkgdir/.srcdest}"
 mkdir -p "$SRCDEST"
 
-if [ "$(id -u)" -eq 0 ]; then
-    id builder >/dev/null 2>&1 || useradd -m builder
-    chown -R builder "$pkgdir"
-fi
-
-# Run makepkg as the account makepkg accepts. Arguments go in one by one and are
-# quoted on the way through, so nothing here formats a command string.
-run() {
-    if [ "$(id -u)" -eq 0 ]; then
-        su builder -s /bin/bash -c "$(printf '%q ' "$@")"
-    else
-        "$@"
-    fi
-}
+adopt
 
 cd "$pkgdir"
 
-run makepkg --noconfirm -f --nodeps --nocheck
+as_builder makepkg --noconfirm -f --nodeps --nocheck
 # What the package needs at runtime, asked once and kept in a variable: writing
 # it to .SRCINFO only to read it back would be a second copy of a value makepkg
 # just printed. The read itself lives in pkg.sh, where the offline tests reach it.
-srcinfo="$(run makepkg --printsrcinfo)"
+srcinfo="$(as_builder makepkg --printsrcinfo)"
 
 # makepkg is the one that knows what the file is called (pkgname-pkgver-pkgrel-
 # arch); ask it, rather than guessing by timestamp or by globbing.
-artifact="$(run makepkg --packagelist)"
+artifact="$(as_builder makepkg --packagelist)"
 case "$artifact" in
     /*) ;;
     *) artifact="$pkgdir/$artifact" ;;
@@ -107,16 +144,11 @@ esac
 member="$(payload_member "$artifact")" || exit 1
 echo "ok: $(basename "$artifact") ships $member"
 
-# A bare container has no GTK/WebKit, so the desktop build cannot even load
-# without its runtime dependencies; installing them from the PKGBUILD is the
-# point of the check, not an inconvenience it works around.
-if [ "$(id -u)" -eq 0 ]; then
-    mapfile -t deps < <(srcinfo_depends "$srcinfo")
-    if [ "${#deps[@]}" -gt 0 ]; then
-        echo "installing the package's own depends: ${deps[*]}"
-        pacman -Syu --noconfirm --needed "${deps[@]}" >/dev/null
-    fi
-fi
+# The dependencies the package declares, handed to whichever adapter knows what
+# to do with them: the container installs them, a developer's machine already
+# has them.
+mapfile -t deps < <(srcinfo_depends "$srcinfo")
+install_depends "${deps[@]}"
 
 pkgver="$(pkg_field PKGBUILD pkgver)"
 pkgname="$(pkg_field PKGBUILD pkgname)"
@@ -125,8 +157,8 @@ pkgname="$(pkg_field PKGBUILD pkgname)"
 # payload reports the 版本 being packaged, so a binary that came out of the
 # wrong asset or a stale SRCDEST cannot pass. pkg.sh holds that judgement now:
 # it is the one that can publish a wrong 版本, so it sits where the offline
-# tests can reach it. What stays here is the container-only part -- makepkg,
-# the dependencies, the root switch -- and the line the caller reads.
+# tests can reach it. What stays here is the container-only part -- makepkg, the
+# dependencies, the `BUILD_AS` adapter -- and the line the caller reads.
 payload_reports "$artifact" "$pkgver" >/dev/null || exit 1
 echo "ok: $(basename "$artifact") reports $pkgver"
 

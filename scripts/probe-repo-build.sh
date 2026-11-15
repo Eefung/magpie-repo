@@ -6,12 +6,12 @@
 #   ./scripts/probe-repo-build.sh <repo root>
 #
 # What it proves: makepkg names and builds the file, build-check hands over
-# pkgname= / pkgver= / artifact=, build-repo prunes to KEEP *版本* and hands the
-# database one entry per package, and a payload reporting the wrong version --
-# or a longer one sharing its prefix -- is refused before anything is
-# published. What it cannot reach: build-check's root branch (useradd / su /
-# chown and the depends install), which only exists inside the publish
-# container.
+# pkgname= / artifact=, build-repo prunes to KEEP *版本* and hands the database
+# one entry per package, and a payload reporting the wrong version -- or a
+# longer one sharing its prefix -- is refused before anything is published. What
+# it cannot reach: the tools `BUILD_AS=root` calls (useradd, chown, su, pacman),
+# which only exist inside the publish container -- the adapter around them and
+# its order run offline in tests/test_build_check.py.
 #
 # Four cases; any of them failing prints "!! FAIL" and exits 1. Every case is
 # asserted -- the two that used to only print their state are the retention

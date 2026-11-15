@@ -1,10 +1,11 @@
 """build-check.sh, run for real with a stand-in makepkg.
 
 `scripts/check.sh` used to print that this script could only be proved by a
-publish run. Only its root branch (useradd / su / chown, and the depends
-install behind it) needs the container: the rest -- the directory it owns, the
-`artifact=` line it hands back, the 载荷核对 it calls -- is filename arithmetic
-and one subprocess, and makepkg is reachable through PATH.
+publish run. What needs the container is the *account* -- useradd, chown, su,
+pacman -- not the script: the directory it owns, the `artifact=` line it hands
+back and the 载荷核对 it calls are filename arithmetic and one subprocess, and
+makepkg is reachable through PATH. `BUILD_AS` names the adapter, so the root
+path runs here too, with the privileged tools stubbed (RootAdapterTest).
 
 The fixture is an uncompressed tar under a `.pkg.tar.zst` name: bsdtar and GNU
 tar both read by content, and compression is not what this test is about.
@@ -156,6 +157,120 @@ class BuildCheckTest(unittest.TestCase):
         self.assertNotIn("artifact=", result.stdout)
         # And it must not leave the file it was about to publish behind.
         self.assertEqual(list(self.pkgdir.glob("*.pkg.tar.*")), [])
+
+
+STUB_LOGGER = """\
+#!/usr/bin/env bash
+# A stand-in for a privileged tool: record the call, report success.
+printf '%s %s\\n' "$(basename "$0")" "$*" >>"$STUB_LOG"
+exit 0
+"""
+
+STUB_ID = """\
+#!/usr/bin/env bash
+printf 'id %s\\n' "$*" >>"$STUB_LOG"
+[ "${STUB_BUILDER_EXISTS:-1}" = "1" ] && exit 0
+exit 1
+"""
+
+STUB_SU = """\
+#!/usr/bin/env bash
+# su <user> -s /bin/bash -c <command>: record it, then run it in this shell.
+printf 'su %s\\n' "$*" >>"$STUB_LOG"
+exec bash -c "$5"
+"""
+
+
+class RootAdapterTest(unittest.TestCase):
+    """The privileged half, driven offline with stubs.
+
+    `BUILD_AS=root` is the adapter the publish container takes. Before the seam
+    existed there were four separate `id -u` tests, three of them split between
+    a prelude and a trap, and none of them reachable: `check.sh` said this half
+    could only be proved by a publish run. A publish run still proves useradd,
+    chown and su themselves -- what runs here is the order and the ownership
+    hand-back, on the same path root takes.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.log = self.root / "calls.log"
+        self.log.touch()
+
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        for name, body in {
+            "makepkg": STUB_MAKEPKG,
+            "id": STUB_ID,
+            "su": STUB_SU,
+            "chown": STUB_LOGGER,
+            "useradd": STUB_LOGGER,
+            "pacman": STUB_LOGGER,
+        }.items():
+            stub = self.bin / name
+            stub.write_text(body)
+            stub.chmod(0o755)
+
+        self.pkgdir = self.root / "packages" / "magpie-bin"
+        shutil.copytree(PKG, self.pkgdir, ignore=shutil.ignore_patterns("*.pkg.tar.*"))
+
+    def run_script(self, *, builder_exists: bool = True) -> subprocess.CompletedProcess:
+        env = dict(os.environ)
+        env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
+        env["PAYLOAD_TAR"] = "tar"
+        env["BUILD_AS"] = "root"
+        env["STUB_LOG"] = str(self.log)
+        if not builder_exists:
+            env["STUB_BUILDER_EXISTS"] = "0"
+        return subprocess.run(
+            ["bash", str(SCRIPT), str(self.pkgdir)],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            env=env,
+        )
+
+    def calls(self) -> list[str]:
+        return self.log.read_text().splitlines()
+
+    def test_the_builder_takes_the_directory_before_the_build_and_gives_it_back(self):
+        owner = self.pkgdir.stat().st_uid
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls()
+        take = f"chown -R builder {self.pkgdir}"
+        give_back = f"chown -R {owner} {self.pkgdir}"
+        self.assertIn(take, calls)
+        self.assertIn(give_back, calls)
+        # The directory is the builder's for the build, and whose it was comes
+        # back on the way out -- not what the container's mount point is.
+        first_build = next(i for i, call in enumerate(calls) if call.startswith("su "))
+        self.assertLess(calls.index(take), first_build)
+        self.assertGreater(calls.index(give_back), first_build)
+        self.assertEqual(calls[-1], give_back)
+
+    def test_the_package_depends_are_installed_through_the_adapter(self):
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # The depends come from what makepkg printed, not from a second parse.
+        self.assertIn("pacman -Syu --noconfirm --needed glibc", self.calls())
+
+    def test_a_missing_builder_account_is_created(self):
+        result = self.run_script(builder_exists=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("useradd -m builder", self.calls())
+
+    def test_the_handover_is_still_the_two_lines_the_caller_reads(self):
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("pkgname=magpie-bin\n", result.stdout)
+        self.assertRegex(result.stdout.splitlines()[-1], r"^artifact=/")
 
 
 if __name__ == "__main__":

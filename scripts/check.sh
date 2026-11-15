@@ -17,10 +17,12 @@
 # meaning "the gate did not run". Each digest is the sha256 of the release
 # asset as fetched at pin time; bump the version and the digest together.
 #
-# What this cannot reach: build-check.sh's root branch (useradd / su / chown),
-# which only exists inside the publish job's container. The rest of the package
-# build -- the retention window and the database entry -- runs offline in
-# tests/test_build_repo.py, against the real build-repo.sh.
+# What this cannot reach: the tools `BUILD_AS=root` calls -- useradd, chown, su
+# and pacman themselves. The adapter and the order it runs in are driven offline
+# against stubs (tests/test_build_check.py, RootAdapterTest), so all a publish
+# run still proves is that the real tools do what their stubs pretend. The rest
+# of the package build -- the retention window and the database entry -- runs
+# offline in tests/test_build_repo.py, against the real build-repo.sh.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -152,13 +154,13 @@ fi
 
 heading "not covered here"
 cat <<'EOF'
-- build-check.sh's root branch (useradd / su / chown and the depends install
-  behind it): it only exists inside the publish container, so a publish run
-  proves it. Everything else runs without root: the offline tests drive the
-  scripts against stubs and a srcinfo-shaped fixture (tests/test_build_check.py,
-  tests/test_build_repo.py, tests/test_pkg_sh.py), and the probe gate above
-  runs the real thing -- on a machine that has makepkg, which the runner has
-  not.
+- what `BUILD_AS=root` calls: useradd, chown, su and pacman themselves. The
+  adapter and the order it runs in are driven offline against stubs
+  (tests/test_build_check.py, RootAdapterTest, plus a srcinfo-shaped fixture in
+  tests/test_pkg_sh.py), so what a publish run still proves is only that the
+  real tools do what their stubs pretend. tests/test_build_repo.py drives the
+  real build-repo.sh the same way, and the probe gate above runs the real
+  makepkg and repo-add -- on a machine that has them, which the runner has not.
 - the publish steps themselves -- seeding repo/ from the previous gh-pages
   tree, the force push, the Release, the commit back to main: they only exist
   in the publish job, and a real publish is what proves them. The seed takes
