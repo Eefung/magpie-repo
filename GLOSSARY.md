@@ -45,11 +45,11 @@ gh-pages 上 `x86_64/` 目录与 `magpie.db` 合起来的东西，pacman 的 `[m
 _Avoid_: 仓库（会和 git 仓库混淆）
 
 **保留窗口**：
-软件源里每个包同时保留的版本数，`KEEP=2`。旧版本只给刚同步过旧 db 的客户端兜底，db 本身只列当前版。数的是版本不是文件：同一个版本的每个 arch 一起留、一起丢，db 里每个 arch 一条。
+软件源里每个包同时保留的版本数，`KEEP=2`。旧版本只给刚同步过旧 db 的客户端兜底，db 本身只列当前版。数的是版本不是文件：同一个版本的每个 arch 一起留、一起丢，db 里每个 arch 一条。窗口的账上只有包清单里还有的包——从清单删掉的包不会被构建，也就没有谁会数到它，所以 `build-repo.sh` 先问这棵树里有哪些包（`pkgfiles_packages`），这次没构建的一律清掉。包清单是唯一的账本，不是目录里的现状。
 _Avoid_: 历史版本、归档
 
 **包文件**：
-软件源 `x86_64/` 里的 `.pkg.tar.zst`，名字恒为 `pkgname-pkgver-pkgrel-arch`，由 makepkg 决定。排序、保留窗口、db 条目读的是同一个顺序，这三个判断都由 `scripts/lib/pkg.sh` 回答。
+软件源 `x86_64/` 里的 `.pkg.tar.zst`，名字恒为 `pkgname-pkgver-pkgrel-arch`，由 makepkg 决定。排序、保留窗口、db 条目读的是同一个顺序，这三个判断都由 `scripts/lib/pkg.sh` 回答。「什么算包文件」只有一个拼写：`pkgfile_pattern`（后缀是 `pkgfile_suffix`），`pkgfiles_all` 用它扫目录，workflow 播种 gh-pages 的 `tar --wildcards` 也问它——所以带过来的树与被清理的树是同一个集合，`.sig` 之类不会混进 `repo-add`。
 _Avoid_: 安装包、构建产物
 
 **载荷核对**：

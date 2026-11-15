@@ -260,6 +260,105 @@ class PkgfilesAtTest(RepoDirectory):
         self.assertEqual(self.at("0.1.10"), [build("0.1.10")])
 
 
+class PkgfileNamingTest(RepoDirectory):
+    """The naming rule, and its inverse: what package does this file belong to."""
+
+    def pattern(self) -> str:
+        result = call("pkgfile_pattern")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def suffix(self) -> str:
+        result = call("pkgfile_suffix")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def pkgname(self, name: str) -> subprocess.CompletedProcess:
+        return call(f"pkgfile_pkgname {shlex.quote(str(self.out / name))}")
+
+    def test_the_pattern_is_the_suffix_with_a_star(self):
+        self.assertEqual(self.suffix(), ".pkg.tar.zst")
+        self.assertEqual(self.pattern(), "*.pkg.tar.zst")
+
+    def test_a_dash_in_the_pkgname_survives_the_peel(self):
+        # The three fields makepkg appends come off the right; magpie-cli-bin is
+        # one package, not `magpie`.
+        self.assertEqual(
+            self.pkgname("magpie-cli-bin-0.1.9-1-x86_64.pkg.tar.zst").stdout,
+            "magpie-cli-bin\n",
+        )
+
+    def test_pkgrel_and_arch_are_not_read_out_of_the_name(self):
+        self.assertEqual(
+            self.pkgname("magpie-bin-0.1.1000-2-aarch64.pkg.tar.zst").stdout,
+            "magpie-bin\n",
+        )
+
+    def test_a_file_that_is_not_a_pkgfile_is_refused(self):
+        for name in ("notes.pkg.tar.zst", "magpie-bin-0.1.9-1-x86_64.pkg.tar.gz",
+                     "magpie-bin.pkg.tar.zst"):
+            with self.subTest(name=name):
+                self.assertNotEqual(self.pkgname(name).returncode, 0, name)
+
+
+class PkgfilesAllTest(RepoDirectory):
+    """One glob decides what a 包文件 is, for every caller that gropes a dir."""
+
+    def all(self) -> list[str]:
+        return self.answer(f'pkgfiles_all {self.out_arg()}')
+
+    def test_a_signature_beside_a_package_is_not_a_package(self):
+        # `*.pkg.tar.*` matched the .sig too, which repo-add would have been
+        # handed the day signing lands.
+        self.touch(build("0.1.9"), build("0.1.9") + ".sig")
+        self.assertEqual(self.all(), [build("0.1.9")])
+
+    def test_an_empty_directory_is_empty_not_an_error(self):
+        self.assertEqual(self.all(), [])
+
+    def test_the_order_is_the_window_and_database_order(self):
+        self.touch(build("0.1.9"), build("0.1.1000"), build("0.1.10"))
+        self.assertEqual(self.all(), [build("0.1.9"), build("0.1.10"), build("0.1.1000")])
+
+    def test_another_packages_files_are_listed_here(self):
+        # This one question is "the tree", not "my package"; pkgfiles narrows.
+        self.touch(build("0.1.9"), "magpie-cli-bin-0.1.9-1-x86_64.pkg.tar.zst")
+        self.assertEqual(len(self.all()), 2)
+
+
+class PkgfilesPackagesTest(RepoDirectory):
+    """Which packages does this directory carry -- the question nobody asked."""
+
+    def packages(self) -> subprocess.CompletedProcess:
+        return call(f"pkgfiles_packages {self.out_arg()}")
+
+    def names(self) -> list[str]:
+        result = self.packages()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.splitlines()
+
+    def test_each_package_once_however_many_versions(self):
+        self.touch(build("0.1.9"), build("0.1.10"),
+                   "magpie-cli-bin-0.1.9-1-x86_64.pkg.tar.zst",
+                   "magpie-cli-bin-0.1.10-1-x86_64.pkg.tar.zst")
+        self.assertEqual(self.names(), ["magpie-bin", "magpie-cli-bin"])
+
+    def test_files_that_are_not_pkgfiles_are_ignored(self):
+        self.touch("SHA256SUMS", "magpie.db.tar.gz", build("0.1.9"))
+        self.assertEqual(self.names(), ["magpie-bin"])
+
+    def test_an_empty_directory_carries_nothing(self):
+        self.assertEqual(self.names(), [])
+
+    def test_a_pkgfile_whose_name_does_not_parse_is_a_failure(self):
+        # Membership is the extension; a name that then does not parse means
+        # the naming rule changed under the reader.
+        self.touch("notes.pkg.tar.zst")
+        result = self.packages()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not a 包文件 name", result.stderr)
+
+
 class LineFieldTest(unittest.TestCase):
     """The one reader of the frozen `name=value` lines."""
 

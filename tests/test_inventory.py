@@ -239,6 +239,25 @@ class ServedIdentityTest(unittest.TestCase):
                 )
 
 
+class PackageFilePatternTest(unittest.TestCase):
+    """What counts as a 包文件 is one rule, and it lives in pkg.sh.
+
+    The workflow's seed whitelist spelled the glob itself, in a file that also
+    decides which tree gets carried forward; build-repo's window spelled it
+    again. Two spellings meant a retired package could be seeded forward by one
+    and pruned by neither, and a `.sig` beside a package would match both.
+    """
+
+    def workflow(self) -> str:
+        return (REPO / ".github" / "workflows" / "publish.yml").read_text()
+
+    def test_the_seed_asks_pkg_sh_for_the_pattern(self):
+        self.assertIn('"$ARCH/$(pkgfile_pattern)"', self.workflow())
+
+    def test_the_workflow_does_not_spell_the_extension(self):
+        self.assertNotIn(".pkg.tar", self.workflow())
+
+
 class WorkflowShellTest(unittest.TestCase):
     """The workflow's `run:` blocks are shell, and two shapes in them bite.
 

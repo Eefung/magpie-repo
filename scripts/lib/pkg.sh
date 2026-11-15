@@ -119,18 +119,48 @@ srcinfo_depends() {
     printf '%s\n' "$1" | sed -n 's/^[[:space:]]*depends = //p'
 }
 
+# pkgfile_suffix / pkgfile_pattern -- the one spelling of "this is a 包文件".
+#
+# The extension and the ordering are one rule, and four places used to spell
+# the glob themselves: pkgfiles here, build-check's sweep, build-repo's disk
+# count, and the workflow's seed whitelist. `*.pkg.tar.*` also matches a `.sig`
+# next to a package file, which repo-add would be handed the day signing lands
+# -- and two spellings are how the seed and the retention window drift apart
+# without either side noticing.
+pkgfile_suffix() { printf '.pkg.tar.zst\n'; }
+pkgfile_pattern() { printf '*%s\n' "$(pkgfile_suffix)"; }
+
+# pkgfiles_all <repo dir> -- every 包文件 in that directory, oldest 版本 first.
+#
+# The one glob. `pkgfiles` filters it per package and the window, the database
+# entry and the release selection are thin answers over that one order; this is
+# also what the workflow's seed asks, so the tree carried forward and the tree
+# pruned are decided by the same rule.
+pkgfiles_all() {
+    local out="$1" pattern
+    local -a files
+    pattern="$(pkgfile_pattern)"
+    # shellcheck disable=SC2086,SC2012  # the pattern is the rule being applied
+    mapfile -t files < <(ls -1 "$out"/$pattern 2>/dev/null | sort -V)
+    [ "${#files[@]}" -gt 0 ] || return 0
+    printf '%s\n' "${files[@]}"
+}
+
 # pkgfiles <repo dir> <pkgname> -- that package's files in that directory,
 # oldest version first. The naming (pkgname-pkgver-pkgrel-arch) and the
 # ordering are one rule, so it lives here: the 保留窗口 counts 版本 from the head
 # of this list and the database entry takes the newest 版本's files from its
 # tail, and neither can disagree with the other about which build is current.
 pkgfiles() {
-    local out="$1" pkgname="$2"
-    local -a files
-    # shellcheck disable=SC2012  # names here are pkgname-pkgver-pkgrel-arch
-    mapfile -t files < <(ls -1 "$out/$pkgname"-[0-9]*.pkg.tar.* 2>/dev/null | sort -V)
-    [ "${#files[@]}" -gt 0 ] || return 0
-    printf '%s\n' "${files[@]}"
+    local out="$1" pkgname="$2" file name
+    while IFS= read -r file; do
+        name="${file##*/}"
+        # The `-[0-9]` is the guard that keeps magpie-cli-bin's files out of
+        # magpie-bin's window: a prefix alone would mix them.
+        case "$name" in
+            "$pkgname"-[0-9]*) printf '%s\n' "$file" ;;
+        esac
+    done < <(pkgfiles_all "$out")
 }
 
 # pkgfile_version <pkgname> <包文件> -- the 版本 in that file's name.
@@ -141,6 +171,55 @@ pkgfiles() {
 pkgfile_version() {
     local pkgname="$1" name="${2##*/}"
     printf '%s\n' "${name#"$pkgname"-}" | cut -d- -f1
+}
+
+# pkgfile_pkgname <包文件> -- the pkgname in that file's name.
+#
+# The inverse of the naming rule, for the question pkg.sh did not answer: which
+# packages does this directory carry. makepkg writes <pkgname>-<pkgver>-<pkgrel>-
+# <arch>, and pkgname itself carries dashes (magpie-bin), so the three fields
+# makepkg appends are peeled off the right and whatever is left is the package.
+# A name that does not parse is a change to the rule, not a package to guess at.
+pkgfile_pkgname() {
+    local name="${1##*/}" suffix base arch rel version
+    suffix="$(pkgfile_suffix)"
+    case "$name" in
+        *"$suffix") base="${name%"$suffix"}" ;;
+        *) return 1 ;;
+    esac
+    arch="${base##*-}"; base="${base%-*}"
+    rel="${base##*-}"; base="${base%-*}"
+    version="${base##*-}"; base="${base%-*}"
+    [ -n "$base" ] || return 1
+    case "$version" in
+        "" | *[!0-9.]*) return 1 ;;
+    esac
+    case "$rel" in
+        "" | *[!0-9]*) return 1 ;;
+    esac
+    [ -n "$arch" ] || return 1
+    printf '%s\n' "$base"
+}
+
+# pkgfiles_packages <repo dir> -- the packages that directory carries, each
+# once, in name order.
+#
+# build-repo's window only ever counted the packages it had just built, so a
+# package removed from the 包清单 was built by nobody, pruned by nobody, and
+# carried forward by the seed on every publish -- its last two builds served
+# forever. The directory itself is now asked what it holds.
+pkgfiles_packages() {
+    local out="$1" file pkgname
+    local -A seen=()
+    while IFS= read -r file; do
+        if ! pkgname="$(pkgfile_pkgname "$file")"; then
+            echo "not a 包文件 name: ${file##*/}" >&2
+            return 1
+        fi
+        [ -z "${seen[$pkgname]:-}" ] || continue
+        seen["$pkgname"]=1
+        printf '%s\n' "$pkgname"
+    done < <(pkgfiles_all "$out")
 }
 
 # pkgfiles_prune <repo dir> <pkgname> <keep> -- the files the 保留窗口 drops,

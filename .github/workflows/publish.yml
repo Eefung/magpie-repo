@@ -118,9 +118,12 @@ jobs:
           # carried forward forever, frozen at the version that last wrote it
           # (SHA256SUMS used to be exactly that). The database is rebuilt from
           # the package files below, so it has nothing to gain from the seed.
+          # The pattern is pkg.sh's, not this file's: what counts as a 包文件 is
+          # one rule, and the seed carrying a different set from the one
+          # build-repo prunes is how a retired package gets served forever.
           if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
             git fetch --depth 1 origin gh-pages
-            git archive FETCH_HEAD | tar -x -C repo --wildcards "$ARCH/*.pkg.tar.*"
+            git archive FETCH_HEAD | tar -x -C repo --wildcards "$ARCH/$(pkgfile_pattern)"
             echo "previous repository:"; ls "repo/$ARCH" || true
           else
             echo "no gh-pages yet, starting a fresh repository"

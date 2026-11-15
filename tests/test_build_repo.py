@@ -141,6 +141,27 @@ class BuildRepoTest(unittest.TestCase):
         # The artifact left the package directory: the source tree stays clean.
         self.assertEqual(list(self.pkgdir.glob("*.pkg.tar.*")), [])
 
+    def test_a_package_that_left_the_inventory_is_retired(self):
+        # The window counts the packages this run built, so a package removed
+        # from the 包清单 was built by nobody, pruned by nobody, and carried
+        # forward by the seed on every publish. The directory is asked what it
+        # carries instead, and what this run did not build goes.
+        (self.out / "magpie-retired-0.0.1-1-x86_64.pkg.tar.zst").touch()
+        (self.out / "magpie-retired-0.0.2-1-x86_64.pkg.tar.zst").touch()
+        self.stage("0.1.10")
+
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.files_on_disk(), ["magpie-bin-0.1.10-1-x86_64.pkg.tar.zst"]
+        )
+        self.assertIn("retiring magpie-retired-0.0.1-1-x86_64.pkg.tar.zst", result.stdout)
+        self.assertIn("retiring magpie-retired-0.0.2-1-x86_64.pkg.tar.zst", result.stdout)
+        self.assertEqual(
+            self.database_entries(), ["magpie-bin-0.1.10-1-x86_64.pkg.tar.zst"]
+        )
+
     def test_a_failed_build_writes_no_database(self):
         self.stage("0.1.10")
         failing = self.root / "build-check-fails.sh"

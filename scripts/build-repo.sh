@@ -69,6 +69,31 @@ for dir in "$@"; do
     pkgnames+=("$built_name")
 done
 
+# --- retire the packages that left the 包清单 --------------------------------
+# The window below counts versions of the packages this run built. A package
+# removed from the 包清单 is built by nobody, so nothing counted it: its files
+# stayed in the directory, the seed carried them to gh-pages on every publish,
+# and no later run ever looked at them again. The directory is asked what it
+# carries, and anything that was not built this run goes -- captured first,
+# because a process substitution would swallow the reader's own failure.
+retire() {
+    local pkgname="$1" file
+    while IFS= read -r file; do
+        echo "retiring $(basename "$file")"
+        rm -f "$file"
+    done < <(pkgfiles "$out" "$pkgname")
+}
+
+ours=" ${pkgnames[*]} "
+carried="$(pkgfiles_packages "$out")" || exit 1
+while IFS= read -r carried_name; do
+    [ -n "$carried_name" ] || continue
+    case "$ours" in
+        *" $carried_name "*) ;;
+        *) retire "$carried_name" ;;
+    esac
+done <<<"$carried"
+
 # --- keep only the newest KEEP builds of every package ------------------------
 prune() {
     local pkgname="$1" file
@@ -93,6 +118,5 @@ mapfile -t current < <(for pkgname in "${pkgnames[@]}"; do pkgfiles_current "$ou
 rm -f "$out/$REPO_NAME.db" "$out/$REPO_NAME.db.tar.gz" \
       "$out/$REPO_NAME.files" "$out/$REPO_NAME.files.tar.gz"
 repo-add -q "$out/$REPO_NAME.db.tar.gz" "${current[@]}"
-# shellcheck disable=SC2012
 echo "repository $REPO_NAME: ${#current[@]} database entries, \
-$(ls -1 "$out"/*.pkg.tar.* | wc -l) file(s) on disk, $(du -sh "$out" | cut -f1)"
+$(pkgfiles_all "$out" | wc -l) file(s) on disk, $(du -sh "$out" | cut -f1)"
