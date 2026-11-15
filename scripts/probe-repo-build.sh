@@ -31,8 +31,12 @@ OLD="0.1.1"                      # version seeded as the retention window
 # A name of its own, not the repository's: the database's file name is what
 # proves REPO_NAME crossed into the script and reached repo-add, and with the
 # real name the probe could not tell a passed variable from a defaulted one.
+# release.sh is handed the same two, so case 4 can hold its notes to values this
+# probe chose rather than to the repository's.
 REPO_NAME="probe"
-export REPO_NAME
+ARCH="x86_64"
+PAGES_URL="https://example.invalid/repo"
+export REPO_NAME ARCH PAGES_URL
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -138,8 +142,7 @@ echo "########## 4. release.sh hands over this 版本 alone (expect: 1 asset, 1 
 # about is that it does not.
 mkdir -p rel
 printf 'package packages/fixture %s\n' "$PKG" > packages.txt
-ARCH=x86_64 PAGES_URL=https://example.invalid/repo \
-    ./scripts/release.sh repo/x86_64 "$VER" packages.txt rel > release.txt
+./scripts/release.sh repo/x86_64 "$VER" packages.txt rel > release.txt
 cat release.txt
 expect 1 "$(wc -l < rel/assets.txt)" "assets"
 if grep -q -- "$PKG-$OLD" rel/assets.txt; then
@@ -155,6 +158,18 @@ else
     echo "!! FAIL: the notes lost the install line"
     exit 1
 fi
+# The block a user pastes, emitted from the identity this run was given. The
+# notes are the fifth copy of it and the only one on the page a user lands on;
+# tests/test_release.py guards them offline, and this is the same claim made
+# where the real makepkg ran.
+for literal in "[$REPO_NAME]" "SigLevel = Optional" "Server = $PAGES_URL/$ARCH"; do
+    if grep -qF -- "$literal" rel/notes.md; then
+        ok "the notes carry '$literal'"
+    else
+        echo "!! FAIL: the notes lost '$literal'"
+        exit 1
+    fi
+done
 
 echo
 echo "########## 5. KEEP=1 drops the older build from db and disk ##########"

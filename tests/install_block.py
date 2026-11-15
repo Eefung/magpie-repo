@@ -34,6 +34,9 @@ SIGLEVEL = "SigLevel = Optional"
 # an argument.
 _INSTALL_LINE = re.compile(r"pacman\s+-S(?!\w)([^#\n]*)")
 
+# An opening fence line, ``` or ~~~, with an optional language tag.
+_FENCE = re.compile(r"^(`{3,}|~{3,})[^\n]*$", re.M)
+
 
 @dataclass(frozen=True)
 class Served:
@@ -60,6 +63,27 @@ class Served:
     def env(self) -> dict[str, str]:
         """The names the workflow declares the same three under."""
         return {"ARCH": self.arch, "REPO_NAME": self.section, "PAGES_URL": self.url}
+
+
+def block(document: str) -> str:
+    """The first fenced block in this text -- what a user actually copies.
+
+    Read the block, not the document: every fact in it is also explained in the
+    sentence beside it, so a document-wide search is satisfied by the prose that
+    describes the line. README's install section and release.sh's notes both
+    fence the copy a user needs, which is what makes them readable this way; a
+    block that goes missing reads as empty, and every literal is then reported
+    missing rather than silently passing.
+    """
+    opening = _FENCE.search(document)
+    if opening is None:
+        return ""
+    marker = opening.group(1)
+    closing = re.compile(rf"^{re.escape(marker)}\s*$", re.M)
+    found = closing.search(document, opening.end())
+    if found is None:
+        return ""
+    return document[opening.end():found.start()]
 
 
 def installed(installs: str) -> set[str]:

@@ -77,18 +77,25 @@ printf '%s\n' "${assets[@]}" >"$out/assets.txt"
 # differently named 软件源 cannot ship notes that tell the user to write
 # someone else's section -- and tests/test_inventory.py holds README's block and
 # this one to the same literals.
+#
+# It is fenced, and nothing outside the fence repeats its three lines: the guard
+# reads the fence (tests/install_block.py), so a `[magpie]` left in the prose
+# beside it would stand in for the line a user copies. README learned the same
+# lesson -- its install block is asserted from the block, not from the file.
 cat >"$out/notes.md" <<EOF
 magpie $version 的 $ARCH pacman 软件包。
 
 /etc/pacman.conf 末尾加：
 
-    [$REPO_NAME]
-    SigLevel = Optional
-    Server = $PAGES_URL/$ARCH
+~~~ini
+[$REPO_NAME]
+SigLevel = Optional
+Server = $PAGES_URL/$ARCH
+~~~
 
 然后：
 
-    # 先同步所有源（含 [$REPO_NAME]），别单独 -Sy
+    # 先同步所有源，别单独 -Sy
     sudo pacman -Syu
     # 桌面版与终端版，可分开装
     sudo pacman -S ${pkgnames[*]}

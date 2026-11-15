@@ -418,15 +418,14 @@ class ServedIdentityTest(unittest.TestCase):
         The block, not the whole README: every fact it carries is also
         explained in the prose around it, so a search of the file as a whole is
         satisfied by the sentence that describes the line instead of by the
-        line the user copies.
+        line the user copies. The fence itself is read by tests/install_block.py
+        now, so README and the Release notes go through the same rule.
         """
         try:
             section = readme.split("## 安装", 1)[1]
-            start = section.index("```bash") + len("```bash")
-            end = section.index("```", start)
-        except (IndexError, ValueError):
+        except IndexError:
             return ""
-        return section[start:end]
+        return install_block.block(section)
 
     def problems(self, readme: str, source: str | None = None) -> list[str]:
         """Every install-block fact the README does not restate exactly."""
