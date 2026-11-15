@@ -27,6 +27,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "tests"))
 
 import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
+import install_block  # noqa: E402  (the one reader of the block a user pastes)
 import workflow  # noqa: E402  (the reader of .github/workflows/publish.yml)
 
 LIB = REPO / "scripts" / "lib" / "pkg.sh"
@@ -379,6 +380,12 @@ class ServedIdentityTest(unittest.TestCase):
     Regenerating the block would be nicer than asserting it, but README is not
     executable: a guard can say "these lines are here", not that the prose
     around them still reads correctly. That is what it is for.
+
+    The Release notes are the same block again, on the page a user lands on from
+    the Releases tab. `release.sh` emits it from `ARCH` / `REPO_NAME` /
+    `PAGES_URL` (it used to write `[magpie]` as a literal), and
+    tests/test_release.py holds it to the same literals through
+    tests/install_block.py -- one reader, two documents.
     """
 
     def workflow(self) -> str:
@@ -417,30 +424,18 @@ class ServedIdentityTest(unittest.TestCase):
     def problems(self, readme: str, source: str | None = None) -> list[str]:
         """Every install-block fact the README does not restate exactly."""
         want = self.declared(source)
+        missing = install_block.problems(
+            config=self.install_block(readme),
+            installs=readme,
+            label="README",
+            section=want["name"],
+            url=want["url"],
+            arch=want["arch"],
+            packages=bump.PACKAGES,
+        )
         server = f"{want['url']}/{want['arch']}"
-        block = self.install_block(readme)
-        missing = [
-            f"README's install block carries no {literal!r}"
-            for literal in (
-                f"[{want['name']}]",
-                # Unsigned is a choice (ADR-0002), and this line is what makes
-                # it work: without it the user inherits [options]' Required and
-                # the install dies on a signature that will never exist. No
-                # producer hands this line over -- the workflow does not know
-                # it -- so the guard is where it lives, and it has to read the
-                # block: the prose beside it says the same words.
-                "SigLevel = Optional",
-                f"Server = {server}",
-            )
-            if literal not in block
-        ]
         if f"{server}/{want['name']}.db" not in readme:
             missing.append(f"README carries no {server}/{want['name']}.db")
-        missing += [
-            f"README never installs {pkg}"
-            for pkg in bump.PACKAGES
-            if f"pacman -S {pkg}" not in readme
-        ]
         return missing
 
     def test_the_install_block_matches_what_the_repository_serves(self):
@@ -482,7 +477,7 @@ class ServedIdentityTest(unittest.TestCase):
         self.assertIn("SigLevel = Optional", dropped, "the prose no longer quotes it; reword this test")
         self.assertEqual(
             [problem for problem in self.problems(dropped) if "SigLevel" in problem],
-            ["README's install block carries no 'SigLevel = Optional'"],
+            ["README carries no 'SigLevel = Optional'"],
         )
 
 

@@ -29,10 +29,14 @@ SCRIPT = REPO / "scripts" / "release.sh"
 sys.path.insert(0, str(REPO / "tests"))
 
 import frozen  # noqa: E402  (the one reader of the frozen lines, as in production)
+import install_block  # noqa: E402  (the one reader of the block a user pastes)
 
 PKGS = ["magpie-bin", "magpie-cli-bin"]
 CURRENT = "0.1.10"
 PREVIOUS = "0.1.9"
+# What the workflow's env declares this 软件源 is served as. The test spells it
+# so the notes are held to a value the script was *given*, not to today's.
+SERVED = {"ARCH": "x86_64", "REPO_NAME": "magpie", "PAGES_URL": "https://example.invalid/repo"}
 
 
 def pkgfile(pkg: str, version: str, rel: str = "1") -> str:
@@ -59,9 +63,9 @@ class ReleaseTest(unittest.TestCase):
 
     def run_script(self, *argv: str, env: dict[str, str] | None = None):
         full = dict(os.environ)
-        full.pop("ARCH", None)
-        full.pop("PAGES_URL", None)
-        full.update({"ARCH": "x86_64", "PAGES_URL": "https://example.invalid/repo"})
+        for key in SERVED:
+            full.pop(key, None)
+        full.update(SERVED)
         full.update(env or {})
         return subprocess.run(
             ["bash", str(SCRIPT), *argv],
@@ -109,13 +113,62 @@ class ReleaseTest(unittest.TestCase):
                 digest, hashlib.sha256((self.repo / name).read_bytes()).hexdigest()
             )
 
-    def test_the_install_lines_come_from_the_package_list(self):
+    def test_the_notes_carry_the_block_a_user_pastes(self):
+        """The copy nobody guarded: the page a user lands on.
+
+        README's block is held to the workflow's env by tests/test_inventory.py.
+        The notes were prose -- `[magpie]` written into the heredoc, no
+        `Server =` line, no `SigLevel = Optional` -- and no test read them, so a
+        renamed section or a moved URL shipped instructions that 404 or cannot
+        install.
+        """
         self.release()
 
         notes = (self.out / "notes.md").read_text()
         self.assertIn(f"sudo pacman -S {' '.join(PKGS)}", notes)
-        self.assertIn("仓库：https://example.invalid/repo/x86_64", notes)
         self.assertIn(f"v{CURRENT}", notes)
+        self.assertEqual(
+            install_block.problems(
+                config=notes,
+                installs=notes,
+                label="the Release notes",
+                section=SERVED["REPO_NAME"],
+                url=SERVED["PAGES_URL"],
+                arch=SERVED["ARCH"],
+                packages=PKGS,
+            ),
+            [],
+        )
+
+    def test_the_block_is_emitted_from_the_identity_it_was_given(self):
+        # Held to a value this run did not use before: a guard against the
+        # current wording would pass with the literal still in the heredoc.
+        served = {
+            **SERVED,
+            "REPO_NAME": "nightly",
+            "PAGES_URL": "https://example.invalid/nightly",
+        }
+        result = self.run_script(
+            str(self.repo), CURRENT, str(self.listing), str(self.out), env=served
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        notes = (self.out / "notes.md").read_text()
+        self.assertIn("[nightly]", notes)
+        self.assertNotIn("[magpie]", notes)
+        self.assertIn("Server = https://example.invalid/nightly/x86_64", notes)
+        self.assertEqual(
+            install_block.problems(
+                config=notes,
+                installs=notes,
+                label="the Release notes",
+                section="nightly",
+                url="https://example.invalid/nightly",
+                arch="x86_64",
+                packages=PKGS,
+            ),
+            [],
+        )
 
     def test_the_three_frozen_lines_are_the_handover(self):
         result = self.release()
@@ -163,8 +216,9 @@ class ReleaseTest(unittest.TestCase):
 
     def test_the_served_identity_is_required(self):
         # The notes quote these to a user about to copy them into pacman.conf;
-        # asking for them here is what stops this module from inventing a URL.
-        for key in ("ARCH", "PAGES_URL"):
+        # asking for them here is what stops this module from inventing a
+        # section name or a URL.
+        for key in ("ARCH", "REPO_NAME", "PAGES_URL"):
             with self.subTest(key=key):
                 result = self.run_script(
                     str(self.repo), CURRENT, str(self.listing), str(self.out),

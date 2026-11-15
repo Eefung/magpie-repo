@@ -3,7 +3,7 @@
 #
 #   ./scripts/release.sh <repo dir> <version> <包清单 file> <out dir>
 #
-#   ARCH=x86_64 PAGES_URL=https://host/repo \
+#   ARCH=x86_64 REPO_NAME=magpie PAGES_URL=https://host/repo \
 #     ./scripts/release.sh repo/x86_64 0.1.4178 /tmp/packages.txt /tmp/rel
 #
 # `gh release create` belongs to the workflow step; everything it is handed is
@@ -23,9 +23,11 @@
 #   sums=<file with the sha256 of exactly those>
 #   notes=<file with the release body>
 #
-# ARCH and PAGES_URL are required: they are what this 软件源 is served as, and
-# the notes quote them to a user who is about to copy two lines into
-# pacman.conf.
+# ARCH, REPO_NAME and PAGES_URL are required: they are what this 软件源 is
+# served as, and the notes quote all three in the block a user pastes into
+# pacman.conf. REPO_NAME used to be a literal `[magpie]` in the prose below --
+# a copy of a fact this script was never handed, and the only place a user reads
+# it besides README.
 set -euo pipefail
 
 # shellcheck source=lib/pkg.sh
@@ -37,6 +39,7 @@ packages="${3:?usage: release.sh <repo dir> <version> <包清单 file> <out dir>
 out="${4:?usage: release.sh <repo dir> <version> <包清单 file> <out dir>}"
 
 ARCH="${ARCH:?release.sh needs ARCH: the name of the served directory}"
+REPO_NAME="${REPO_NAME:?release.sh needs REPO_NAME: the 软件源 section name}"
 PAGES_URL="${PAGES_URL:?release.sh needs PAGES_URL: where the 软件源 is served}"
 [ -d "$dir" ] || { echo "no such repository directory: $dir" >&2; exit 1; }
 
@@ -68,14 +71,24 @@ printf '%s\n' "${assets[@]}" >"$out/assets.txt"
 # the bytes that will be served, and pkgrel/arch stay makepkg's to decide.
 (cd "$dir" && sha256sum -- "${assets[@]##*/}") >"$out/SHA256SUMS"
 
-# The install lines are the whole reason this is generated: they are the only
-# part of the notes a user copies verbatim.
+# The install block is the whole reason this is generated: it is the part of
+# the notes a user copies verbatim, and it restates the same four facts README
+# does. Emitted from ARCH / REPO_NAME / PAGES_URL rather than written out, so a
+# differently named 软件源 cannot ship notes that tell the user to write
+# someone else's section -- and tests/test_inventory.py holds README's block and
+# this one to the same literals.
 cat >"$out/notes.md" <<EOF
 magpie $version 的 $ARCH pacman 软件包。
 
-仓库：$PAGES_URL/$ARCH
+/etc/pacman.conf 末尾加：
 
-    # 先同步所有源（含 [magpie]），别单独 -Sy
+    [$REPO_NAME]
+    SigLevel = Optional
+    Server = $PAGES_URL/$ARCH
+
+然后：
+
+    # 先同步所有源（含 [$REPO_NAME]），别单独 -Sy
     sudo pacman -Syu
     # 桌面版与终端版，可分开装
     sudo pacman -S ${pkgnames[*]}
