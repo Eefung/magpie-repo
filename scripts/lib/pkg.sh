@@ -130,6 +130,19 @@ srcinfo_depends() {
 pkgfile_suffix() { printf '.pkg.tar.zst\n'; }
 pkgfile_pattern() { printf '*%s\n' "$(pkgfile_suffix)"; }
 
+# pkgfile_residue_pattern -- what a build can leave in a package directory.
+#
+# A different question from pkgfile_pattern, and deliberately wider: that one is
+# the set this repository serves, this one is the set a build has to be able to
+# clear before and after itself. makepkg writes `<pkg>.pkg.tar.zst.sig` beside
+# the archive the day signing lands, and a hand-run makepkg with an older
+# default writes `.xz`; both are residue, neither is a 包文件. The name is what
+# makes the trap's reach a decision instead of an accident -- the glob
+# build-check used to spell itself (`*.pkg.tar.*`) was this rule, unnamed -- and
+# `packages/*/<pattern>` in .gitignore is the same set, held to it by
+# tests/test_pkg_sh.py.
+pkgfile_residue_pattern() { printf '*.pkg.tar.*\n'; }
+
 # pkgfiles_all <repo dir> -- every 包文件 in that directory, oldest 版本 first.
 #
 # The one glob. `pkgfiles` filters it per package and the window, the database

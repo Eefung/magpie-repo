@@ -49,8 +49,12 @@ _Avoid_: 仓库（会和 git 仓库混淆）
 _Avoid_: 历史版本、归档
 
 **包文件**：
-软件源 `x86_64/` 里的 `.pkg.tar.zst`，名字恒为 `pkgname-pkgver-pkgrel-arch`，由 makepkg 决定。排序、保留窗口、db 条目读的是同一个顺序，这三个判断都由 `scripts/lib/pkg.sh` 回答。「什么算包文件」只有一个拼写：`pkgfile_pattern`（后缀是 `pkgfile_suffix`），`pkgfiles_all` 用它扫目录，workflow 播种 gh-pages 的 `tar --wildcards` 也问它——所以带过来的树与被清理的树是同一个集合，`.sig` 之类不会混进 `repo-add`。
+软件源 `x86_64/` 里的 `.pkg.tar.zst`，名字恒为 `pkgname-pkgver-pkgrel-arch`，由 makepkg 决定。排序、保留窗口、db 条目读的是同一个顺序，这三个判断都由 `scripts/lib/pkg.sh` 回答。「什么算包文件」只有一个拼写：`pkgfile_pattern`（后缀是 `pkgfile_suffix`），`pkgfiles_all` 用它扫目录，workflow 播种 gh-pages 的 `tar --wildcards` 也问它——所以带过来的树与被清理的树是同一个集合，`.sig` 之类不会混进 `repo-add`。与它并排的另一个集合是残留（`pkgfile_residue_pattern`），两者故意不同宽。
 _Avoid_: 安装包、构建产物
+
+**残留**：
+包目录里构建留下的、但不是包文件的东西：makepkg 的工作树（`src/`、`pkg/`、`.srcdest/`）、旧 checkout 里还躺着的 `.SRCINFO`，以及 `pkgfile_residue_pattern`（`*.pkg.tar.*`）匹配的形状——哪天签名落地会写出的 `.sig`、旧默认值写出的 `.xz`。`build-check.sh` 开工前清一遍、退出时清一遍，交出目录之前还断言里面只剩 `PKGBUILD`、本次的包文件与那组工作树：`packages/<包>/` 是提交进仓库的，publish 最后一步的 `git add packages` 会把谁都带上。`.gitignore` 覆盖同一个集合，为的是 trap 来不及跑的那种死法。
+_Avoid_: 垃圾文件、临时文件
 
 **载荷核对**：
 包文件里那个程序是不是这次要发的版本：`usr/bin/` 下唯一的成员，跑它的 `--version`，第一个点分数字必须**等于** `pkgver`。由 `scripts/lib/pkg.sh` 回答，容器里用 `bsdtar`，离线测试用 GNU `tar`（`PAYLOAD_TAR` 是那个 seam）。

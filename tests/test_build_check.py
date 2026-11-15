@@ -158,6 +158,38 @@ class BuildCheckTest(unittest.TestCase):
         # And it must not leave the file it was about to publish behind.
         self.assertEqual(list(self.pkgdir.glob("*.pkg.tar.*")), [])
 
+    def test_a_stray_file_fails_the_handover(self):
+        # `packages/<pkg>/` is committed and the publish job's last step stages
+        # the whole directory, so a file nobody named is a file that ships --
+        # `notes.txt` here stood in for an editor swap or a hand-run download.
+        # The trap can only clear the residue it knows; this notices the rest.
+        (self.pkgdir / "notes.txt").touch()
+
+        result = self.run_script()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("notes.txt", result.stderr)
+        self.assertNotIn("artifact=", result.stdout)
+        self.assertEqual(list(self.pkgdir.glob("*.pkg.tar.*")), [])
+
+    def test_the_sweep_clears_what_a_build_can_leave(self):
+        # Wider than the served set on purpose: a detached signature and an
+        # older default's archive are residue, and neither may sit here waiting
+        # for a later run to publish it.
+        for name in (
+            "magpie-bin-0.1.9-1-x86_64.pkg.tar.zst.sig",
+            "magpie-bin-0.1.9-1-x86_64.pkg.tar.xz",
+        ):
+            (self.pkgdir / name).touch()
+
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            [path.name for path in self.pkgdir.glob("*.pkg.tar.*")],
+            [self.artifact_of(result).name],
+        )
+
 
 STUB_LOGGER = """\
 #!/usr/bin/env bash

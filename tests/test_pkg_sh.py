@@ -301,6 +301,36 @@ class PkgfileNamingTest(RepoDirectory):
                 self.assertNotEqual(self.pkgname(name).returncode, 0, name)
 
 
+class PackageResidueTest(unittest.TestCase):
+    """What a build leaves is wider than what the repository serves."""
+
+    def pattern(self, function: str) -> str:
+        result = call(function)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_the_residue_set_is_wider_than_the_served_set(self):
+        served = self.pattern("pkgfile_pattern")
+        residue = self.pattern("pkgfile_residue_pattern")
+        self.assertEqual(served, "*.pkg.tar.zst")
+        self.assertEqual(residue, "*.pkg.tar.*")
+        # A detached signature and an older default's archive are residue: the
+        # sweep must clear them, the database and the seed must never see them.
+        for name in (
+            "magpie-bin-0.1.9-1-x86_64.pkg.tar.zst.sig",
+            "magpie-bin-0.1.9-1-x86_64.pkg.tar.xz",
+        ):
+            self.assertFalse(Path(name).match(served), name)
+            self.assertTrue(Path(name).match(residue), name)
+
+    def test_the_gitignore_covers_the_residue_set(self):
+        # The trap clears the directory; .gitignore is what protects a run that
+        # was killed before its trap could fire. One set, so a shape added to
+        # the sweep cannot be left out of the ignore.
+        residue = self.pattern("pkgfile_residue_pattern")
+        self.assertIn(f"packages/*/{residue}", (REPO / ".gitignore").read_text())
+
+
 class PkgfilesAllTest(RepoDirectory):
     """One glob decides what a 包文件 is, for every caller that gropes a dir."""
 

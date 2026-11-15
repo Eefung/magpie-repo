@@ -97,12 +97,27 @@ install_depends() {
 # A package file left by an earlier run must not be published later, so the
 # directory starts empty of them. The trap keeps that true for this run's own
 # leftovers: on failure nothing survives, on success exactly one file does.
-rm -f "$pkgdir"/*.pkg.tar.*
+# "Residue" is pkg.sh's rule, not this file's glob: it is wider than the set
+# the repository serves (a detached signature is residue too), and .gitignore
+# is the same set for a run that was killed before any trap could fire.
+residue="$(pkgfile_residue_pattern)"
+# shellcheck disable=SC2086  # the pattern is the rule being applied
+rm -f "$pkgdir"/$residue
+
+# Everything else a build may leave in the directory, named once: the working
+# trees makepkg creates (the trap clears them) and a srcinfo an older checkout
+# may still carry, which nothing writes any more. The trap removes these and the
+# check at the end allows them, so the two cannot disagree about what is
+# supposed to be here.
+LEFTOVERS=(src pkg .srcdest .SRCINFO)
 
 cleanup() {
-    rm -rf "$pkgdir/src" "$pkgdir/pkg" "$pkgdir/.srcdest"
-    local file
-    for file in "$pkgdir"/*.pkg.tar.*; do
+    local name file
+    for name in "${LEFTOVERS[@]}"; do
+        rm -rf "${pkgdir:?}/$name"
+    done
+    # shellcheck disable=SC2086  # the pattern is the rule being applied
+    for file in "$pkgdir"/$residue; do
         [ -e "$file" ] || continue
         if [ "$file" = "${keep:-}" ]; then continue; fi
         rm -f "$file"
@@ -161,6 +176,33 @@ pkgname="$(pkg_field PKGBUILD pkgname)"
 # dependencies, the `BUILD_AS` adapter -- and the line the caller reads.
 payload_reports "$artifact" "$pkgver" >/dev/null || exit 1
 echo "ok: $(basename "$artifact") reports $pkgver"
+
+# What this script promises about the directory it owns, said as a check: when
+# it hands the directory back, it holds the PKGBUILD, this run's 包文件, and
+# the working directories the trap is about to remove -- nothing else.
+# `packages/<pkg>/` is committed and the publish job's last step stages the
+# whole directory, so a file nobody named (an editor swap, a hand-run download)
+# is a file that ships. The trap can only clear the residue it knows; this is
+# what notices the rest, before the artifact is kept.
+#
+# A detached signature trips this on purpose: it is residue to the sweep and a
+# file nobody has decided about to this check, so the day signing lands the
+# failure names it instead of the sweep deleting a signature nothing published.
+stray=""
+while IFS= read -r name; do
+    case "$name" in
+        PKGBUILD | "$(basename "$artifact")") continue ;;
+    esac
+    for leftover in "${LEFTOVERS[@]}"; do
+        if [ "$name" = "$leftover" ]; then continue 2; fi
+    done
+    stray="${stray:+$stray, }$name"
+done < <(ls -A "$pkgdir")
+if [ -n "$stray" ]; then
+    echo "build-check leaves ${stray} in $pkgdir; only PKGBUILD and $(basename "$artifact") belong there" >&2
+    echo "  (a package that needs another file says so here; a stray one is not shipped)" >&2
+    exit 1
+fi
 
 # The lines the caller reads, and the one thing the trap above keeps for it:
 # only a run that reaches here leaves a file behind. `pkgver=` used to be
