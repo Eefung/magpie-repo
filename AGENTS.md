@@ -38,6 +38,8 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 | `test_upstream.py` | `upstream.sh`：这次要不要发布、发哪个版本 |
 | `test_frozen.py` | 测试侧的冻结行读者与 `line_field` 同规则 |
 | `test_inventory.py` | 包清单 ↔ 目录 ↔ workflow ↔ README 的对账；step 顺序/门/outputs、`run:` 块形状、arch 表、发布树、保留窗口的数字；seed 那一行跑真分支 |
+| `install_block.py` | 不是测试：用户要粘的安装段的唯一读者——README 的块与 Release 说明都过它 |
+| `fixtures.py` | 不是测试：包文件名的唯一拼法，`test_pkg_sh.py` 用 `pkgfile_pkgname`/`pkgfile_version` 反向钉住 |
 | `workflow.py` | 不是测试：`publish.yml` 的唯一读者（job 的 env、step 列表、`$GITHUB_OUTPUT` 的写与读） |
 
 ## 提交
