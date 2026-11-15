@@ -22,8 +22,10 @@ from typing import Mapping, Sequence
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
+sys.path.insert(0, str(REPO / "tests"))
 
 import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
+import frozen  # noqa: E402  (the production reader of the frozen lines)
 
 
 def sha(data: bytes) -> str:
@@ -480,22 +482,26 @@ class CheckTest(unittest.TestCase):
         return buffer.getvalue().splitlines()
 
     def log_of(self, fetch, out_root) -> dict:
-        """The log's meaning: what was compared, and what it concluded."""
+        """The log's meaning: what was compared, and what it concluded.
+
+        The frozen lines are read through `line_field_or` -- the production
+        reader, in bash -- so a duplicated `bump=` fails here exactly as it
+        fails the step. This class used to split them itself, which accepted a
+        duplicate and took the last one. The rest of the output is a log for
+        whoever reads the run, and is read as prose on purpose.
+        """
+        text = "\n".join(self.lines(fetch, out_root)) + "\n"
         parsed = {
-            "upstream": None,
+            "upstream": frozen.field("upstream", text),
             "packaged": {},
-            "bump": None,
+            "bump": frozen.field("bump", text),
             "behind": set(),
             "warnings": [],
         }
-        for line in self.lines(fetch, out_root):
-            if line.startswith("upstream="):
-                parsed["upstream"] = line.removeprefix("upstream=")
-            elif line.startswith("packaged "):
+        for line in text.splitlines():
+            if line.startswith("packaged "):
                 pkg, _, ver = line.removeprefix("packaged ").partition("=")
                 parsed["packaged"][pkg] = ver
-            elif line.startswith("bump="):
-                parsed["bump"] = line.removeprefix("bump=")
             elif line.startswith("behind="):
                 parsed["behind"] = set(line.removeprefix("behind=").split())
             elif line.startswith("warning:"):
