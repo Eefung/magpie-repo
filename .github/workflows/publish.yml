@@ -222,4 +222,11 @@ jobs:
 
       - name: Say what was skipped
         if: steps.upstream.outputs.bump != '1'
-        run: echo "packaged version already matches upstream; nothing to publish"
+        # `upstream` is the one output that had no reader: the entry check hands
+        # it over, nothing consumed it, and a handover line nothing reads is a
+        # promise the next person keeps guessing about. The line a skipped run
+        # prints is exactly the place a human wants it -- which version the tree
+        # already carries -- so it is the reader rather than a deletion.
+        env:
+          UPSTREAM: ${{ steps.upstream.outputs.upstream }}
+        run: echo "packaged PKGBUILDs already match upstream $UPSTREAM; nothing to publish"
