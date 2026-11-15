@@ -29,6 +29,11 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(dirname "$here")"
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/magpie-repo"
 
+# The gate reads the probe's handover the way every other caller reads a frozen
+# line -- through the one reader, not through a grep of its own.
+# shellcheck source=lib/pkg.sh
+source "$here/lib/pkg.sh"
+
 # Pinned tools, one row each: name|version|sha256|asset url|member|strip.
 # Each digest is the sha256 of the release asset as fetched at pin time; bump
 # the version and the digest together, in the same row. `strip` is how many
@@ -142,7 +147,17 @@ done
 if [ "${#missing[@]}" -eq 0 ]; then
     log="$(mktemp)"
     if "$here/probe-repo-build.sh" >"$log" 2>&1; then
-        printf 'ok: %s\n' "$(grep -c '^  ok:' "$log") assertions, real makepkg and repo-add"
+        # The count is the probe's own frozen line. It used to be
+        # `grep -c '^  ok:'` over this log, which made the alignment of an echo
+        # the report's whole evidence: re-indenting two of them printed "ok: 3
+        # assertions" and the gate stayed green. Absent, empty or duplicated is
+        # now a failed gate, by line_field's rule.
+        if assertions="$(line_field assertions "$log")"; then
+            printf 'ok: %s assertions, real makepkg and repo-add\n' "$assertions"
+        else
+            cat "$log" >&2
+            failed "probe-repo-build.sh (no assertions= line)"
+        fi
     else
         cat "$log" >&2
         failed "probe-repo-build.sh"

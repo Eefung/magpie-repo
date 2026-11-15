@@ -16,6 +16,11 @@
 # Five cases; any of them failing prints "!! FAIL" and exits 1. Every case is
 # asserted -- the two that used to only print their state are the retention
 # window and the database entry, which is where a broken prune() hides.
+#
+# The last line is `assertions=<n>`, a frozen line: scripts/check.sh reports it
+# to whoever reads the run, and reads it through pkg.sh's line_field like every
+# other handover. It used to grep `^  ok:` out of this log, so the report's
+# evidence was the alignment of an echo.
 set -euo pipefail
 
 REPO="$(cd "${1:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd)"
@@ -77,9 +82,18 @@ db_entries() { bsdtar -xOf "repo/x86_64/$REPO_NAME.db.tar.gz" | grep -c 'pkg.tar
 disk_files() { find repo/x86_64 -name '*.pkg.tar.zst' | wc -l; }
 
 # expect <expected> <actual> <label>
+# Every assertion goes through `ok`, so the count handed over at the end is the
+# number of lines this probe printed -- not a number a reader greps back out of
+# the log. `grep -c '^  ok:'` in scripts/check.sh was that reader: it made the
+# alignment of a log line the report's whole evidence, and re-indenting two of
+# them turned "ok: 11 assertions" into "ok: 3 assertions" with the gate still
+# green.
+assertions=0
+ok() { assertions=$((assertions + 1)); echo "  ok: $*"; }
+
 expect() {
     if [ "$1" = "$2" ]; then
-        echo "  ok: $3 = $2"
+        ok "$3 = $2"
     else
         echo "!! FAIL: $3 = $2, expected $1"
         exit 1
@@ -91,7 +105,7 @@ expect_gone() {
         echo "!! FAIL: $1 is still on disk"
         exit 1
     fi
-    echo "  ok: $(basename "$1") is gone"
+    ok "$(basename "$1") is gone"
 }
 
 show() {
@@ -110,12 +124,12 @@ show
 echo
 echo "########## 2. payload reports $OLD for pkgver $VER (expect: refuse) ##########"
 make_pkgbuild "$VER" "$OLD"
-if run; then echo "!! FAIL: wrong version accepted"; exit 1; else echo "  ok: refused"; fi
+if run; then echo "!! FAIL: wrong version accepted"; exit 1; else ok "refused"; fi
 
 echo
 echo "########## 3. prefix collision: pkgver 0.1.41, payload says 0.1.412 (expect: refuse) ##########"
 make_pkgbuild 0.1.41 0.1.412
-if run; then echo "!! FAIL: prefix collision accepted"; exit 1; else echo "  ok: refused"; fi
+if run; then echo "!! FAIL: prefix collision accepted"; exit 1; else ok "refused"; fi
 
 echo
 echo "########## 4. release.sh hands over this 版本 alone (expect: 1 asset, 1 sum, the install line) ##########"
@@ -132,11 +146,11 @@ if grep -q -- "$PKG-$OLD" rel/assets.txt; then
     echo "!! FAIL: the 保留窗口's older build is in the release"
     exit 1
 fi
-echo "  ok: the older build is not in the release"
+ok "the older build is not in the release"
 expect "$(sha256sum "repo/x86_64/$PKG-$VER-1-x86_64.pkg.tar.zst" | cut -d' ' -f1)" \
     "$(cut -d' ' -f1 < rel/SHA256SUMS)" "the checksum of the served bytes"
 if grep -q "pacman -S $PKG" rel/notes.md; then
-    echo "  ok: the notes carry the install line from the 包清单"
+    ok "the notes carry the install line from the 包清单"
 else
     echo "!! FAIL: the notes lost the install line"
     exit 1
@@ -150,3 +164,7 @@ expect 1 "$(db_entries)" "database entries"
 expect 1 "$(disk_files)" "files on disk"
 expect_gone "repo/x86_64/$PKG-$OLD-1-x86_64.pkg.tar.zst"
 show
+
+# The handover, last: how many assertions ran. A reader that finds no such line
+# is reading a probe that never finished its cases.
+echo "assertions=$assertions"
