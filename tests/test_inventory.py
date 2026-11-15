@@ -198,8 +198,9 @@ class ServedIdentityTest(unittest.TestCase):
     def test_the_database_is_named_after_the_section_the_readme_shows(self):
         # pacman keys the section off the database's file name, so `[magpie]`
         # and magpie.db.tar.gz are one fact. The db is created inside the
-        # container, where build-repo.sh would otherwise fall back to its own
-        # default -- so the declaration has to cross that boundary too.
+        # container, so the name has to cross that boundary: build-repo.sh
+        # refuses to run without it, which is what makes a missing `-e` a
+        # failure instead of a run that agrees by luck.
         self.assertIn("-e REPO_NAME", self.workflow())
 
     def test_serving_another_arch_without_a_readme_edit_is_caught(self):
