@@ -521,11 +521,57 @@ class PackageFilePatternTest(unittest.TestCase):
     def workflow(self) -> str:
         return (REPO / ".github" / "workflows" / "publish.yml").read_text()
 
+    def spelling(self, text: str) -> list[str]:
+        """Live lines that spell the extension themselves.
+
+        A comment may name it -- that is how the history is explained -- but a
+        line that runs must ask pkg.sh.
+        """
+        return [
+            line.strip()
+            for line in text.splitlines()
+            if ".pkg.tar" in line and not line.lstrip().startswith("#")
+        ]
+
+    def sourcing(self) -> list[Path]:
+        """The scripts that source pkg.sh, and can therefore ask it."""
+        return [
+            path
+            for path in sorted((REPO / "scripts").glob("*.sh"))
+            if any(
+                "lib/pkg.sh" in line and "source" in line
+                for line in path.read_text().splitlines()
+                if not line.lstrip().startswith("#")
+            )
+        ]
+
     def test_the_seed_asks_pkg_sh_for_the_pattern(self):
         self.assertIn('"$ARCH/$(pkgfile_pattern)"', self.workflow())
 
     def test_the_workflow_does_not_spell_the_extension(self):
         self.assertNotIn(".pkg.tar", self.workflow())
+
+    def test_no_script_that_sources_pkg_sh_spells_the_extension(self):
+        # The guard used to stop at the workflow, so build-check's own globs
+        # (their own width, `*.pkg.tar.*`) and the probe's sat outside it. A
+        # script that already sources the rule has no excuse for spelling it.
+        # scripts/probe-repo-build.sh is deliberately not on this list: it
+        # counts files with a glob of its own, which is what makes it a
+        # measurement of the build rather than a second copy of the rule.
+        sources = self.sourcing()
+        self.assertIn("build-check.sh", [path.name for path in sources])
+        self.assertIn("build-repo.sh", [path.name for path in sources])
+        self.assertEqual(
+            [path.name for path in sources if self.spelling(path.read_text())], []
+        )
+
+    def test_a_script_spelling_the_extension_is_caught(self):
+        self.assertEqual(
+            self.spelling('find . -name "*.pkg.tar.zst"\n'),
+            ['find . -name "*.pkg.tar.zst"'],
+        )
+        # A comment that names it is how the history stays readable.
+        self.assertEqual(self.spelling("# used to spell *.pkg.tar.* here\n"), [])
 
 
 class SeedTest(unittest.TestCase):
@@ -626,6 +672,14 @@ class PublishTreeTest(unittest.TestCase):
 
     def test_the_tree_is_declared_in_the_env(self):
         self.assertEqual(workflow.env()["TREE"], "repo")
+
+    def test_the_ignore_covers_the_tree_the_env_names(self):
+        # The tree is named in the env and in .gitignore, and nowhere else. A
+        # rename that skipped the ignore would put every assembled file -- the
+        # 30 MB package files included -- into the next `git add`.
+        self.assertIn(
+            f"{workflow.env()['TREE']}/", (REPO / ".gitignore").read_text()
+        )
 
     def test_no_step_spells_the_tree(self):
         # The shapes that were there before, not a general "no repo in this
