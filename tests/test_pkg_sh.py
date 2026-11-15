@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import re
 import shlex
 import subprocess
 import sys
@@ -332,6 +333,23 @@ class FixtureNamingTest(unittest.TestCase):
         served = call("pkgfile_suffix")
         self.assertEqual(served.returncode, 0, served.stderr)
         self.assertEqual(fixtures.SUFFIX, served.stdout.strip())
+
+    def test_the_fixture_arch_is_the_one_this_repository_builds(self):
+        # The arch has one owner -- the arch 表, itself held to the workflow's
+        # env by test_inventory's ArchTableTest. This says the fixture did not
+        # grow a second one: the aarch64 case above proves the *reader* accepts
+        # any arch, so nothing else would notice.
+        self.assertEqual({fixtures.ARCH}, set(bump.ARCHES))
+
+    def test_the_fixture_pkgrel_is_the_one_the_templates_declare(self):
+        # pkgrel is the PKGBUILD's, and every template says the same thing --
+        # so a bump there has one place to land and one test to redden.
+        declared = set()
+        for path in sorted((REPO / "templates").glob("*.PKGBUILD.in")):
+            match = re.search(r"^pkgrel=(\S+)$", path.read_text(), re.M)
+            self.assertIsNotNone(match, f"{path.name} declares no pkgrel=")
+            declared.add(match.group(1))
+        self.assertEqual(declared, {fixtures.REL})
 
 
 class PackageResidueTest(unittest.TestCase):
