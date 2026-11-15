@@ -296,18 +296,42 @@ class ServedArchTest(unittest.TestCase):
     four steps, so a second arch meant a grep hunt rather than one env.
     """
 
-    def test_the_workflow_declares_the_served_arch_once(self):
-        # One declaration, and no other live line naming it. Comments are not
-        # declarations: the old scan counted every line containing the arch, so
-        # a note mentioning it -- like the one ADR-0003 leaves in this file --
-        # turned the test job red while nothing about the run changed.
-        arch = workflow.env()["ARCH"]
-        hits = [
+    def hits(self, source: str | None = None) -> list[str]:
+        """Live lines naming the served arch; comments are not declarations."""
+        arch = workflow.env(source=source)["ARCH"]
+        return [
             line.strip()
-            for line in workflow.text().splitlines()
+            for line in (workflow.text() if source is None else source).splitlines()
             if arch in line and not line.lstrip().startswith("#")
         ]
-        self.assertEqual(hits, [f"ARCH: {arch}"], hits)
+
+    def test_the_workflow_declares_the_served_arch_once(self):
+        found = self.hits()
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("ARCH:"), found)
+
+    def test_a_comment_naming_the_arch_is_not_a_second_declaration(self):
+        # The value is `workflow.env()`'s answer, so a note after the
+        # declaration -- or a comment line mentioning the arch, like the one
+        # ADR-0003 leaves in this file -- is not a change to what runs. The old
+        # scan compared whole lines and reddened the job for both.
+        text = workflow.text()
+        moved = text.replace(
+            "      ARCH: x86_64\n",
+            "      # only x86_64 is built and payload-checked (ADR-0003)\n"
+            "      ARCH: x86_64   # the served directory\n",
+        )
+        self.assertNotEqual(moved, text)
+        self.assertEqual(len(self.hits(moved)), 1, self.hits(moved))
+        self.assertTrue(self.hits(moved)[0].startswith("ARCH:"), self.hits(moved))
+
+    def test_a_second_live_line_naming_the_arch_is_caught(self):
+        text = workflow.text()
+        moved = text.replace(
+            "      ARCH: x86_64\n", "      ARCH: x86_64\n      EXTRA_ARCH: x86_64\n"
+        )
+        self.assertNotEqual(moved, text)
+        self.assertEqual(len(self.hits(moved)), 2, self.hits(moved))
 
 
 class PackageListTest(unittest.TestCase):
