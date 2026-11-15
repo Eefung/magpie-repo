@@ -7,7 +7,10 @@
 # The tree is rebuilt from scratch on every run -- the workflow seeds only the
 # 包文件 across, and the database is re-created from them -- so the branch's
 # history is one commit that replaces the previous one: a copy of every 30 MB
-# package ever served would otherwise stay in the branch forever.
+# package ever served would otherwise stay in the branch forever. That is a
+# property of the caller, not of this script: run it twice against the same
+# directory and the second commit lands on top of the first, because `git init`
+# on an existing repository is a no-op. CI always hands a fresh `$TREE`.
 #
 # `.nojekyll` is what keeps Pages from putting the tree through Jekyll: without
 # it every published file is handed to a static-site build that skips names it
