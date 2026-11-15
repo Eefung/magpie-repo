@@ -58,6 +58,11 @@ jobs:
       # layout -- meant editing every one, and the seed could disagree with the
       # build about where the tree was.
       TREE: repo
+      # The 保留窗口: how many 版本 of each package the served tree keeps. A
+      # number the README promises users, and until it was declared here the
+      # only copy CI never saw -- build-repo.sh's own default was the
+      # declaration, so changing it changed nothing a test could read.
+      KEEP: 2
     steps:
       - uses: actions/checkout@v7
 
@@ -155,7 +160,7 @@ jobs:
           # the section the README tells users to write, instead of by the
           # script's own default agreeing with it by luck.
           docker run --rm --volume "$PWD:/src" --workdir /src \
-            -e REPO_NAME \
+            -e REPO_NAME -e KEEP \
             archlinux:base-devel \
             ./scripts/build-repo.sh "$TREE/$ARCH" "${pkgdirs[@]}"
           du -sh "$TREE/$ARCH"; ls -l "$TREE/$ARCH"

@@ -29,7 +29,7 @@ shift
 [ "$#" -gt 0 ] || { echo "name at least one package directory" >&2; exit 2; }
 
 REPO_NAME="${REPO_NAME:?build-repo.sh needs REPO_NAME: the 软件源 section name}"
-KEEP="${KEEP:-2}"          # versions of each package kept in the repository
+KEEP="${KEEP:-2}"          # 版本 of each package kept; CI passes it from the workflow env
 out="$(mkdir -p "$out" && cd "$out" && pwd)"
 
 # --- build -------------------------------------------------------------------

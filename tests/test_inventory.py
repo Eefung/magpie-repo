@@ -543,6 +543,34 @@ class PublishTreeTest(unittest.TestCase):
             self.assertNotIn(shape, text)
 
 
+class RetentionWindowTest(unittest.TestCase):
+    """The number of 版本 users are promised is the number CI keeps.
+
+    `KEEP=2` was build-repo.sh's default and the README's prose with nothing
+    between them: the workflow never passed it, so the copy a user reads was the
+    one copy no run could compare, and changing it reddened nothing. Probe:
+    README's "保留 2 个版本" -> 3 left the suite green. (Changing the script's
+    default does redden tests/test_build_repo.py, which pins the behaviour; the
+    promise in the docs was the unguarded half.)
+    """
+
+    def keep(self) -> str:
+        return workflow.env()["KEEP"]
+
+    def test_the_env_declares_it_and_the_container_gets_it(self):
+        self.assertRegex(self.keep(), r"^[1-9][0-9]*$")
+        # The value crosses into the container through `-e`, beside REPO_NAME:
+        # a script default equal to the declared value makes a forgotten flag
+        # invisible, which is why this is asserted as text rather than by a run.
+        self.assertIn("-e REPO_NAME -e KEEP", workflow.text())
+
+    def test_the_readme_promises_the_versions_the_window_keeps(self):
+        self.assertIn(f"保留 {self.keep()} 个版本", (REPO / "README.md").read_text())
+
+    def test_the_glossary_states_the_same_number(self):
+        self.assertIn(f"KEEP={self.keep()}", (REPO / "GLOSSARY.md").read_text())
+
+
 class WorkflowShellTest(unittest.TestCase):
     """The workflow's `run:` blocks are shell, and two shapes in them bite.
 
