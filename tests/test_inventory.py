@@ -51,8 +51,8 @@ class InventoryAgreementTest(unittest.TestCase):
         # install lines in the release notes -- a bare `pacman -S magpie-bin` --
         # went unseen. Reading the inventory instead of one hardcoded string
         # means a third package is held to this too.
-        workflow = (REPO / ".github" / "workflows" / "publish.yml").read_text()
-        self.assertEqual([pkg for pkg in bump.PACKAGES if pkg in workflow], [])
+        source = (REPO / ".github" / "workflows" / "publish.yml").read_text()
+        self.assertEqual([pkg for pkg in bump.PACKAGES if pkg in source], [])
 
 
 class UpstreamHandoverTest(unittest.TestCase):
@@ -227,10 +227,18 @@ class ServedArchTest(unittest.TestCase):
     four steps, so a second arch meant a grep hunt rather than one env.
     """
 
-    def test_the_workflow_spells_the_served_arch_on_one_line(self):
-        workflow = (REPO / ".github" / "workflows" / "publish.yml").read_text()
-        hits = [line.strip() for line in workflow.splitlines() if "x86_64" in line]
-        self.assertEqual(hits, ["ARCH: x86_64"], hits)
+    def test_the_workflow_declares_the_served_arch_once(self):
+        # One declaration, and no other live line naming it. Comments are not
+        # declarations: the old scan counted every line containing the arch, so
+        # a note mentioning it -- like the one ADR-0003 leaves in this file --
+        # turned the test job red while nothing about the run changed.
+        arch = workflow.env()["ARCH"]
+        hits = [
+            line.strip()
+            for line in workflow.text().splitlines()
+            if arch in line and not line.lstrip().startswith("#")
+        ]
+        self.assertEqual(hits, [f"ARCH: {arch}"], hits)
 
 
 class PackageListTest(unittest.TestCase):
@@ -288,23 +296,20 @@ class ServedIdentityTest(unittest.TestCase):
     def readme(self) -> str:
         return (REPO / "README.md").read_text()
 
-    def declared(self, workflow: str | None = None) -> dict[str, str]:
+    def declared(self, source: str | None = None) -> dict[str, str]:
         """The identity the workflow declares, or the text standing in for it."""
-        text = self.workflow() if workflow is None else workflow
-        found: dict[str, str] = {}
-        for key, pattern in (
-            ("arch", r"^\s+ARCH: (\S+)$"),
-            ("url", r"^\s+PAGES_URL: (\S+)$"),
-            ("name", r"^\s+REPO_NAME: (\S+)$"),
-        ):
-            match = re.search(pattern, text, re.M)
-            assert match is not None, f"the workflow declares no {key}"
-            found[key] = match.group(1)
-        return found
+        found = workflow.env(source=source)
+        missing = [key for key in ("ARCH", "PAGES_URL", "REPO_NAME") if key not in found]
+        self.assertEqual(missing, [], f"the workflow declares no {missing}")
+        return {
+            "arch": found["ARCH"],
+            "url": found["PAGES_URL"],
+            "name": found["REPO_NAME"],
+        }
 
-    def problems(self, readme: str, workflow: str | None = None) -> list[str]:
+    def problems(self, readme: str, source: str | None = None) -> list[str]:
         """Every install-block fact the README does not restate exactly."""
-        want = self.declared(workflow)
+        want = self.declared(source)
         server = f"{want['url']}/{want['arch']}"
         missing = [
             f"README carries no {literal!r}"
@@ -362,9 +367,7 @@ class ArchTableTest(unittest.TestCase):
         return (REPO / ".github" / "workflows" / "publish.yml").read_text()
 
     def served(self) -> str:
-        match = re.search(r"^\s+ARCH: (\S+)$", self.workflow(), re.M)
-        assert match is not None, "the workflow declares no ARCH"
-        return match.group(1)
+        return workflow.env()["ARCH"]
 
     def test_every_arch_the_table_names_is_the_one_ci_serves(self):
         # The mutation that mattered: the table gains an arch while no container

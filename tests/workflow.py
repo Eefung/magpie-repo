@@ -83,7 +83,8 @@ def env(source: str | None = None) -> dict[str, str]:
             continue
         if not inside:
             continue
-        if not line.strip():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
             continue
         match = ENV_KEY_RE.match(line)
         if match is None:
