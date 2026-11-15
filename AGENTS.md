@@ -24,19 +24,21 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 
 ## 测试地图
 
-`tests/` 三千行出头，文件名说的是范围，不是它守住的事实。找一条断言时先看这张表，别从头翻：
+`tests/` 三千七百多行，文件名说的是范围，不是它守住的事实。找一条断言时先看这张表，别从头翻：
 
 | 文件 | 守住什么 |
 | --- | --- |
 | `test_bump.py` | 上游版本怎么选；渲染（模板 ↔ 值）；`--check` 的结论与冻结行 |
 | `test_templates.py` | 已提交的 PKGBUILD 仍是它模板填上值的结果 |
-| `test_pkg_sh.py` | `pkg.sh`：包名与排序、保留窗口、db 条目、冻结行 reader、载荷核对 |
-| `test_build_check.py` | `build-check.sh`：一次构建的生命周期，`BUILD_AS` 的两个 adapter |
+| `test_pkg_sh.py` | `pkg.sh`：包名与排序、保留窗口、db 条目、冻结行 reader、载荷核对、残留集合 |
+| `test_build_check.py` | `build-check.sh`：一次构建的生命周期，`BUILD_AS` 的两个 adapter，交回来的目录里有什么 |
 | `test_build_repo.py` | `build-repo.sh`：保留窗口、db 条目、退役包 |
 | `test_release.py` | `release.sh`：这一版的资产、校验和、发布说明 |
+| `test_publish_pages.py` | `publish-pages.sh`：一棵树变成 gh-pages 上的一个 squash 提交（裸库当 remote） |
 | `test_upstream.py` | `upstream.sh`：这次要不要发布、发哪个版本 |
 | `test_frozen.py` | 测试侧的冻结行读者与 `line_field` 同规则 |
-| `test_inventory.py` | 包清单 ↔ 目录 ↔ workflow ↔ README 的对账；workflow 的 `run:` 块形状；arch 表；seed 那一行跑真分支 |
+| `test_inventory.py` | 包清单 ↔ 目录 ↔ workflow ↔ README 的对账；step 顺序/门/outputs、`run:` 块形状、arch 表、发布树、保留窗口的数字；seed 那一行跑真分支 |
+| `workflow.py` | 不是测试：`publish.yml` 的唯一读者（job 的 env、step 列表、`$GITHUB_OUTPUT` 的写与读） |
 
 ## 提交
 
