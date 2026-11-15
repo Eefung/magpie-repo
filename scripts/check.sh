@@ -162,10 +162,13 @@ cat <<'EOF'
   real build-repo.sh the same way, and the probe gate above runs the real
   makepkg and repo-add -- on a machine that has them, which the runner has not.
 - the publish steps themselves -- seeding repo/ from the previous gh-pages
-  tree, the force push, the Release, the commit back to main: they only exist
-  in the publish job, and a real publish is what proves them. The seed takes
-  only $ARCH/*.pkg.tar.* across, so a file this repository still needs but
-  does not write under that pattern would stop being served.
+  tree, the force push, `gh release create`, the commit back to main: they only
+  exist in the publish job, and a real publish is what proves them. The Release
+  step's own rules are no longer in this list: scripts/release.sh builds the
+  asset list, the SHA256SUMS and the notes, and tests/test_release.py drives it
+  against a two-version tree offline. The seed takes only $ARCH/*.pkg.tar.*
+  across, so a file this repository still needs but does not write under that
+  pattern would stop being served.
 EOF
 
 if [ "$failures" -ne 0 ]; then

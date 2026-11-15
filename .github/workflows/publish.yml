@@ -172,40 +172,18 @@ jobs:
             echo "v$ver already has a release"
             exit 0
           fi
-          # Both the pkgname and the file names come from pkg.sh -- the pkgname
-          # from the 包清单, the names from the pkgname-pkgver-pkgrel-arch rule.
-          # Read once, before anything uses it: the install lines below are
-          # generated from it, so this file never spells a package name out.
-          mapfile -t pkgnames < <(pkglist_names /tmp/packages.txt)
-          cat > /tmp/notes.md <<EOF
-          magpie $ver 的 $ARCH pacman 软件包。
-
-          仓库：$PAGES_URL/$ARCH
-
-              # 先同步所有源（含 [magpie]），别单独 -Sy
-              sudo pacman -Syu
-              # 桌面版与终端版，可分开装
-              sudo pacman -S ${pkgnames[*]}
-
-          校验和见下方的 SHA256SUMS；上游版本说明见
-          https://github.com/yetone/magpie-releases/releases/tag/v$ver
-          EOF
-          # Only this version: repo/$ARCH also carries the previous build for
-          # the retention window, and those do not belong in this release.
-          assets=()
-          for pkgname in "${pkgnames[@]}"; do
-            mapfile -t -O "${#assets[@]}" assets < <(pkgfiles_at "repo/$ARCH" "$pkgname" "$ver")
-          done
-          if [ "${#assets[@]}" -eq 0 ]; then
-            echo "no package files for v$ver in repo/$ARCH" >&2
-            exit 1
-          fi
-          mkdir -p /tmp/rel
-          (cd "repo/$ARCH" && sha256sum -- "${assets[@]##*/}" > /tmp/rel/SHA256SUMS)
+          # What the release is made of -- this version's 包文件 only, the
+          # SHA256SUMS built from exactly those, the notes whose install lines
+          # come from the 包清单 -- is scripts/release.sh's answer. gh is what is
+          # left here, and it is the only part a publish run can prove.
+          ./scripts/release.sh "repo/$ARCH" "$ver" /tmp/packages.txt /tmp/rel \
+            > /tmp/release.txt
+          cat /tmp/release.txt
+          mapfile -t assets < "$(line_field assets /tmp/release.txt)"
           gh release create "v$ver" \
             --title "magpie $ver" \
-            --notes-file /tmp/notes.md \
-            "${assets[@]}" /tmp/rel/SHA256SUMS
+            --notes-file "$(line_field notes /tmp/release.txt)" \
+            "${assets[@]}" "$(line_field sums /tmp/release.txt)"
           echo "release created: $(gh release view "v$ver" --json url -q .url)"
 
       # Last, so that every failure above is retried by the next run: main

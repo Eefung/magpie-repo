@@ -13,7 +13,7 @@
 # which only exist inside the publish container -- the adapter around them and
 # its order run offline in tests/test_build_check.py.
 #
-# Four cases; any of them failing prints "!! FAIL" and exits 1. Every case is
+# Five cases; any of them failing prints "!! FAIL" and exits 1. Every case is
 # asserted -- the two that used to only print their state are the retention
 # window and the database entry, which is where a broken prune() hides.
 set -euo pipefail
@@ -113,7 +113,32 @@ make_pkgbuild 0.1.41 0.1.412
 if run; then echo "!! FAIL: prefix collision accepted"; exit 1; else echo "  ok: refused"; fi
 
 echo
-echo "########## 4. KEEP=1 drops the older build from db and disk ##########"
+echo "########## 4. release.sh hands over this 版本 alone (expect: 1 asset, 1 sum, the install line) ##########"
+# The tree still carries the 保留窗口's older build from case 1. A release that
+# took it would advertise two versions at once, so the one thing this case is
+# about is that it does not.
+mkdir -p rel
+printf 'package packages/fixture %s\n' "$PKG" > packages.txt
+ARCH=x86_64 PAGES_URL=https://example.invalid/repo \
+    ./scripts/release.sh repo/x86_64 "$VER" packages.txt rel > release.txt
+cat release.txt
+expect 1 "$(wc -l < rel/assets.txt)" "assets"
+if grep -q -- "$PKG-$OLD" rel/assets.txt; then
+    echo "!! FAIL: the 保留窗口's older build is in the release"
+    exit 1
+fi
+echo "  ok: the older build is not in the release"
+expect "$(sha256sum "repo/x86_64/$PKG-$VER-1-x86_64.pkg.tar.zst" | cut -d' ' -f1)" \
+    "$(cut -d' ' -f1 < rel/SHA256SUMS)" "the checksum of the served bytes"
+if grep -q "pacman -S $PKG" rel/notes.md; then
+    echo "  ok: the notes carry the install line from the 包清单"
+else
+    echo "!! FAIL: the notes lost the install line"
+    exit 1
+fi
+
+echo
+echo "########## 5. KEEP=1 drops the older build from db and disk ##########"
 make_pkgbuild "$VER" "$VER"
 KEEP=1 run
 expect 1 "$(db_entries)" "database entries"
