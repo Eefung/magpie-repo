@@ -17,8 +17,12 @@ _Avoid_: 版本号、tag
 _Avoid_: 包列表、packages 变量
 
 **冻结行**：
-生产者打印一次、读者不再回头解析的 `name=value` 行：`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`build-check` 的 `pkgname=` / `artifact=`、`--check` 的 `upstream=`（`--render` 接它，不再自己问一遍上游）与 `bump=`。一条行算不算冻结行由 grep 决定，不由它长得像不像：`build-check` 的 `pkgver=` 曾被列在这里，而它唯一的读者是一条测试。读它只走 `scripts/lib/pkg.sh` 的 `line_field` 与 `pkglist_field`：重复一行是协议断了，空值算失败，缺行算什么由调用方定（`|| true` 加默认值）。措辞是契约的那几条之外，其余是日志。
+生产者打印一次、读者不再回头解析的 `name=value` 行：`scripts/upstream.sh` 的 `upstream=` / `target=` / `bump=` / `packages=`、`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`build-check` 的 `pkgname=` / `artifact=`、`release.sh` 的 `assets=` / `sums=` / `notes=`。一条行算不算冻结行由 grep 决定，不由它长得像不像：`build-check` 的 `pkgver=` 曾被列在这里，而它唯一的读者是一条测试。读它只走 `scripts/lib/pkg.sh` 的三个 reader，不由每个调用方自己 split：`line_field`（重复一行是协议断了、空值算失败、缺行也失败）、`line_field_or`（缺行给调用方指定的默认值，但绝不把「写了两行」当成缺行）与 `pkglist_field`。措辞是契约的那几条之外，其余是日志。
 _Avoid_: 输出格式、stdout
+
+**入口检查**：
+每次运行的第一步：问上游最新、核对这棵树（已提交的 PKGBUILD 还是不是它模板的渲染），并决定这次要不要发布、发哪个版本。三件事都在 `scripts/upstream.sh` 一处回答，它的四条冻结行就是这个答案——`bump=` 是结论，`target=` 是渲染要拿的版本，`packages=` 是包清单的文件。workflow 的 step 只中继，不再自己判：判断写在 YAML 里时，唯一能守它的是对 YAML 文本的 grep。
+_Avoid_: 检查步骤、pre-check
 
 **arch 表**：
 `ARCHES`——本仓库发布的 arch 与上游资产名后缀的对应（`x86_64` 对 `linux-amd64`）。模板里 `arch=()`、`source_<arch>=`（文件名后缀与下载 URL 两处）、`sha256sums_<arch>=` 与 `package()` 的 `case` 四处都受它约束：加一个 arch 是改这张表，不是给某个模板开例外。渲染前的 `check_arches` 逐条比，不是查子串。

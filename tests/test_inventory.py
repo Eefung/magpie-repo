@@ -51,22 +51,42 @@ class InventoryAgreementTest(unittest.TestCase):
 
 
 class UpstreamHandoverTest(unittest.TestCase):
-    """The 版本 `--check` decided is the one `--render` is given.
+    """The entry check is a module, and the workflow only relays its lines.
 
-    The render used to ask 上游 a second time, so what it rendered could differ
-    from what had just been compared -- and a tag whose SHA256SUMS had not been
-    uploaded yet turned a run that had a complete release in hand into one that
-    published nothing.
+    The decision -- whether this run publishes, and which 版本 it renders --
+    used to be bash in the step's own `run:` block, held only by greps over
+    this file. tests/test_upstream.py drives the module against a stub 上游;
+    this holds the step to calling it and reading its lines, and holds the
+    decision words out of the YAML.
     """
 
+    def workflow(self) -> str:
+        return (REPO / ".github" / "workflows" / "publish.yml").read_text()
+
+    def test_the_step_calls_the_entry_check_once(self):
+        self.assertEqual(self.workflow().count("./scripts/upstream.sh"), 1)
+
+    def test_the_step_reads_the_lines_it_was_handed(self):
+        for key in ("upstream", "target", "bump", "packages"):
+            self.assertIn(f"line_field {key} /tmp/up.txt", self.workflow())
+
     def test_the_render_step_takes_the_version_the_check_decided(self):
-        workflow = (REPO / ".github" / "workflows" / "publish.yml").read_text()
-        self.assertIn("line_field upstream /tmp/check.txt", workflow)
-        self.assertIn('target="${WANTED:-$UPSTREAM}"', workflow)
+        workflow = self.workflow()
         self.assertIn('--render --version "$target"', workflow)
+        self.assertIn("TARGET: ${{ steps.upstream.outputs.target }}", workflow)
         # One render invocation, and it always carries a version: a bare
         # `--render` would ask 上游 again and undo the handover.
         self.assertEqual(workflow.count("scripts/bump.py --render"), 1)
+
+    def test_the_decision_is_not_made_a_second_time_in_this_file(self):
+        # These two are what the step used to decide: `bump` from a default,
+        # and `target` from WANTED-or-UPSTREAM. A reformat broke the test job
+        # while flipping the default -- a broken check now meaning "publish"
+        # -- did not. Both are upstream.sh's now, so neither spelling returns.
+        workflow = self.workflow()
+        self.assertNotIn("bump:-", workflow)
+        self.assertNotIn("WANTED:-", workflow)
+        self.assertNotIn("bump.py --check", workflow)
 
 
 class ContainerWorkdirTest(unittest.TestCase):

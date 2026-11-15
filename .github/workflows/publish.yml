@@ -63,43 +63,38 @@ jobs:
           set -euo pipefail
           # shellcheck source=scripts/lib/pkg.sh
           source scripts/lib/pkg.sh
-          python3 scripts/bump.py --check | tee /tmp/check.txt
-          # The 包清单, one `package <dir> <pkgname>` line per package. The
-          # build and release steps read this file instead of a package name
-          # spelled into this YAML.
-          python3 scripts/bump.py --packages > /tmp/packages.txt
-          # The 版本 this run would publish, handed on instead of re-derived:
-          # --render used to ask 上游 a second time, so what it rendered could
-          # differ from what --check had just compared. line_field fails the
-          # step when the line is absent, which is a broken check, not "seen".
-          upstream="$(line_field upstream /tmp/check.txt)"
-          echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
-          bump=0
-          if [ -n "$WANTED" ]; then
-            echo "asked for $WANTED"; bump=1
-          else
-            # --check always prints bump= on success, so an absent line is the
-            # check failing to finish, not "nothing to do". Default it here
-            # where the choice is visible rather than inside the reader.
-            bump="$(line_field bump /tmp/check.txt || true)"
-            bump="${bump:-0}"
-          fi
-          echo "bump=$bump" >> "$GITHUB_OUTPUT"
+          # Whether this run publishes, and which 版本 it publishes, is decided
+          # in scripts/upstream.sh: WANTED in, four frozen lines out -- the 版本
+          # --check compared, the one to render, bump=0|1, and the 包清单 file.
+          # This step relays them and judges nothing. The judgement used to live
+          # right here, where only a grep over this file could hold it: a
+          # reformat turned the test job red, and flipping the default that
+          # decides "publish" did not.
+          ./scripts/upstream.sh /tmp/up > /tmp/up.txt
+          cat /tmp/up.txt
+          # Assigned first, then written: `echo "x=$(reader)" >> "$GITHUB_OUTPUT"`
+          # writes an empty value and exits 0 when the reader fails, which would
+          # hand an empty 版本 to a step whose gate already opened.
+          upstream="$(line_field upstream /tmp/up.txt)"
+          target="$(line_field target /tmp/up.txt)"
+          bump="$(line_field bump /tmp/up.txt)"
+          printf 'upstream=%s\ntarget=%s\nbump=%s\n' \
+            "$upstream" "$target" "$bump" >> "$GITHUB_OUTPUT"
 
       - name: Render the PKGBUILDs
         if: steps.upstream.outputs.bump == '1'
         env:
-          WANTED: ${{ inputs.version }}
-          UPSTREAM: ${{ steps.upstream.outputs.upstream }}
+          TARGET: ${{ steps.upstream.outputs.target }}
         run: |
           set -euo pipefail
           # shellcheck source=scripts/lib/pkg.sh
           source scripts/lib/pkg.sh
-          # The 版本 comes from the step above -- a hand-picked one when a human
-          # asked for it, otherwise the one --check just compared. Asking 上游
-          # again here was how a run rendered a version nobody had checked.
-          target="${WANTED:-$UPSTREAM}"
-          [ -n "$target" ] || { echo "neither WANTED nor UPSTREAM names a version" >&2; exit 1; }
+          # The 版本 is the one the check handed over -- a hand-picked one when
+          # a human asked for it, otherwise the one --check just compared.
+          # Asking 上游 again here was how a run rendered a version nobody had
+          # checked; deciding it here was how a reformat could change it.
+          target="$TARGET"
+          [ -n "$target" ] || { echo "the check handed over no version to render" >&2; exit 1; }
           python3 scripts/bump.py --render --version "$target" | tee /tmp/render.txt
           git diff --stat
           # Every later step needs the same version; the renderer printed it.
@@ -131,7 +126,9 @@ jobs:
             echo "no gh-pages yet, starting a fresh repository"
           fi
           # The dirs come from the 包清单 the check step wrote, not from this
-          # file: a package added to the inventory is built without an edit here.
+          # file: a package added to the inventory is built without an edit
+          # here. Its path is a frozen line too, so the two steps that read it
+          # ask the producer instead of spelling a filename twice.
           # They are named relative to the repository root, which is why this
           # container mounts $PWD and works from /src. Those two facts are one
           # assumption -- move the mount, keep the paths, and every build step
@@ -141,7 +138,8 @@ jobs:
           # malformed 包清单 would reach build-repo.sh as "name at least one
           # package directory" -- the wrong module, inside the container, with
           # the reader's own message already printed and ignored.
-          dirs="$(pkglist_dirs /tmp/packages.txt)" || exit 1
+          packages="$(line_field packages /tmp/up.txt)"
+          dirs="$(pkglist_dirs "$packages")" || exit 1
           [ -n "$dirs" ] || { echo "the 包清单 names no package directories" >&2; exit 1; }
           mapfile -t pkgdirs <<<"$dirs"
           # REPO_NAME crosses into the container so the database is named after
@@ -191,7 +189,8 @@ jobs:
           # SHA256SUMS built from exactly those, the notes whose install lines
           # come from the 包清单 -- is scripts/release.sh's answer. gh is what is
           # left here, and it is the only part a publish run can prove.
-          ./scripts/release.sh "repo/$ARCH" "$ver" /tmp/packages.txt /tmp/rel \
+          packages="$(line_field packages /tmp/up.txt)"
+          ./scripts/release.sh "repo/$ARCH" "$ver" "$packages" /tmp/rel \
             > /tmp/release.txt
           cat /tmp/release.txt
           mapfile -t assets < "$(line_field assets /tmp/release.txt)"

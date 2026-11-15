@@ -7,10 +7,12 @@
 Actions 每天 04:17 UTC 跑一次，有新版本才发布：
 
 ```text
-scripts/bump.py --check   上游 = GitHub releases 与 usemagpie.ai/api/latest 里
-                          最高的、SHA256SUMS 已经传好的那个版本
-  └ 如果与 packages/*/PKGBUILD 的 pkgver 不同 → scripts/bump.py --render --version <上游>
-      版本由 --check 的 upstream= 行交出，渲染不再问上游第二遍
+scripts/upstream.sh       入口检查：跑 --check，决定这次要不要发布、发哪个版本
+                          上游 = GitHub releases 与 usemagpie.ai/api/latest 里最高的、
+                          SHA256SUMS 已经传好的那个版本
+                          交出 upstream= / target= / bump= / packages= 四条冻结行
+  └ bump=1 时 → scripts/bump.py --render --version <target>
+      target 就是 --check 比对过的上游版本（或人手动指定并 pin 住的那个），渲染不再问上游第二遍
       checksum 取 release 的 SHA256SUMS，LICENSE 与图标下载后现算 → 生成 PKGBUILD
       渲染完打印 ver=<版本>，后面所有步骤都用这一行，不再回头解析 PKGBUILD
       scripts/build-repo.sh：makepkg 打包 → 安装该包的依赖项 → 跑 --version → repo-add 重建 db
@@ -45,6 +47,7 @@ sudo pacman -S magpie-cli-bin    # 终端版（静态，无 GUI 依赖），可�
 ## 用法
 
 ```bash
+./scripts/upstream.sh /tmp/up                          # 入口检查：打印 upstream= / target= / bump= / packages=
 python3 scripts/bump.py --check                     # upstream=… / packaged … / bump=0|1
 python3 scripts/bump.py --render --version <版本>    # 生成 PKGBUILD 并打印 ver=<版本>；不给 --version 时取最新的已上传版本
 python3 -m unittest discover -s tests               # 离线单测，不联网也不进容器
