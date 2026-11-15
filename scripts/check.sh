@@ -166,9 +166,10 @@ cat <<'EOF'
   exist in the publish job, and a real publish is what proves them. The Release
   step's own rules are no longer in this list: scripts/release.sh builds the
   asset list, the SHA256SUMS and the notes, and tests/test_release.py drives it
-  against a two-version tree offline. The seed takes only $ARCH/*.pkg.tar.*
-  across, so a file this repository still needs but does not write under that
-  pattern would stop being served.
+  against a two-version tree offline. The seed carries only the 包文件 across,
+  under the pattern pkg.sh owns (`$ARCH/$(pkgfile_pattern)`), so a file this
+  repository still needs but does not write under that pattern would stop being
+  served -- and nothing in this gate runs the seed line itself.
 EOF
 
 if [ "$failures" -ne 0 ]; then
