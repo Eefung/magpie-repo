@@ -17,7 +17,7 @@ _Avoid_: 版本号、tag
 _Avoid_: 包列表、packages 变量
 
 **冻结行**：
-生产者打印一次、读者不再回头解析的 `name=value` 行：`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`build-check` 的 `pkgname=` / `pkgver=` / `artifact=`、`--check` 的 `upstream=`（`--render` 接它，不再自己问一遍上游）与 `bump=`。读它只走 `scripts/lib/pkg.sh` 的 `line_field` 与 `pkglist_field`：重复一行是协议断了，空值算失败，缺行算什么由调用方定（`|| true` 加默认值）。措辞是契约的那几条之外，其余是日志。
+生产者打印一次、读者不再回头解析的 `name=value` 行：`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`build-check` 的 `pkgname=` / `artifact=`、`--check` 的 `upstream=`（`--render` 接它，不再自己问一遍上游）与 `bump=`。一条行算不算冻结行由 grep 决定，不由它长得像不像：`build-check` 的 `pkgver=` 曾被列在这里，而它唯一的读者是一条测试。读它只走 `scripts/lib/pkg.sh` 的 `line_field` 与 `pkglist_field`：重复一行是协议断了，空值算失败，缺行算什么由调用方定（`|| true` 加默认值）。措辞是契约的那几条之外，其余是日志。
 _Avoid_: 输出格式、stdout
 
 **arch 表**：

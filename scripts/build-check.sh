@@ -15,16 +15,17 @@
 # It owns its directory from start to finish. Whatever the build leaves behind
 # (src/, pkg/, .srcdest/) is removed on every exit path, and the one thing that
 # survives is the package file. makepkg's srcinfo is kept in a variable, never
-# written to disk. What the caller gets instead of the directory's shape is
-# three frozen lines, the last one always last:
+# written to disk. What the caller gets instead of the directory's shape is two
+# frozen lines, the last one always last:
 #
 #   pkgname=<pkgname>
-#   pkgver=<pkgver>
 #   artifact=<absolute path>
 #
 # They are the whole handover: build-repo.sh takes the name from them instead of
 # reading PKGBUILD a second time, and this is the module that ran makepkg, so it
-# is the one that knows what it built.
+# is the one that knows what it built. The pkgver is printed as a log line
+# beside them -- no reader ever wanted it, and a 冻结行 nothing reads is a
+# promise the next person has to keep guessing about.
 set -euo pipefail
 
 # shellcheck source=lib/pkg.sh
@@ -130,8 +131,9 @@ payload_reports "$artifact" "$pkgver" >/dev/null || exit 1
 echo "ok: $(basename "$artifact") reports $pkgver"
 
 # The lines the caller reads, and the one thing the trap above keeps for it:
-# only a run that reaches here leaves a file behind.
+# only a run that reaches here leaves a file behind. `pkgver=` used to be
+# handed over too, with no reader anywhere but a test; it is the log line
+# above (`ok: ... reports $pkgver`) that says which version was built.
 keep="$artifact"
 echo "pkgname=$pkgname"
-echo "pkgver=$pkgver"
 echo "artifact=$artifact"
