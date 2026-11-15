@@ -18,9 +18,25 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 
 ## 检查
 
-推送前跑 `scripts/check.sh`：它就是 CI `test` job 的全部闸门（离线单测、shellcheck、ruff、actionlint），三个 linter 由脚本按固定版本下到 `~/.cache/magpie-repo`，所以本机没装也跑得动、且与 runner 同版本。分段提交时每个中间态也跑一次：它不到一秒，而每次 push 都会真的跑流水线。它跑不到的边界只有一个出处：它自己打印的 `not covered here` 段——那份清单会随改动变长或变短，别在这里另抄一份。
+推送前跑 `scripts/check.sh`：它就是 CI `test` job 的全部闸门（离线单测、shellcheck、ruff、actionlint，以及本机装着 makepkg 时的 probe——真 `makepkg` + `repo-add` 跑一遍打包链），三个 linter 由脚本按固定版本下到 `~/.cache/magpie-repo`，所以本机没装也跑得动、且与 runner 同版本。分段提交时每个中间态也跑一次：它要十几秒，probe 占大头（真打包五个 case），而每次 push 都会真的跑流水线。它跑不到的边界只有一个出处：它自己打印的 `not covered here` 段——那份清单会随改动变长或变短，别在这里另抄一份。
 
 `publish.yml` 的 `paths` 含 `scripts/**`、`tests/**`、`templates/**`，所以这些改动推送后会触发一次 publish，可能直接发一版。这类提交与别的工作分开推，相关的几笔一起推：一次推送只跑一次流水线，一笔一推就会发一遍。一次提交只做一件事。
+
+## 测试地图
+
+`tests/` 三千行出头，文件名说的是范围，不是它守住的事实。找一条断言时先看这张表，别从头翻：
+
+| 文件 | 守住什么 |
+| --- | --- |
+| `test_bump.py` | 上游版本怎么选；渲染（模板 ↔ 值）；`--check` 的结论与冻结行 |
+| `test_templates.py` | 已提交的 PKGBUILD 仍是它模板填上值的结果 |
+| `test_pkg_sh.py` | `pkg.sh`：包名与排序、保留窗口、db 条目、冻结行 reader、载荷核对 |
+| `test_build_check.py` | `build-check.sh`：一次构建的生命周期，`BUILD_AS` 的两个 adapter |
+| `test_build_repo.py` | `build-repo.sh`：保留窗口、db 条目、退役包 |
+| `test_release.py` | `release.sh`：这一版的资产、校验和、发布说明 |
+| `test_upstream.py` | `upstream.sh`：这次要不要发布、发哪个版本 |
+| `test_frozen.py` | 测试侧的冻结行读者与 `line_field` 同规则 |
+| `test_inventory.py` | 包清单 ↔ 目录 ↔ workflow ↔ README 的对账；workflow 的 `run:` 块形状；arch 表；seed 那一行跑真分支 |
 
 ## 提交
 
