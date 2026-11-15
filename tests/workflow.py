@@ -31,6 +31,10 @@ STEP_RE = re.compile(r"^      - (?:name: (.+)|uses: (.+))\s*$")
 KEY_RE = re.compile(r"^        (\w[\w-]*):\s*(.*)$")
 ENV_KEY_RE = re.compile(r"^      (\w+):\s*(.*)$")
 OUTPUT_READ_RE = re.compile(r"steps\.(\w+)\.outputs\.(\w+)")
+# A write to the step-output carrier, whatever produces it; and the one shape
+# this reader parses. The gap between them is a fact nobody sees, so the tests
+# assert the two counts agree.
+WRITE_RE = re.compile(r'>>\s*"\$GITHUB_OUTPUT"')
 OUTPUT_WRITE_RE = re.compile(r"printf '([^']*)'[^\n]*\n[^\n]*>>\s*\"\$GITHUB_OUTPUT\"")
 
 
@@ -124,7 +128,7 @@ def steps(source: str | None = None) -> list[Step]:
             if key is None:
                 continue
             if key.group(1) == "if":
-                if_ = key.group(2).strip()
+                if_ = _value(key.group(2))
             elif key.group(1) == "run" and key.group(2).strip() in ("|", ">"):
                 run = "\n".join(block[index + 1 :])
         found.append(Step(name=name, if_=if_, run=run))
@@ -149,3 +153,28 @@ def output_reads(source: str | None = None) -> set[str]:
         key
         for _, key in OUTPUT_READ_RE.findall(text() if source is None else source)
     }
+
+
+def unparsed_output_writes(source: str | None = None) -> list[str]:
+    """Writes to the output carrier that ``output_keys`` cannot see.
+
+    The keys are parsed out of one shape (``printf 'a=%s\\nb=%s\\n' ... >>
+    "$GITHUB_OUTPUT"``). A second shape -- ``echo "x=y" >> "$GITHUB_OUTPUT"``,
+    a heredoc -- writes a key no invariant in tests/ can name, so the tests
+    assert this list is empty and a new carrier fails loudly instead of
+    silently escaping the "every output has a reader" rule.
+    """
+    text_ = text() if source is None else source
+    spans = [match.span() for match in OUTPUT_WRITE_RE.finditer(text_)]
+    unparsed: list[str] = []
+    offset = 0
+    for line in text_.splitlines(keepends=True):
+        if line.strip().startswith("#"):
+            offset += len(line)
+            continue
+        if WRITE_RE.search(line):
+            position = offset + line.index(">>")
+            if not any(start <= position < end for start, end in spans):
+                unparsed.append(line.strip())
+        offset += len(line)
+    return unparsed

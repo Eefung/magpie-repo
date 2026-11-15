@@ -115,6 +115,14 @@ class PublishTransactionTest(unittest.TestCase):
     RELEASE = "Publish the GitHub release"
     COMMIT = "Commit the rendered PKGBUILDs"
 
+    # The two gates this job uses, verbatim: publish when there is something to
+    # publish, and the one line a skipped run prints. Anything else -- a
+    # half-gate, `== '1' || false`, a `!=` on a step that publishes -- is a
+    # step whose behaviour no rule here can predict.
+    PUBLISH_GATE = "steps.upstream.outputs.bump == '1'"
+    SKIP_GATE = "steps.upstream.outputs.bump != '1'"
+    GATES = (PUBLISH_GATE, SKIP_GATE)
+
     def steps(self, source: str | None = None) -> list[workflow.Step]:
         found = workflow.steps(source)
         self.assertIn(self.CHECK, [step.name for step in found], found)
@@ -125,21 +133,25 @@ class PublishTransactionTest(unittest.TestCase):
         return found[[step.name for step in found].index(self.CHECK) + 1 :]
 
     def ungated(self, source: str | None = None) -> list[str]:
-        """Steps after the check that no `bump` gate can skip."""
+        """Steps after the check whose gate is neither of the two above."""
         return [
             step.name
             for step in self.after_check(source)
-            if "outputs.bump" not in (step.if_ or "")
+            if step.if_ not in self.GATES
+        ]
+
+    def publishing(self, source: str | None = None) -> list[str]:
+        """Steps that run when there is something to publish."""
+        return [
+            step.name
+            for step in self.steps(source)
+            if self.PUBLISH_GATE in (step.if_ or "")
         ]
 
     def misordered(self, source: str | None = None) -> list[str]:
         """The order violations: release after commit, or a step after the commit."""
         names = [step.name for step in self.steps(source)]
-        publishing = [
-            step.name
-            for step in self.steps(source)
-            if (step.if_ or "").endswith("== '1'")
-        ]
+        publishing = self.publishing(source)
         problems = []
         if names.index(self.RELEASE) > names.index(self.COMMIT):
             problems.append(f"{self.RELEASE} runs after {self.COMMIT}")
@@ -166,8 +178,65 @@ class PublishTransactionTest(unittest.TestCase):
         # `upstream` was written and read by nobody: a handover line nothing
         # consumes is a promise the next person has to keep guessing about. It
         # has its reader now (the skipped run's line names the 版本); this is
-        # what stops the next dead one.
+        # what stops the next dead one -- and the carrier guard below stops one
+        # arriving through a shape this reader cannot parse.
         self.assertEqual(self.dead_outputs(), [])
+        self.assertEqual(workflow.unparsed_output_writes(), [])
+
+    def test_a_comment_on_the_gate_is_not_a_change(self):
+        # The failure the reader exists to end: a behaviour-identical edit that
+        # used to redden the job. `if_` is a parsed value now, not the rest of
+        # the line -- a comment on the Commit step's gate left `misordered()`
+        # reporting a violation nothing had done.
+        text = workflow.text()
+        moved = text.replace(
+            f"      - name: {self.COMMIT}\n"
+            f"        if: {self.PUBLISH_GATE}\n",
+            f"      - name: {self.COMMIT}\n"
+            f"        if: {self.PUBLISH_GATE}   # last, so a failure is retried\n",
+        )
+        self.assertNotEqual(moved, text)
+        self.assertEqual(self.ungated(moved), [])
+        self.assertEqual(self.misordered(moved), [])
+
+    def test_a_gate_that_only_looks_like_one_is_caught(self):
+        # `== '1' || false` never runs, but it is not the gate the job uses,
+        # and the order rule cannot reason about a step whose condition it has
+        # to interpret.
+        text = workflow.text()
+        moved = text.replace(
+            f"      - name: {self.COMMIT}\n"
+            f"        if: {self.PUBLISH_GATE}\n",
+            f"      - name: {self.COMMIT}\n"
+            f"        if: {self.PUBLISH_GATE} || false\n",
+        )
+        self.assertNotEqual(moved, text)
+        self.assertEqual(self.ungated(moved), [self.COMMIT])
+
+    def test_a_step_after_the_commit_that_publishes_is_caught(self):
+        text = workflow.text()
+        appended = text.rstrip("\n") + (
+            "\n\n      - name: Upload the checksums somewhere\n"
+            f"        if: {self.PUBLISH_GATE}\n"
+            "        run: echo hi\n"
+        )
+        self.assertNotEqual(appended, text)
+        self.assertEqual(
+            self.misordered(appended),
+            [f"Upload the checksums somewhere publishes after {self.COMMIT}"],
+        )
+
+    def test_an_output_written_by_another_carrier_is_caught(self):
+        text = workflow.text()
+        marker = "      - name: Say what was skipped\n"
+        moved = text.replace(
+            marker,
+            "      - name: Write an output nobody can see\n"
+            "        run: echo \"dead=1\" >> \"$GITHUB_OUTPUT\"\n\n" + marker,
+            1,
+        )
+        self.assertNotEqual(moved, text)
+        self.assertEqual(len(workflow.unparsed_output_writes(moved)), 1)
 
     def test_a_step_added_without_a_gate_is_caught(self):
         text = workflow.text()
