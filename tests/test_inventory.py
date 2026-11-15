@@ -16,6 +16,7 @@ import contextlib
 import io
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -25,6 +26,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 
 import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
+
+LIB = REPO / "scripts" / "lib" / "pkg.sh"
 
 
 class InventoryAgreementTest(unittest.TestCase):
@@ -279,6 +282,89 @@ class PackageFilePatternTest(unittest.TestCase):
 
     def test_the_workflow_does_not_spell_the_extension(self):
         self.assertNotIn(".pkg.tar", self.workflow())
+
+
+class SeedTest(unittest.TestCase):
+    """The seed line, run for real against a branch that has the decoys in it.
+
+    What it carries decides what survives a publish: a seed that drops a 包文件
+    silently empties the 保留窗口, and one that carries a `.sig` feeds it to
+    repo-add the day signing lands. The workflow line is the only place this
+    runs, so the test takes that line from the workflow and runs it, rather than
+    restating what it does -- a test that spelled its own `tar` call would pin
+    the test author's copy.
+    """
+
+    WORKFLOW = REPO / ".github" / "workflows" / "publish.yml"
+    SEED_RE = re.compile(r"git archive FETCH_HEAD \| tar -x -C repo --wildcards \"[^\"]+\"")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.origin = self.root / "origin"
+        self.work = self.root / "work"
+
+    def seed_line(self) -> str:
+        found = self.SEED_RE.findall(self.WORKFLOW.read_text())
+        self.assertEqual(len(found), 1, found)
+        return found[0]
+
+    def git(self, *args: str, cwd: Path) -> None:
+        subprocess.run(
+            ["git", "-c", "user.email=test@example.invalid", "-c", "user.name=test", *args],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+        )
+
+    def published_tree(self) -> list[str]:
+        """A previous gh-pages branch: two 包文件, a signature, a stray file."""
+        (self.origin / "x86_64").mkdir(parents=True)
+        for name in (
+            "magpie-bin-0.1.9-1-x86_64.pkg.tar.zst",
+            "magpie-bin-0.1.10-1-x86_64.pkg.tar.zst",
+            "magpie-bin-0.1.10-1-x86_64.pkg.tar.zst.sig",
+        ):
+            (self.origin / "x86_64" / name).touch()
+        (self.origin / "SHA256SUMS").touch()
+        self.git("init", "-q", "--initial-branch=main", ".", cwd=self.origin)
+        self.git("add", "-A", cwd=self.origin)
+        self.git("commit", "-q", "-m", "previous publish", cwd=self.origin)
+        return [
+            "magpie-bin-0.1.10-1-x86_64.pkg.tar.zst",
+            "magpie-bin-0.1.9-1-x86_64.pkg.tar.zst",
+        ]
+
+    def test_it_carries_exactly_the_pkgfiles_pkg_sh_can_see(self):
+        expected = self.published_tree()
+        self.work.mkdir()
+        self.git("init", "-q", "--initial-branch=gh-pages", ".", cwd=self.work)
+        self.git("remote", "add", "origin", str(self.origin), cwd=self.work)
+        self.git("fetch", "--depth", "1", "origin", "main", cwd=self.work)
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f'set -euo pipefail; source {LIB}; ARCH=x86_64; '
+                f'mkdir -p repo; {self.seed_line()}',
+            ],
+            cwd=self.work,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        seeded = sorted(
+            str(path.relative_to(self.work / "repo"))
+            for path in (self.work / "repo").rglob("*")
+            if path.is_file()
+        )
+        self.assertEqual(seeded, [f"x86_64/{name}" for name in expected])
+        # The decoys: a signature is not a 包文件, and a stray file is not seeded.
+        self.assertNotIn("x86_64/magpie-bin-0.1.10-1-x86_64.pkg.tar.zst.sig", seeded)
+        self.assertNotIn("SHA256SUMS", seeded)
 
 
 class WorkflowShellTest(unittest.TestCase):
