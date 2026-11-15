@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -132,6 +133,89 @@ class PackageListTest(unittest.TestCase):
                 self.assertEqual(self.entries(), expected)
             finally:
                 os.chdir(cwd)
+
+
+class ServedIdentityTest(unittest.TestCase):
+    """The install block in README is the interface a user actually touches.
+
+    A 软件源 is four facts at once: the section name (which is the database's
+    file name), the URL, the arch directory, and the 包清单. They are decided in
+    three files and restated a fourth time in README -- the copy a user types
+    from -- and nothing compared them. `ARCH` was pinned to one line of the
+    workflow; the other three had no guard at all, so changing the served arch
+    or renaming the section would have shipped instructions that 404.
+
+    Regenerating the block would be nicer than asserting it, but README is not
+    executable: a guard can say "these lines are here", not that the prose
+    around them still reads correctly. That is what it is for.
+    """
+
+    WORKFLOW = REPO / ".github" / "workflows" / "publish.yml"
+
+    def workflow(self) -> str:
+        return self.WORKFLOW.read_text()
+
+    def readme(self) -> str:
+        return (REPO / "README.md").read_text()
+
+    def declared(self, workflow: str | None = None) -> dict[str, str]:
+        """The identity the workflow declares, or the text standing in for it."""
+        text = self.workflow() if workflow is None else workflow
+        found: dict[str, str] = {}
+        for key, pattern in (
+            ("arch", r"^\s+ARCH: (\S+)$"),
+            ("url", r"^\s+PAGES_URL: (\S+)$"),
+            ("name", r"^\s+REPO_NAME: (\S+)$"),
+        ):
+            match = re.search(pattern, text, re.M)
+            assert match is not None, f"the workflow declares no {key}"
+            found[key] = match.group(1)
+        return found
+
+    def problems(self, readme: str, workflow: str | None = None) -> list[str]:
+        """Every install-block fact the README does not restate exactly."""
+        want = self.declared(workflow)
+        server = f"{want['url']}/{want['arch']}"
+        missing = [
+            f"README carries no {literal!r}"
+            for literal in (
+                f"[{want['name']}]",
+                f"Server = {server}",
+                f"{server}/{want['name']}.db",
+            )
+            if literal not in readme
+        ]
+        missing += [
+            f"README never installs {pkg}"
+            for pkg in bump.PACKAGES
+            if f"pacman -S {pkg}" not in readme
+        ]
+        return missing
+
+    def test_the_install_block_matches_what_the_repository_serves(self):
+        self.assertEqual(self.problems(self.readme()), [])
+
+    def test_the_database_is_named_after_the_section_the_readme_shows(self):
+        # pacman keys the section off the database's file name, so `[magpie]`
+        # and magpie.db.tar.gz are one fact. The db is created inside the
+        # container, where build-repo.sh would otherwise fall back to its own
+        # default -- so the declaration has to cross that boundary too.
+        self.assertIn("-e REPO_NAME", self.workflow())
+
+    def test_serving_another_arch_without_a_readme_edit_is_caught(self):
+        moved = self.workflow().replace("ARCH: x86_64", "ARCH: aarch64")
+        self.assertNotEqual(moved, self.workflow())
+        self.assertTrue(self.problems(self.readme(), moved))
+
+    def test_a_package_missing_from_the_readme_is_caught(self):
+        readme = self.readme()
+        for pkg in bump.PACKAGES:
+            with self.subTest(pkg=pkg):
+                dropped = readme.replace(f"sudo pacman -S {pkg}", "")
+                self.assertEqual(
+                    [problem for problem in self.problems(dropped) if pkg in problem],
+                    [f"README never installs {pkg}"],
+                )
 
 
 if __name__ == "__main__":

@@ -43,11 +43,15 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PAGES_URL: https://eefung.github.io/magpie-repo
-      # The arch this 软件源 serves: one directory per arch on gh-pages, and the
-      # only place the served name is spelled. The arch 表 owns the other half
+      # The two names this 软件源 is served under: the directory (arch) and the
+      # section / database name. They are declared here, once, and the README's
+      # install block is held to them by tests/test_inventory.py -- pacman keys
+      # the section off the database's file name, so `[magpie]` and
+      # magpie.db.tar.gz are one fact, not two. The arch 表 owns the other half
       # (repo arch to upstream asset suffix); adding an arch means this env and
       # a second docker build, not nine edits across four steps.
       ARCH: x86_64
+      REPO_NAME: magpie
     steps:
       - uses: actions/checkout@v7
 
@@ -133,7 +137,11 @@ jobs:
           # assumption -- move the mount, keep the paths, and every build step
           # resolves a directory that is not there.
           mapfile -t pkgdirs < <(pkglist_dirs /tmp/packages.txt)
+          # REPO_NAME crosses into the container so the database is named after
+          # the section the README tells users to write, instead of by the
+          # script's own default agreeing with it by luck.
           docker run --rm --volume "$PWD:/src" --workdir /src \
+            -e REPO_NAME \
             archlinux:base-devel \
             ./scripts/build-repo.sh "repo/$ARCH" "${pkgdirs[@]}"
           du -sh "repo/$ARCH"; ls -l "repo/$ARCH"
