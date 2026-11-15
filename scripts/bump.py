@@ -70,7 +70,7 @@ PACKAGES = {
 # repo arch -> the suffix upstream puts in its asset names (magpie-linux-amd64).
 # One table: each template's arch=() and its sha_* placeholders are held to it,
 # so an arch cannot be added on one side only. It is the default layout_for
-# hands to the render; nothing inside render() or check_arches reads it as a
+# hands to the render; nothing inside render() or read_template reads it as a
 # module global any more, which is what made "a different arch table" untestable
 # without monkeypatching.
 ARCHES = {
@@ -87,7 +87,7 @@ class Layout:
     so a caller had to learn four globals to use two parameters, and a test
     could only point the render at a temporary tree by monkeypatching the
     module. The arch table is here for the same reason, one refactor later: it
-    was the fifth global render() and check_arches both read. The maintainer is
+    was the fifth global render() and read_template both read. The maintainer is
     read from the environment in main(), when the layout is built -- not when
     this file is imported.
     """
@@ -290,31 +290,51 @@ def template_suffixes(template: str) -> dict[str, str]:
 
 
 def array_entries(template: str, key: str) -> list[str] | None:
-    """The raw entries of a `key=(...)` array, or None when there is no such array.
+    """The entries of a `key=(...)` array, in order and unquoted, or None.
 
-    Anchored at the line start, so a commented-out array is not mistaken for a
-    live one, and read to the closing paren, so both shapes the templates use
-    parse: one entry per line, and the whole array on one line.
+    The one reader for every array a template declares. Anchored at the line
+    start, so a commented-out array is not mistaken for a live one, and read to
+    the closing paren.
 
-    This is the one reader for every array a template declares. The fifth
-    restatement of the arch 表 -- `sha256sums_<arch>=` -- used to be probed for
-    with `in template` while the other four were parsed, so a commented-out
-    checksum array passed the guard and rendered a PKGBUILD whose source had no
-    integrity check at all.
+    The body is tokenized the way bash reads it, not split on newlines: the
+    templates write one entry per line *and* the whole array on one line, so a
+    line count answers "how many entries" differently depending on which
+    template was asked. The LICENSE's two checksums are two checksums in both
+    spells, and the pairing check below has to see one answer.
     """
     match = re.search(rf"^{re.escape(key)}=\((.*?)\)\s*$", template, re.S | re.M)
     if match is None:
         return None
-    entries = []
-    for line in match.group(1).splitlines():
-        line = line.strip().rstrip(",").strip()
-        if line:
-            entries.append(line)
-    return entries
+    return _words(match.group(1))
+
+
+def _words(body: str) -> list[str]:
+    """The shell words in an array body: whitespace or comma separated, a pair
+    of quotes taken off, everything else kept verbatim."""
+    words: list[str] = []
+    word = ""
+    quote = ""
+    for char in body:
+        if quote:
+            if char == quote:
+                quote = ""
+            else:
+                word += char
+        elif char in "'\"":
+            quote = char
+        elif char.isspace() or char == ",":
+            if word:
+                words.append(word)
+                word = ""
+        else:
+            word += char
+    if word:
+        words.append(word)
+    return words
 
 
 def source_entries(template: str, arch: str) -> list[tuple[str, str]] | None:
-    """The (file name, url) pairs a template's source_<arch>=() array carries.
+    """The (file name, url) pairs a template's source_<arch>= array carries.
 
     None means the template has no such array at all. The array is read rather
     than probed for with a substring: `source_aarch64=` appears in a comment as
@@ -328,7 +348,7 @@ def source_entries(template: str, arch: str) -> list[tuple[str, str]] | None:
     pairs = []
     for entry in entries:
         name, _, url = entry.partition("::")
-        pairs.append((name.strip().strip("'\""), url.strip().strip("'\"")))
+        pairs.append((name, url))
     return pairs
 
 
@@ -353,8 +373,68 @@ def check_pkgname(pkg: str, template: str) -> None:
         )
 
 
-def check_arches(pkg: str, template: str, arches: Mapping[str, str]) -> None:
-    """Hold a template's every arch-shaped part to the table, before fetching.
+def check_sums(pkg: str, template: str) -> None:
+    """The package's own `source=` and `sha256sums=` arrays are the same length.
+
+    The arch arrays are paired by the plan below. These two are everything else
+    the package downloads -- the LICENSE, the icon -- and nothing read them at
+    all: a third entry in `source=` with its checksum never added rendered
+    clean, and makepkg refused the file inside the build container, long after
+    this repository could have said so.
+    """
+    sources = array_entries(template, "source")
+    sums = array_entries(template, "sha256sums")
+    if sources is None and sums is None:
+        return
+    if sources is None:
+        raise BumpError(f"{pkg}: the template has a sha256sums= array and no source= array")
+    if sums is None:
+        raise BumpError(f"{pkg}: the template has a source= array and no sha256sums= array")
+    if len(sources) != len(sums):
+        raise BumpError(
+            f"{pkg}: source= carries {len(sources)} entries "
+            f"but sha256sums= carries {len(sums)}"
+        )
+
+
+@dataclass(frozen=True)
+class ArchAsset:
+    """One arch's share of a template, worked out once.
+
+    `asset` is the name 上游 publishes in its SHA256SUMS, and it is the join
+    this module used to be missing: the renderer answered it from the 包清单's
+    prefix while the guard answered it from whatever the template's URL ended
+    in, and nothing compared the two. `placeholder` is the marker that receives
+    the digest, so the render fills the array by name instead of spelling
+    `sha_{suffix}` a second time.
+    """
+
+    arch: str
+    suffix: str
+    placeholder: str
+    asset: str
+
+
+@dataclass(frozen=True)
+class Template:
+    """A template read once: its text, the markers it asks for, and its assets.
+
+    Every question a caller has about a template is answered here, in one pass,
+    before the network is asked anything. The five readers this replaced each
+    parsed one facet and threw the rest away, so the render re-derived the asset
+    name it had just validated and a sixth facet -- the plain `source=` array --
+    was read by nobody.
+    """
+
+    text: str
+    markers: tuple[str, ...]
+    assets: tuple[ArchAsset, ...]
+
+
+def read_template(
+    *, pkg: str, prefix: str, text: str, arches: Mapping[str, str]
+) -> Template:
+    """Read a template once and hold it to the 包清单 and the arch 表.
 
     Every package targets the same repo arches; a package that does not is a
     change to the arch table, not a template exception. Both directions bite,
@@ -366,18 +446,19 @@ def check_arches(pkg: str, template: str, arches: Mapping[str, str]) -> None:
     arch=(), the source_<arch>= array (its key, the file name it gives the
     download, and the asset its URL ends in), sha256sums_<arch>= with its
     {{sha_suffix}} placeholder, and the package() case block that turns $CARCH
-    into the same suffix. Every one of them is read as an array now: the source
-    array used to be probed for with a substring, and the checksum array still
-    was, so a commented-out array passed and an aarch64 entry pointing at the
-    amd64 asset -- or a source with no checksums at all -- rendered clean. The
-    build container is what noticed, if anything did.
+    into the same suffix.
 
-    The template's placeholders are read here rather than handed in: they follow
-    from the template, so asking the caller for them was an interface that could
-    disagree with the file it was describing.
+    The asset name is compared *exactly* to the one the 包清单 publishes, not
+    to the suffix the URL happens to end in: `magpieXY-linux-amd64` ends in
+    `linux-amd64` like the right asset does, so a tail test passed it, the
+    render wrote it down, and the 404 landed in the container -- or, on an arch
+    CI never builds, never landed anywhere at all.
     """
-    names = placeholders(template)
-    declared = template_arches(template)
+    check_pkgname(pkg, text)
+    check_sums(pkg, text)
+
+    markers = placeholders(text)
+    declared = template_arches(text)
     unknown = sorted(set(declared) - set(arches))
     if unknown:
         raise BumpError(
@@ -388,7 +469,7 @@ def check_arches(pkg: str, template: str, arches: Mapping[str, str]) -> None:
     if missing:
         raise BumpError(f"{pkg}: the template leaves out {', '.join(missing)}")
 
-    suffixes = template_suffixes(template)
+    suffixes = template_suffixes(text)
     strangers = sorted(set(suffixes) - set(arches))
     if strangers:
         raise BumpError(
@@ -396,28 +477,40 @@ def check_arches(pkg: str, template: str, arches: Mapping[str, str]) -> None:
             "which the arch table never heard of"
         )
 
+    assets = []
     for arch, suffix in arches.items():
-        entries = source_entries(template, arch)
+        entries = source_entries(text, arch)
         if entries is None:
             raise BumpError(f"{pkg}: the template has no source_{arch}= array")
-        # The case block is the fifth copy of the mapping, stripped of the
-        # `linux-` that only upstream's asset names carry. The source array's
-        # file name is stripped the same way.
+        # One asset per arch is what the 包清单 models -- a package is a
+        # directory and one upstream prefix -- so a second entry is a template
+        # this renderer cannot answer for, not a value to pick between.
+        if len(entries) != 1:
+            raise BumpError(
+                f"{pkg}: source_{arch} carries {len(entries)} entries; "
+                "one asset per arch"
+            )
+        # The case block and the download's file name are the fifth and third
+        # copies of the mapping, both stripped of the `linux-` that only
+        # upstream's asset names carry.
         want = suffix.removeprefix("linux-")
+        asset = f"{prefix}-{suffix}"
         for name, url in entries:
             if not name.endswith(want):
                 raise BumpError(
                     f"{pkg}: source_{arch} names {name!r}, "
                     f"which does not end in {want!r} ({suffix})"
                 )
-            if not url.endswith(suffix):
+            downloaded = url.rsplit("/", 1)[-1]
+            if downloaded != asset:
                 raise BumpError(
-                    f"{pkg}: source_{arch} downloads {url}, "
-                    f"which is not a {suffix} asset"
+                    f"{pkg}: source_{arch} downloads {downloaded}, "
+                    f"but the 包清单 files {pkg} as {asset}"
                 )
-        if array_entries(template, f"sha256sums_{arch}") is None:
+        if array_entries(text, f"sha256sums_{arch}") is None:
             raise BumpError(f"{pkg}: the template has no sha256sums_{arch}= array")
-        if f"sha_{suffix}" not in names:
+        placeholder = f"sha_{suffix}"
+        if placeholder not in markers:
             raise BumpError(
                 f"{pkg}: the template has no {{{{sha_{suffix}}}}} placeholder for {arch}"
             )
@@ -429,6 +522,11 @@ def check_arches(pkg: str, template: str, arches: Mapping[str, str]) -> None:
                 f"{pkg}: package() maps {arch} to {have}, "
                 f"but the arch table says {want} ({suffix})"
             )
+        assets.append(
+            ArchAsset(arch=arch, suffix=suffix, placeholder=placeholder, asset=asset)
+        )
+
+    return Template(text=text, markers=tuple(markers), assets=tuple(assets))
 
 
 def render_pkgbuild(template: str, values: Mapping[str, str]) -> str:
@@ -515,31 +613,28 @@ def render(
     if not VERSION_RE.fullmatch(version):
         raise BumpError(f"refusing to render pkgver={version!r}: expected digits separated by dots")
 
-    # Read every template and hold it to the arch table and to its own pkgname
-    # before the network is asked anything: a template that lags the table, or
-    # is filed under another name, is this repository's problem, and it should
-    # not be reported as "the release has no such asset" or found after the
-    # gh-pages push.
+    # Read every template once, and hold it to the arch table, its own pkgname
+    # and the assets the 包清单 publishes, before the network is asked anything:
+    # a template that lags the table, or is filed under another name, is this
+    # repository's problem, and it should not be reported as "the release has no
+    # such asset" or found after the gh-pages push.
     plans = []
     for pkg, prefix in layout.inventory.items():
         path = layout.templates / f"{pkg}.PKGBUILD.in"
         try:
-            template = path.read_text()
+            text = path.read_text()
         except OSError as exc:
             # A layout is handed in now, so it can point at a tree that has no
             # template for a package in its own inventory. Say which.
             raise BumpError(f"no template for {pkg}: {path} ({exc.strerror})") from exc
-        names = placeholders(template)
-        check_pkgname(pkg, template)
-        check_arches(pkg, template, layout.arches)
-        plans.append((pkg, prefix, template, names))
+        plans.append((pkg, read_template(pkg=pkg, prefix=prefix, text=text, arches=layout.arches)))
 
     sums = release_sums(version, fetch=fetch)
 
     # Fetch by what the templates ask for, not by what upstream offers: a
     # package that ships no icon must not be held up by an icon it never
     # installs.
-    wanted = {name for _, _, _, names in plans for name in names}
+    wanted = {marker for _, template in plans for marker in template.markers}
 
     license_bytes = None
     if "sha_license" in wanted:
@@ -556,7 +651,7 @@ def render(
     # Render everything before writing anything: a template that disagrees with
     # its values then leaves the tree alone instead of half-updated.
     rendered = []
-    for pkg, prefix, template, names in plans:
+    for pkg, template in plans:
         supplied = {
             "pkgver": version,
             "maintainer": layout.maintainer,
@@ -565,14 +660,15 @@ def render(
         }
         values = {
             name: value for name, value in supplied.items()
-            if name in names and value is not None
+            if name in template.markers and value is not None
         }
-        for suffix in layout.arches.values():
-            asset = f"{prefix}-{suffix}"
-            if asset not in sums:
-                raise BumpError(f"{pkg}: the release has no {asset}")
-            values[f"sha_{suffix}"] = sums[asset]
-        rendered.append((pkg, render_pkgbuild(template, values)))
+        # The plan already decided which asset feeds which marker, compared
+        # against the 包清单; the render only looks the digest up.
+        for planned in template.assets:
+            if planned.asset not in sums:
+                raise BumpError(f"{pkg}: the release has no {planned.asset}")
+            values[planned.placeholder] = sums[planned.asset]
+        rendered.append((pkg, render_pkgbuild(template.text, values)))
 
     for pkg, text in rendered:
         out = layout.packages_dir / pkg / "PKGBUILD"

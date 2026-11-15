@@ -652,6 +652,7 @@ class TemplateArchesTest(unittest.TestCase):
     """A template's arches are held to the table before anything is fetched."""
 
     TEMPLATE = (
+        "pkgname=magpie-bin\n"
         "arch=('x86_64' 'aarch64')\n"
         "source_x86_64=('magpie-${pkgver}-amd64::https://example.invalid/magpie-linux-amd64')\n"
         "source_aarch64=('magpie-${pkgver}-arm64::https://example.invalid/magpie-linux-arm64')\n"
@@ -666,7 +667,12 @@ class TemplateArchesTest(unittest.TestCase):
     )
 
     def check(self, template: str, arches: dict[str, str] | None = None) -> None:
-        bump.check_arches("magpie-bin", template, bump.ARCHES if arches is None else arches)
+        bump.read_template(
+            pkg="magpie-bin",
+            prefix="magpie",
+            text=template,
+            arches=bump.ARCHES if arches is None else arches,
+        )
 
     def test_a_template_that_agrees_with_the_table_passes(self):
         self.check(self.TEMPLATE)
@@ -741,8 +747,37 @@ class TemplateArchesTest(unittest.TestCase):
         text = (REPO / "templates" / "magpie-bin.PKGBUILD.in").read_text()
         mutated = text.replace("magpie-linux-arm64", "magpie-linux-amd64")
         with self.assertRaises(bump.BumpError) as caught:
-            bump.check_arches("magpie-bin", mutated, bump.ARCHES)
+            bump.read_template(
+                pkg="magpie-bin", prefix="magpie", text=mutated, arches=bump.ARCHES
+            )
         self.assertIn("source_aarch64", str(caught.exception))
+
+    def test_an_asset_name_the_inventory_never_publishes_is_named(self):
+        # The gap this closed: the guard compared the URL's *tail*, and the
+        # renderer took the asset name from the 包清单's prefix, so the two
+        # halves never met. `magpieXY-linux-amd64` ends in `linux-amd64` like
+        # the right asset does, so a tail test passed it and the render wrote
+        # it down -- a 404 in the container, or nothing at all on an arch CI
+        # never builds.
+        template = self.TEMPLATE.replace("example.invalid/magpie-linux-amd64",
+                                         "example.invalid/magpieXY-linux-amd64")
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(template)
+        self.assertIn("source_x86_64", str(caught.exception))
+        self.assertIn("magpie-linux-amd64", str(caught.exception))
+
+    def test_a_source_array_with_two_assets_for_one_arch_is_refused(self):
+        # The 包清单 models one upstream prefix per package, so a second asset
+        # per arch is a template this renderer cannot answer for -- not a value
+        # to pick between.
+        template = self.TEMPLATE.replace(
+            "source_x86_64=('magpie-${pkgver}-amd64::https://example.invalid/magpie-linux-amd64')",
+            "source_x86_64=('magpie-${pkgver}-amd64::https://example.invalid/magpie-linux-amd64'\n"
+            "                'magpie-${pkgver}-amd64-extra::https://example.invalid/magpie-linux-amd64)')",
+        )
+        with self.assertRaises(bump.BumpError) as caught:
+            self.check(template)
+        self.assertIn("one asset per arch", str(caught.exception))
 
     def test_a_missing_case_arm_is_named(self):
         template = self.TEMPLATE.replace("        aarch64) _suffix=arm64 ;;\n", "")
@@ -767,10 +802,12 @@ class TemplateArchesTest(unittest.TestCase):
 
     def test_our_own_templates_pass(self):
         # The synthetic template above is the shape; these are the files.
-        for pkg in bump.PACKAGES:
+        for pkg, prefix in bump.PACKAGES.items():
             with self.subTest(pkg=pkg):
                 text = (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
-                bump.check_arches(pkg, text, bump.ARCHES)
+                bump.read_template(
+                    pkg=pkg, prefix=prefix, text=text, arches=bump.ARCHES
+                )
 
     def test_a_missing_placeholder_is_named(self):
         template = self.TEMPLATE.replace("'{{sha_linux-arm64}}'", "'" + "0" * 64 + "'")
@@ -793,6 +830,77 @@ class TemplateArchesTest(unittest.TestCase):
                 )
         self.assertIn("riscv64", str(caught.exception))
         self.assertEqual(fetch.urls, [])
+
+
+class TemplateSumsTest(unittest.TestCase):
+    """The package's own source= and sha256sums= arrays are read, and paired.
+
+    The arch arrays were paired by the plan long before this; these two are the
+    LICENSE and the icon, and no reader touched them. A third source with no
+    checksum rendered clean and makepkg refused the file in the container.
+    """
+
+    def template(self, pkg: str = "magpie-cli-bin") -> str:
+        return (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
+
+    def test_our_own_templates_pair_their_plain_arrays(self):
+        for pkg in bump.PACKAGES:
+            with self.subTest(pkg=pkg):
+                bump.check_sums(pkg, self.template(pkg))
+
+    def test_a_source_with_no_checksum_behind_it_is_named(self):
+        text = self.template().replace(
+            'source=("magpie-${pkgver}-LICENSE::https://raw.githubusercontent.com/yetone/magpie/v${pkgver}/LICENSE")',
+            'source=("magpie-${pkgver}-LICENSE::https://raw.githubusercontent.com/yetone/magpie/v${pkgver}/LICENSE"\n'
+            '        "extra-${pkgver}.bin::https://example.invalid/extra.bin")',
+        )
+        with self.assertRaises(bump.BumpError) as caught:
+            bump.check_sums("magpie-cli-bin", text)
+        self.assertIn("source= carries 2 entries", str(caught.exception))
+        self.assertIn("sha256sums= carries 1", str(caught.exception))
+
+    def test_a_checksum_for_a_file_nothing_downloads_is_named(self):
+        text = self.template().replace(
+            "sha256sums=('{{sha_license}}')",
+            "sha256sums=('{{sha_license}}'\n            '{{sha_icon}}')",
+        )
+        with self.assertRaises(bump.BumpError) as caught:
+            bump.check_sums("magpie-cli-bin", text)
+        self.assertIn("sha256sums= carries 2", str(caught.exception))
+
+    def test_a_one_line_array_is_counted_by_entry_not_by_line(self):
+        # magpie-bin writes magpie-cli-bin's one-line array as two lines. A
+        # reader that split on newlines would call the second shape "one
+        # checksum" and pass a template that makepkg refuses.
+        one_line = "sha256sums=('{{sha_license}}' '{{sha_icon}}')\n"
+        stacked = "sha256sums=('{{sha_license}}'\n            '{{sha_icon}}')\n"
+        self.assertEqual(bump.array_entries(one_line, "sha256sums"),
+                         ["{{sha_license}}", "{{sha_icon}}"])
+        self.assertEqual(bump.array_entries(stacked, "sha256sums"),
+                         ["{{sha_license}}", "{{sha_icon}}"])
+
+    def test_the_render_refuses_it_before_writing_anything(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decoy = root / "templates"
+            decoy.mkdir()
+            for pkg in bump.PACKAGES:
+                (decoy / f"{pkg}.PKGBUILD.in").write_text(self.template(pkg))
+            text = self.template().replace(
+                'source=("magpie-${pkgver}-LICENSE::https://raw.githubusercontent.com/yetone/magpie/v${pkgver}/LICENSE")',
+                'source=("magpie-${pkgver}-LICENSE::https://raw.githubusercontent.com/yetone/magpie/v${pkgver}/LICENSE"\n'
+                '        "extra-${pkgver}.bin::https://example.invalid/extra.bin")',
+            )
+            (decoy / "magpie-cli-bin.PKGBUILD.in").write_text(text)
+
+            fetch = FetchSpy({})
+            with self.assertRaises(bump.BumpError):
+                bump.render(
+                    "0.1.2", layout=layout_at(root, templates=decoy), fetch=fetch
+                )
+            # Before the network, and before the tree gains a half-rendered file.
+            self.assertEqual(fetch.urls, [])
+            self.assertFalse((root / "packages").exists())
 
 
 if __name__ == "__main__":
