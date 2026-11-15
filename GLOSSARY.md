@@ -17,7 +17,7 @@ _Avoid_: 版本号、tag
 _Avoid_: 包列表、packages 变量
 
 **冻结行**：
-生产者打印一次、读者不再回头解析的 `name=value` 行：`scripts/upstream.sh` 的 `upstream=` / `target=` / `bump=` / `packages=`、`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`build-check` 的 `pkgname=` / `artifact=`、`release.sh` 的 `assets=` / `sums=` / `notes=`。一条行算不算冻结行由 grep 决定，不由它长得像不像：`build-check` 的 `pkgver=` 曾被列在这里，而它唯一的读者是一条测试。读它只走 `scripts/lib/pkg.sh` 的三个 reader，不由每个调用方自己 split：`line_field`（重复一行是协议断了、空值算失败、缺行也失败）、`line_field_or`（缺行给调用方指定的默认值，但绝不把「写了两行」当成缺行）与 `pkglist_field`。措辞是契约的那几条之外，其余是日志。
+生产者打印一次、读者不再回头解析的 `name=value` 行：`scripts/upstream.sh` 的 `upstream=` / `target=` / `bump=` / `packages=`、`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`build-check` 的 `pkgname=` / `artifact=`、`release.sh` 的 `assets=` / `sums=` / `notes=`、`probe-repo-build.sh` 的 `assertions=`。一条行算不算冻结行由 grep 决定，不由它长得像不像：`build-check` 的 `pkgver=` 曾被列在这里，而它唯一的读者是一条测试。读它只走 `scripts/lib/pkg.sh` 的三个 reader，不由每个调用方自己 split：`line_field`（重复一行是协议断了、空值算失败、缺行也失败）、`line_field_or`（缺行给调用方指定的默认值，但绝不把「写了两行」当成缺行）与 `pkglist_field`。措辞是契约的那几条之外，其余是日志。
 _Avoid_: 输出格式、stdout
 
 **入口检查**：
