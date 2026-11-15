@@ -18,12 +18,17 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "scripts" / "release.sh"
+
+sys.path.insert(0, str(REPO / "tests"))
+
+import frozen  # noqa: E402  (the one reader of the frozen lines, as in production)
 
 PKGS = ["magpie-bin", "magpie-cli-bin"]
 CURRENT = "0.1.10"
@@ -115,15 +120,15 @@ class ReleaseTest(unittest.TestCase):
     def test_the_three_frozen_lines_are_the_handover(self):
         result = self.release()
 
-        keys = [
-            line.split("=", 1)[0]
-            for line in result.stdout.splitlines()
-            if "=" in line
-        ]
-        self.assertEqual(keys, ["assets", "sums", "notes"])
-        for line in result.stdout.splitlines():
-            self.assertTrue((self.root / line.split("=", 1)[1]).is_file()
-                            or Path(line.split("=", 1)[1]).is_file(), line)
+        # By name, through the reader the pipeline uses: every consumer asks
+        # for a key, so a line in another order is not a break -- a line
+        # written twice is, and a hand-rolled split cannot tell.
+        handed = frozen.fields(result.stdout)
+        self.assertEqual(sorted(handed), ["assets", "notes", "sums"])
+        for line, path in handed.items():
+            self.assertTrue(
+                (self.root / path).is_file() or Path(path).is_file(), line
+            )
 
     def test_a_version_that_was_never_built_is_named(self):
         result = self.run_script(

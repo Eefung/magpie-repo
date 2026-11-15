@@ -27,6 +27,18 @@ class FrozenFieldTest(unittest.TestCase):
     def test_a_frozen_line_reads_through(self):
         self.assertEqual(frozen.field("bump", "upstream=0.1.9\nbump=1\n"), "1")
 
+    def test_fields_reads_every_line_through_the_reader(self):
+        self.assertEqual(
+            frozen.fields("upstream=0.1.9\nbump=1\n"),
+            {"upstream": "0.1.9", "bump": "1"},
+        )
+
+    def test_fields_refuses_a_duplicate_the_way_the_step_does(self):
+        with self.assertRaises(AssertionError) as caught:
+            frozen.fields("bump=0\nbump=1\n")
+
+        self.assertIn("2 bump= lines", str(caught.exception))
+
     def test_an_absent_line_is_the_callers_call(self):
         # What `bump.py --check` prints when it has nothing to say: None here,
         # the caller's default in upstream.sh.

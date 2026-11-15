@@ -14,12 +14,16 @@ producer never wrote, which is what `upstream.sh` does with an absent `bump=`.
 
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 import tempfile
 from pathlib import Path
 
 LIB = Path(__file__).resolve().parent.parent / "scripts" / "lib" / "pkg.sh"
+
+# A frozen line's name: the key a program writes once and reads back.
+LINE_NAME_RE = re.compile(r"^([a-z][a-z0-9_]*)=", re.M)
 
 # A default no producer could write, so "absent" stays distinguishable from "".
 ABSENT = "__absent__"
@@ -49,3 +53,20 @@ def field(name: str, log: str) -> str | None:
         raise AssertionError(f"line_field_or {name}: {result.stderr.strip()}")
     value = result.stdout.strip()
     return None if value == ABSENT else value
+
+
+def fields(log: str) -> dict[str, str]:
+    """Every frozen line in the log, each value read through the reader.
+
+    The handover a step prints, as a mapping: the callers ask for a key, so a
+    line in another order is not a break, and a line written twice is. A test
+    that splits the lines itself answers neither -- `test_upstream`'s own
+    helper took the last of two `bump=` lines, which is the one thing the
+    workflow's reader refuses to do.
+    """
+    found: dict[str, str] = {}
+    for name in dict.fromkeys(LINE_NAME_RE.findall(log)):
+        value = field(name, log)
+        if value is not None:
+            found[name] = value
+    return found

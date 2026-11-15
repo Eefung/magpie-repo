@@ -14,12 +14,17 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "scripts" / "upstream.sh"
+
+sys.path.insert(0, str(REPO / "tests"))
+
+import frozen  # noqa: E402  (the one reader of the frozen lines, as in production)
 
 
 def stub(*, upstream: str = "0.1.10", packaged: str = "0.1.10", bump: str | None = "0",
@@ -80,11 +85,10 @@ class UpstreamTest(unittest.TestCase):
         )
 
     def lines(self, result: subprocess.CompletedProcess) -> dict[str, str]:
-        found = {}
-        for line in result.stdout.splitlines():
-            name, _, value = line.partition("=")
-            found[name] = value
-        return found
+        # Through the production reader, so a duplicated line is the same
+        # complaint here as in the step that consumes it. This used to split
+        # the lines itself and took the last of two `bump=`.
+        return frozen.fields(result.stdout)
 
     def handover(self, result: subprocess.CompletedProcess) -> dict[str, str]:
         self.assertEqual(result.returncode, 0, result.stderr)
