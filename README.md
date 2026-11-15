@@ -50,7 +50,7 @@ python3 scripts/bump.py --render --version <版本>    # 生成 PKGBUILD 并打�
 python3 -m unittest discover -s tests               # 离线单测，不联网也不进容器
 ./scripts/check.sh                                  # 全部闸门：单测 + shellcheck + ruff + actionlint，本机有 makepkg 时再跑 probe
 ./scripts/probe-repo-build.sh                       # 真 makepkg + 真 repo-add 跑构建、载荷核对与保留窗口，不需要容器与网络
-./scripts/build-check.sh packages/magpie-bin        # 单包构建，装依赖后跑 --version 核对版本；最后三行是 pkgname= / pkgver= / artifact=
+./scripts/build-check.sh packages/magpie-bin        # 单包构建，装依赖后跑 --version 核对版本；最后两行是 pkgname= / artifact=
 
 ./scripts/build-repo.sh /tmp/magpie-repo/x86_64 packages/magpie-bin packages/magpie-cli-bin
 python3 -m http.server -d /tmp/magpie-repo 8765     # 再用临时 pacman.conf 从 http 试装
