@@ -78,12 +78,12 @@ class UpstreamHandoverTest(unittest.TestCase):
             self.assertIn(f'line_field {key} "$UP.txt"', self.workflow())
 
     def test_the_handover_path_is_declared_once(self):
-        # The path was spelled seven times across three steps, while
-        # `packages=` existed precisely so that a path would not be spelled
-        # twice. One declaration in the job env; every reader asks it.
-        workflow = self.workflow()
-        self.assertIn("UP: /tmp/up", workflow)
-        self.assertEqual(workflow.count("/tmp/up"), 1)
+        # Declared in the job's env, where every step sees it -- a step-level
+        # declaration would satisfy a text search while the other two steps
+        # read an unset variable at run time. The count says the path itself is
+        # spelled nowhere else.
+        self.assertEqual(workflow.env().get("UP"), "/tmp/up")
+        self.assertEqual(self.workflow().count("/tmp/up"), 1)
 
     def test_the_render_step_takes_the_version_the_check_decided(self):
         workflow = self.workflow()
