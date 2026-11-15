@@ -16,12 +16,22 @@ difference. What a publish run still proves is the token URL and Pages itself.
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "scripts" / "publish-pages.sh"
+
+sys.path.insert(0, str(REPO / "tests"))
+
+import fixtures  # noqa: E402  (the one spelling of a 包文件's name in the test tree)
+
+# The tree this publishes is served as uploaded, so the name is only a name --
+# but it is still a 包文件's name, and the test tree spells those one way.
+CURRENT = fixtures.pkgfile_name("magpie-bin", "0.1.9")
+LATER = fixtures.pkgfile_name("magpie-bin", "0.1.10")
 
 
 def git(*args: str, cwd: Path) -> subprocess.CompletedProcess:
@@ -69,18 +79,18 @@ class PublishPagesTest(unittest.TestCase):
         return int(counted.stdout.strip())
 
     def test_the_tree_is_served_as_uploaded(self):
-        result = self.publish(self.tree("one", "magpie-bin-0.1.9-1-x86_64.pkg.tar.zst"), "0.1.9")
+        result = self.publish(self.tree("one", CURRENT), "0.1.9")
 
         self.assertEqual(result.returncode, 0, result.stderr)
         files = self.branch_files()
-        self.assertIn("x86_64/magpie-bin-0.1.9-1-x86_64.pkg.tar.zst", files)
+        self.assertIn(f"x86_64/{CURRENT}", files)
         # Without it Pages runs the tree through Jekyll instead of serving it.
         self.assertIn(".nojekyll", files)
 
     def test_each_publish_replaces_the_branch_with_one_commit(self):
-        first = self.publish(self.tree("one", "magpie-bin-0.1.9-1-x86_64.pkg.tar.zst"), "0.1.9")
+        first = self.publish(self.tree("one", CURRENT), "0.1.9")
         self.assertEqual(first.returncode, 0, first.stderr)
-        second = self.publish(self.tree("two", "magpie-bin-0.1.10-1-x86_64.pkg.tar.zst"), "0.1.10")
+        second = self.publish(self.tree("two", LATER), "0.1.10")
         self.assertEqual(second.returncode, 0, second.stderr)
 
         # A force push of a fresh root, not a second commit on top: the branch
@@ -88,11 +98,11 @@ class PublishPagesTest(unittest.TestCase):
         # in its history.
         self.assertEqual(self.commits(), 1)
         files = self.branch_files()
-        self.assertIn("x86_64/magpie-bin-0.1.10-1-x86_64.pkg.tar.zst", files)
-        self.assertNotIn("x86_64/magpie-bin-0.1.9-1-x86_64.pkg.tar.zst", files)
+        self.assertIn(f"x86_64/{LATER}", files)
+        self.assertNotIn(f"x86_64/{CURRENT}", files)
 
     def test_the_commit_names_the_version_it_publishes(self):
-        self.publish(self.tree("one", "magpie-bin-0.1.9-1-x86_64.pkg.tar.zst"), "0.1.9")
+        self.publish(self.tree("one", CURRENT), "0.1.9")
 
         message = git("log", "-1", "--format=%s", "gh-pages", cwd=self.remote)
         self.assertEqual(message.stdout.strip(), "build(gh-pages): magpie 0.1.9")

@@ -21,18 +21,26 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "scripts" / "build-check.sh"
+
+sys.path.insert(0, str(REPO / "tests"))
+
+import fixtures  # noqa: E402  (the one spelling of a 包文件's name in the test tree)
 PKG = REPO / "packages" / "magpie-bin"
 
 STUB_MAKEPKG = """\
 #!/usr/bin/env bash
 # Stands in for makepkg: answers the two questions build-check asks, then makes
-# the package file under the name makepkg would give it. Its scratch tree lives
+# the package file under the name makepkg would give it. Its arch and extension
+# come from tests/fixtures.py (PKG_ARCH, PKG_SUFFIX): a fake that wrote
+# `-x86_64` itself would keep passing through a second arch, and would be one
+# more spelling of a name pkg.sh owns. Its scratch tree lives
 # in a mktemp directory, so nothing it creates can be mistaken for the script's
 # own leftovers.
 set -euo pipefail
@@ -40,7 +48,7 @@ case "${1:-}" in
     --printsrcinfo) printf 'pkgbase = magpie-bin\\n\\tdepends = glibc\\n'; exit 0 ;;
     --packagelist)
         . ./PKGBUILD
-        printf '%s/%s-%s-%s-x86_64.pkg.tar.zst\\n' "$PWD" "$pkgname" "$pkgver" "$pkgrel"
+        printf '%s/%s-%s-%s-%s%s\\n' "$PWD" "$pkgname" "$pkgver" "$pkgrel" "$PKG_ARCH" "$PKG_SUFFIX"
         exit 0
         ;;
 esac
@@ -51,7 +59,7 @@ trap 'rm -rf "$build"' EXIT
 mkdir -p "$build/usr/bin"
 printf '#!/bin/sh\\necho "magpie %s"\\n' "${STUB_REPORTS:-$pkgver}" >"$build/usr/bin/magpie"
 chmod +x "$build/usr/bin/magpie"
-tar -cf "$pkgname-$pkgver-$pkgrel-x86_64.pkg.tar.zst" -C "$build" usr
+tar -cf "$pkgname-$pkgver-$pkgrel-$PKG_ARCH$PKG_SUFFIX" -C "$build" usr
 """
 
 
@@ -83,6 +91,8 @@ class BuildCheckTest(unittest.TestCase):
         env = dict(os.environ)
         env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
         env["PAYLOAD_TAR"] = "tar"
+        env["PKG_ARCH"] = fixtures.ARCH
+        env["PKG_SUFFIX"] = fixtures.SUFFIX
         if reports is not None:
             env["STUB_REPORTS"] = reports
         if skip_build:
@@ -122,7 +132,7 @@ class BuildCheckTest(unittest.TestCase):
             self.assertFalse((self.pkgdir / leftover).exists(), leftover)
 
     def test_a_package_file_from_an_earlier_run_is_not_published(self):
-        stale = self.pkgdir / "magpie-bin-0.1.1-1-x86_64.pkg.tar.zst"
+        stale = self.pkgdir / fixtures.pkgfile_name("magpie-bin", "0.1.1")
         stale.touch()
 
         result = self.run_script()
@@ -139,7 +149,7 @@ class BuildCheckTest(unittest.TestCase):
         # from an earlier run is still there, and `[ -f "$artifact" ]` would
         # then pass on bytes nobody built. The directory is emptied before the
         # build for exactly this.
-        stale = self.pkgdir / f"magpie-bin-{self.pkgver()}-1-x86_64.pkg.tar.zst"
+        stale = self.pkgdir / fixtures.pkgfile_name("magpie-bin", self.pkgver())
         stale.touch()
 
         result = self.run_script(skip_build=True)
@@ -177,8 +187,9 @@ class BuildCheckTest(unittest.TestCase):
         # older default's archive are residue, and neither may sit here waiting
         # for a later run to publish it.
         for name in (
-            "magpie-bin-0.1.9-1-x86_64.pkg.tar.zst.sig",
-            "magpie-bin-0.1.9-1-x86_64.pkg.tar.xz",
+            fixtures.pkgfile_name("magpie-bin", "0.1.9") + ".sig",
+            fixtures.pkgfile_name("magpie-bin", "0.1.9").removesuffix(fixtures.SUFFIX)
+            + ".pkg.tar.xz",
         ):
             (self.pkgdir / name).touch()
 
@@ -252,6 +263,8 @@ class RootAdapterTest(unittest.TestCase):
         env = dict(os.environ)
         env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
         env["PAYLOAD_TAR"] = "tar"
+        env["PKG_ARCH"] = fixtures.ARCH
+        env["PKG_SUFFIX"] = fixtures.SUFFIX
         env["BUILD_AS"] = "root"
         env["STUB_LOG"] = str(self.log)
         if not builder_exists:

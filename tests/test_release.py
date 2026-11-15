@@ -28,6 +28,7 @@ SCRIPT = REPO / "scripts" / "release.sh"
 
 sys.path.insert(0, str(REPO / "tests"))
 
+import fixtures  # noqa: E402  (the one spelling of a 包文件's name in the test tree)
 import frozen  # noqa: E402  (the one reader of the frozen lines, as in production)
 import install_block  # noqa: E402  (the one reader of the block a user pastes)
 
@@ -39,8 +40,8 @@ PREVIOUS = "0.1.9"
 SERVED = {"ARCH": "x86_64", "REPO_NAME": "magpie", "PAGES_URL": "https://example.invalid/repo"}
 
 
-def pkgfile(pkg: str, version: str, rel: str = "1") -> str:
-    return f"{pkg}-{version}-{rel}-x86_64.pkg.tar.zst"
+def pkgfile(pkg: str, version: str, rel: str = fixtures.REL) -> str:
+    return fixtures.pkgfile_name(pkg, version, rel)
 
 
 class ReleaseTest(unittest.TestCase):

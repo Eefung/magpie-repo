@@ -14,9 +14,14 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import fixtures  # noqa: E402  (the one spelling of a 包文件's name in the test tree)
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "scripts" / "build-repo.sh"
@@ -29,12 +34,17 @@ STUB_BUILD_CHECK = """\
 # and a stub that spelled pkgver its own way was a second copy of it. The lines
 # are the two the real script prints: pkgver= left the handover when nothing
 # read it, and a stub still printing it would be pretending otherwise.
+#
+# The name's other three fields arrive from tests/fixtures.py (PKG_REL,
+# PKG_ARCH, PKG_SUFFIX) instead of being written into this printf: a stub that
+# said `-1-x86_64` itself would keep every retention assertion green through a
+# pkgrel bump or a second arch, which is the one change this file is about.
 set -euo pipefail
 dir="$1"
 source "${PKG_SH:?}"
 pkgname="$(pkg_field "$dir/PKGBUILD" pkgname)"
 pkgver="$(pkg_field "$dir/PKGBUILD" pkgver)"
-artifact="$dir/$pkgname-$pkgver-1-x86_64.pkg.tar.zst"
+artifact="$dir/$pkgname-$pkgver-${PKG_REL}-${PKG_ARCH}$PKG_SUFFIX"
 : > "$artifact"
 echo "ok: $(basename "$artifact")"
 echo "pkgname=$pkgname"
@@ -80,7 +90,7 @@ class BuildRepoTest(unittest.TestCase):
         )
 
     def seed(self, version: str) -> None:
-        (self.out / f"magpie-bin-{version}-1-x86_64.pkg.tar.zst").touch()
+        (self.out / fixtures.pkgfile_name("magpie-bin", version)).touch()
 
     def run_script(
         self, build_check: Path | None = None, *, repo_name: str | None = "testrepo"
@@ -89,6 +99,9 @@ class BuildRepoTest(unittest.TestCase):
         env["BUILD_CHECK"] = str(build_check or self.stub_build)
         env["PKG_SH"] = str(REPO / "scripts" / "lib" / "pkg.sh")
         env["REPO_ADD_LOG"] = str(self.record)
+        env["PKG_REL"] = fixtures.REL
+        env["PKG_ARCH"] = fixtures.ARCH
+        env["PKG_SUFFIX"] = fixtures.SUFFIX
         env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
         # A name of its own, not the repository's: the database's file name is
         # what proves the variable crossed into the script and reached repo-add.
@@ -123,14 +136,18 @@ class BuildRepoTest(unittest.TestCase):
         self.assertEqual(
             self.files_on_disk(),
             [
-                "magpie-bin-0.1.10-1-x86_64.pkg.tar.zst",
-                "magpie-bin-0.1.9-1-x86_64.pkg.tar.zst",
+                fixtures.pkgfile_name("magpie-bin", "0.1.10"),
+                fixtures.pkgfile_name("magpie-bin", "0.1.9"),
             ],
         )
         # The pruned build stays out of the database even though it arrived in
         # the same directory the database is rebuilt from.
-        self.assertEqual(self.database_entries(), ["magpie-bin-0.1.10-1-x86_64.pkg.tar.zst"])
-        self.assertIn("pruning magpie-bin-0.1.8-1-x86_64.pkg.tar.zst", result.stdout)
+        self.assertEqual(
+            self.database_entries(), [fixtures.pkgfile_name("magpie-bin", "0.1.10")]
+        )
+        self.assertIn(
+            f"pruning {fixtures.pkgfile_name('magpie-bin', '0.1.8')}", result.stdout
+        )
         # The database is filed under the name it was given, not under the
         # script's own idea of one.
         self.assertTrue((self.out / "testrepo.db.tar.gz").is_file())
@@ -146,20 +163,23 @@ class BuildRepoTest(unittest.TestCase):
         # from the 包清单 was built by nobody, pruned by nobody, and carried
         # forward by the seed on every publish. The directory is asked what it
         # carries instead, and what this run did not build goes.
-        (self.out / "magpie-retired-0.0.1-1-x86_64.pkg.tar.zst").touch()
-        (self.out / "magpie-retired-0.0.2-1-x86_64.pkg.tar.zst").touch()
+        (self.out / fixtures.pkgfile_name("magpie-retired", "0.0.1")).touch()
+        (self.out / fixtures.pkgfile_name("magpie-retired", "0.0.2")).touch()
         self.stage("0.1.10")
 
         result = self.run_script()
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
-            self.files_on_disk(), ["magpie-bin-0.1.10-1-x86_64.pkg.tar.zst"]
+            self.files_on_disk(), [fixtures.pkgfile_name("magpie-bin", "0.1.10")]
         )
-        self.assertIn("retiring magpie-retired-0.0.1-1-x86_64.pkg.tar.zst", result.stdout)
-        self.assertIn("retiring magpie-retired-0.0.2-1-x86_64.pkg.tar.zst", result.stdout)
+        for version in ("0.0.1", "0.0.2"):
+            self.assertIn(
+                f"retiring {fixtures.pkgfile_name('magpie-retired', version)}",
+                result.stdout,
+            )
         self.assertEqual(
-            self.database_entries(), ["magpie-bin-0.1.10-1-x86_64.pkg.tar.zst"]
+            self.database_entries(), [fixtures.pkgfile_name("magpie-bin", "0.1.10")]
         )
 
     def test_a_failed_build_writes_no_database(self):

@@ -26,8 +26,10 @@ REPO = Path(__file__).resolve().parent.parent
 LIB = REPO / "scripts" / "lib" / "pkg.sh"
 
 sys.path.insert(0, str(REPO / "scripts"))
+sys.path.insert(0, str(REPO / "tests"))
 
 import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
+import fixtures  # noqa: E402  (the one spelling of a 包文件's name in the test tree)
 
 
 def call(script: str) -> subprocess.CompletedProcess:
@@ -153,8 +155,8 @@ class RepoDirectory(unittest.TestCase):
         return shlex.quote(str(self.out))
 
 
-def build(version: str, rel: str = "1", arch: str = "x86_64") -> str:
-    return f"magpie-bin-{version}-{rel}-{arch}.pkg.tar.zst"
+def build(version: str, rel: str = fixtures.REL, arch: str = fixtures.ARCH) -> str:
+    return fixtures.pkgfile_name("magpie-bin", version, rel, arch)
 
 
 class PkgfilesPruneTest(RepoDirectory):
@@ -299,6 +301,37 @@ class PkgfileNamingTest(RepoDirectory):
                      "magpie-bin.pkg.tar.zst"):
             with self.subTest(name=name):
                 self.assertNotEqual(self.pkgname(name).returncode, 0, name)
+
+
+class FixtureNamingTest(unittest.TestCase):
+    """The test tree's one spelling of a 包文件 name, read back by pkg.sh.
+
+    `pkgfile_pattern`, `pkgfile_pkgname` and `pkgfile_version` are the rule; a
+    fixture that spelled the name itself was the second copy of it, and the
+    stubs wrote `-1-x86_64` in by hand, so a pkgrel bump or a second arch would
+    leave every retention test green while the real chain produced other names.
+    """
+
+    def test_the_fixture_name_is_the_one_pkg_sh_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for pkg, version, rel, arch in (
+                ("magpie-bin", "0.1.10", "1", "x86_64"),
+                ("magpie-cli-bin", "0.1.1000", "2", "aarch64"),
+            ):
+                with self.subTest(pkg=pkg, arch=arch):
+                    path = Path(tmp) / fixtures.pkgfile_name(pkg, version, rel, arch)
+                    path.touch()
+                    read_back = call(f"pkgfile_pkgname {shlex.quote(str(path))}")
+                    self.assertEqual(read_back.stdout, f"{pkg}\n", read_back.stderr)
+                    read_version = call(
+                        f"pkgfile_version {shlex.quote(pkg)} {shlex.quote(str(path))}"
+                    )
+                    self.assertEqual(read_version.stdout, f"{version}\n", read_version.stderr)
+
+    def test_the_fixture_suffix_is_the_served_one(self):
+        served = call("pkgfile_suffix")
+        self.assertEqual(served.returncode, 0, served.stderr)
+        self.assertEqual(fixtures.SUFFIX, served.stdout.strip())
 
 
 class PackageResidueTest(unittest.TestCase):

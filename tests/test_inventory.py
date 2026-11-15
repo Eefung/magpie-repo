@@ -27,6 +27,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "tests"))
 
 import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
+import fixtures  # noqa: E402  (the one spelling of a 包文件's name in the test tree)
 import install_block  # noqa: E402  (the one reader of the block a user pastes)
 import workflow  # noqa: E402  (the reader of .github/workflows/publish.yml)
 
@@ -613,10 +614,13 @@ class SeedTest(unittest.TestCase):
     def published_tree(self) -> list[str]:
         """A previous gh-pages branch: two 包文件, a signature, a stray file."""
         (self.origin / "x86_64").mkdir(parents=True)
+        # The names come from tests/fixtures.py -- the one spelling of a 包文件
+        # in the test tree -- plus a signature, which is the decoy: it matches
+        # the residue set and must never be seeded.
         for name in (
-            "magpie-bin-0.1.9-1-x86_64.pkg.tar.zst",
-            "magpie-bin-0.1.10-1-x86_64.pkg.tar.zst",
-            "magpie-bin-0.1.10-1-x86_64.pkg.tar.zst.sig",
+            fixtures.pkgfile_name("magpie-bin", "0.1.9"),
+            fixtures.pkgfile_name("magpie-bin", "0.1.10"),
+            fixtures.pkgfile_name("magpie-bin", "0.1.10") + ".sig",
         ):
             (self.origin / "x86_64" / name).touch()
         (self.origin / "SHA256SUMS").touch()
@@ -624,8 +628,8 @@ class SeedTest(unittest.TestCase):
         self.git("add", "-A", cwd=self.origin)
         self.git("commit", "-q", "-m", "previous publish", cwd=self.origin)
         return [
-            "magpie-bin-0.1.10-1-x86_64.pkg.tar.zst",
-            "magpie-bin-0.1.9-1-x86_64.pkg.tar.zst",
+            fixtures.pkgfile_name("magpie-bin", "0.1.10"),
+            fixtures.pkgfile_name("magpie-bin", "0.1.9"),
         ]
 
     def test_it_carries_exactly_the_pkgfiles_pkg_sh_can_see(self):
@@ -660,7 +664,9 @@ class SeedTest(unittest.TestCase):
         )
         self.assertEqual(seeded, [f"x86_64/{name}" for name in expected])
         # The decoys: a signature is not a 包文件, and a stray file is not seeded.
-        self.assertNotIn("x86_64/magpie-bin-0.1.10-1-x86_64.pkg.tar.zst.sig", seeded)
+        self.assertNotIn(
+            f"x86_64/{fixtures.pkgfile_name('magpie-bin', '0.1.10')}.sig", seeded
+        )
         self.assertNotIn("SHA256SUMS", seeded)
 
 
