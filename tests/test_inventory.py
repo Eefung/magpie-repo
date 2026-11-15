@@ -307,19 +307,44 @@ class ServedIdentityTest(unittest.TestCase):
             "name": found["REPO_NAME"],
         }
 
+    def install_block(self, readme: str) -> str:
+        """The fenced block a user copies into pacman.conf.
+
+        The block, not the whole README: every fact it carries is also
+        explained in the prose around it, so a search of the file as a whole is
+        satisfied by the sentence that describes the line instead of by the
+        line the user copies.
+        """
+        try:
+            section = readme.split("## 安装", 1)[1]
+            start = section.index("```bash") + len("```bash")
+            end = section.index("```", start)
+        except (IndexError, ValueError):
+            return ""
+        return section[start:end]
+
     def problems(self, readme: str, source: str | None = None) -> list[str]:
         """Every install-block fact the README does not restate exactly."""
         want = self.declared(source)
         server = f"{want['url']}/{want['arch']}"
+        block = self.install_block(readme)
         missing = [
-            f"README carries no {literal!r}"
+            f"README's install block carries no {literal!r}"
             for literal in (
                 f"[{want['name']}]",
+                # Unsigned is a choice (ADR-0002), and this line is what makes
+                # it work: without it the user inherits [options]' Required and
+                # the install dies on a signature that will never exist. No
+                # producer hands this line over -- the workflow does not know
+                # it -- so the guard is where it lives, and it has to read the
+                # block: the prose beside it says the same words.
+                "SigLevel = Optional",
                 f"Server = {server}",
-                f"{server}/{want['name']}.db",
             )
-            if literal not in readme
+            if literal not in block
         ]
+        if f"{server}/{want['name']}.db" not in readme:
+            missing.append(f"README carries no {server}/{want['name']}.db")
         missing += [
             f"README never installs {pkg}"
             for pkg in bump.PACKAGES
@@ -352,6 +377,22 @@ class ServedIdentityTest(unittest.TestCase):
                     [problem for problem in self.problems(dropped) if pkg in problem],
                     [f"README never installs {pkg}"],
                 )
+
+    def test_a_block_line_that_only_the_prose_still_says_is_caught(self):
+        # The failure this guard did not have: every fact in the block is also
+        # explained in the sentence beside it, so reading the whole README let
+        # the prose stand in for the line a user copies. Deleting the block's
+        # `SigLevel = Optional` left problems() empty -- while the prose quote
+        # of it stayed, which is where a whole-file search found it.
+        readme = self.readme()
+        block = self.install_block(readme)
+        dropped = readme.replace(block, block.replace("SigLevel = Optional\n", ""))
+        self.assertNotEqual(dropped, readme)
+        self.assertIn("SigLevel = Optional", dropped, "the prose no longer quotes it; reword this test")
+        self.assertEqual(
+            [problem for problem in self.problems(dropped) if "SigLevel" in problem],
+            ["README's install block carries no 'SigLevel = Optional'"],
+        )
 
 
 class ArchTableTest(unittest.TestCase):
