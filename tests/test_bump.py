@@ -103,11 +103,29 @@ def sums_body(entries: dict[str, str]) -> bytes:
 
 
 def staged_root(root: Path, versions: dict[str, str]) -> Path:
-    """A fake checkout whose packages/<pkg>/PKGBUILD carry these pkgvers."""
+    """A fake checkout whose packages/<pkg>/PKGBUILD are their templates' renders.
+
+    Rendered, not hand-written: `--check` now holds every committed PKGBUILD to
+    its template, so a three-line stub would be reported as drift.
+    """
     for pkg, version in versions.items():
+        template = (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
+        supplied = {
+            "pkgver": version,
+            "maintainer": "Test Maintainer <test@example.invalid>",
+            "sha_license": "0" * 64,
+            "sha_icon": "1" * 64,
+            "sha_linux-amd64": "2" * 64,
+            "sha_linux-arm64": "3" * 64,
+        }
+        wanted = bump.placeholders(template)
         path = root / "packages" / pkg / "PKGBUILD"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"pkgname={pkg}\npkgver={version}\npkgrel=1\n")
+        path.write_text(
+            bump.render_pkgbuild(
+                template, {n: v for n, v in supplied.items() if n in wanted}
+            )
+        )
     return root
 
 
@@ -526,6 +544,24 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(log["packaged"], {"magpie-bin": "0.1.10"})
         self.assertEqual(log["bump"], "1")
         self.assertEqual(log["behind"], {"magpie-cli-bin"})
+
+    def test_a_committed_pkgbuild_that_is_not_its_render_is_reported(self):
+        # The edit that starts a run through publish.yml's paths filter, finds
+        # bump=0 and prints "nothing to publish": without this, it ships later,
+        # bundled with whatever the next 版本 happens to be.
+        fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = staged_root(
+                Path(tmp), {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"}
+            )
+            path = root / "packages" / "magpie-cli-bin" / "PKGBUILD"
+            path.write_text(path.read_text().replace("pkgrel=1", "pkgrel=2"))
+            with self.assertRaises(bump.BumpError) as caught:
+                bump.check(layout=layout_at(root), fetch=fetch)
+        self.assertIn("magpie-cli-bin", str(caught.exception))
+        self.assertIn("re-render", str(caught.exception))
+        # This repository's own problem, so it is reported before the network.
+        self.assertEqual(fetch.urls, [])
 
 
 class MainTest(unittest.TestCase):

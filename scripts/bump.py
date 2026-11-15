@@ -682,7 +682,74 @@ def render(
     log(f"ver={version}")
 
 
+def values_of(template: str, rendered: str) -> dict[str, str]:
+    """The values `rendered` supplies for this template's markers.
+
+    The inverse of render_pkgbuild: it turns the template into a capture-group
+    regex, so the parts that must match exactly are its literal text and the
+    parts that may vary are the markers. Two markers with one name must have
+    been filled the same way both times.
+
+    It lived in tests/test_templates.py -- 28 lines of production logic with its
+    own exception class -- so the mode the pipeline actually runs could not ask
+    the question the test job was asking.
+    """
+    pattern = ""
+    names: list[str] = []
+    cursor = 0
+    for match in PLACEHOLDER_RE.finditer(template):
+        pattern += re.escape(template[cursor:match.start()]) + "(.*?)"
+        names.append(match.group(1))
+        cursor = match.end()
+    pattern += re.escape(template[cursor:])
+
+    found = re.fullmatch(pattern, rendered, re.S)
+    if found is None:
+        raise BumpError(
+            "the rendered file is not its template with values filled in; "
+            "re-render it (scripts/bump.py --render) or revert the template edit"
+        )
+
+    values: dict[str, str] = {}
+    for name, value in zip(names, found.groups()):
+        if values.setdefault(name, value) != value:
+            raise BumpError(f"{{{{{name}}}}} was filled two different ways")
+    return values
+
+
+def check_templates(layout: Layout) -> None:
+    """Every rendered PKGBUILD is still its template with values filled in.
+
+    `--check` answered one question -- is the packaged 版本 behind 上游 -- and
+    that is by design (GLOSSARY: 落后). The other edge of 渲染 went unasked in
+    the mode the pipeline runs: a template edited without a re-render shipped
+    later, invisibly bundled with the next 版本, because the run the edit
+    started found `bump=0` and printed "nothing to publish". The test job caught
+    it; the entry check did not, and it is the entry check that decides.
+
+    A package with no PKGBUILD is not drift -- it has never been rendered, and
+    check() already reports that as 落后.
+    """
+    for pkg in layout.inventory:
+        pkgbuild = layout.packages_dir / pkg / "PKGBUILD"
+        if not pkgbuild.exists():
+            continue
+        template = layout.templates / f"{pkg}.PKGBUILD.in"
+        try:
+            text = template.read_text()
+        except OSError as exc:
+            raise BumpError(f"no template for {pkg}: {template} ({exc.strerror})") from exc
+        try:
+            values_of(text, pkgbuild.read_text())
+        except BumpError as exc:
+            raise BumpError(f"{pkg}: {exc}") from exc
+
+
 def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
+    # This repository's own problem first, before anything is fetched: the
+    # render does the same, so a tree whose templates and PKGBUILDs disagree
+    # fails here rather than being reported as "upstream has no such asset".
+    check_templates(layout)
     upstream = latest_version(fetch=fetch)
     packaged = packaged_versions(layout)
     log(f"upstream={upstream}")

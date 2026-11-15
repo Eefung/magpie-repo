@@ -32,41 +32,6 @@ import bump  # noqa: E402  (the module lives beside the scripts, not on the path
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
-class TemplateMismatch(AssertionError):
-    """The committed file is not this template with values substituted."""
-
-
-def values_of(template: str, committed: str) -> dict[str, str]:
-    """The values `committed` supplies for this template's placeholders.
-
-    Turns the template into a capture-group regex, so the parts that must match
-    exactly are its literal text and the parts that may vary are the
-    placeholders. Raises TemplateMismatch when the literals no longer agree or
-    one placeholder was filled two different ways.
-    """
-    pattern = ""
-    names: list[str] = []
-    cursor = 0
-    for match in bump.PLACEHOLDER_RE.finditer(template):
-        pattern += re.escape(template[cursor:match.start()]) + "(.*?)"
-        names.append(match.group(1))
-        cursor = match.end()
-    pattern += re.escape(template[cursor:])
-
-    found = re.fullmatch(pattern, committed, re.S)
-    if found is None:
-        raise TemplateMismatch(
-            "the committed PKGBUILD no longer matches its template; "
-            "re-render it (scripts/bump.py --render) or revert the template edit"
-        )
-
-    values: dict[str, str] = {}
-    for name, value in zip(names, found.groups()):
-        if values.setdefault(name, value) != value:
-            raise TemplateMismatch(f"{{{{{name}}}}} was filled two different ways")
-    return values
-
-
 class CommittedPkgbuildTest(unittest.TestCase):
     def pkgbuild(self, pkg: str) -> str:
         return (REPO / "packages" / pkg / "PKGBUILD").read_text()
@@ -74,10 +39,15 @@ class CommittedPkgbuildTest(unittest.TestCase):
     def template(self, pkg: str) -> str:
         return (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
 
+    def values_of(self, pkg: str) -> dict[str, str]:
+        # The inverse of render_pkgbuild lives in the module now, so this file
+        # drifts with the placeholder syntax instead of holding its own copy.
+        return bump.values_of(self.template(pkg), self.pkgbuild(pkg))
+
     def test_each_committed_pkgbuild_is_its_template_with_values_filled_in(self):
         for pkg in bump.PACKAGES:
             with self.subTest(pkg=pkg):
-                values = values_of(self.template(pkg), self.pkgbuild(pkg))
+                values = self.values_of(pkg)
 
                 self.assertEqual(
                     set(values), set(bump.placeholders(self.template(pkg)))
@@ -92,10 +62,7 @@ class CommittedPkgbuildTest(unittest.TestCase):
     def test_both_packages_carry_the_same_version(self):
         # They are rendered in one pass from one 版本; a tree where they differ
         # would publish two packages built from different upstream releases.
-        versions = {
-            pkg: values_of(self.template(pkg), self.pkgbuild(pkg))["pkgver"]
-            for pkg in bump.PACKAGES
-        }
+        versions = {pkg: self.values_of(pkg)["pkgver"] for pkg in bump.PACKAGES}
         self.assertEqual(len(set(versions.values())), 1, versions)
 
     def test_a_changed_template_stops_matching(self):
@@ -104,16 +71,16 @@ class CommittedPkgbuildTest(unittest.TestCase):
         pkg = "magpie-cli-bin"
         edited = self.template(pkg).replace("pkgrel=1", "pkgrel=2")
         self.assertNotEqual(edited, self.template(pkg))
-        with self.assertRaises(TemplateMismatch):
-            values_of(edited, self.pkgbuild(pkg))
+        with self.assertRaises(bump.BumpError):
+            bump.values_of(edited, self.pkgbuild(pkg))
 
     def test_one_placeholder_filled_two_ways_is_caught(self):
         # Today's templates repeat no placeholder (the source lines use shell
         # ${pkgver}, not {{pkgver}}), so this rule has nothing to bite on in
         # the files above. It is what stops a template that does repeat one
         # from being edited apart in a single place.
-        with self.assertRaises(TemplateMismatch) as caught:
-            values_of("a={{x}}\nb={{x}}\n", "a=1\nb=2\n")
+        with self.assertRaises(bump.BumpError) as caught:
+            bump.values_of("a={{x}}\nb={{x}}\n", "a=1\nb=2\n")
         self.assertIn("x", str(caught.exception))
 
 
