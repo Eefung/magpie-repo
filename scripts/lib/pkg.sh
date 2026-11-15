@@ -130,7 +130,13 @@ srcinfo_depends() {
 pkgfile_suffix() { printf '.pkg.tar.zst\n'; }
 pkgfile_pattern() { printf '*%s\n' "$(pkgfile_suffix)"; }
 
-# pkgfile_residue_pattern -- what a build can leave in a package directory.
+# pkgfile_residue_pattern -- the archive shapes a build can leave behind.
+#
+# Not "everything a build leaves": makepkg's working trees and a stale
+# `.SRCINFO` are the other half of the residue, and they are named where they
+# are removed -- build-check.sh's LEFTOVERS, next to the trap that clears them.
+# This one is a glob, and it answers the narrower question a glob can: which
+# files in this directory look like a build's output.
 #
 # A different question from pkgfile_pattern, and deliberately wider: that one is
 # the set this repository serves, this one is the set a build has to be able to

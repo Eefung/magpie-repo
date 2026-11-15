@@ -58,10 +58,11 @@ jobs:
       # layout -- meant editing every one, and the seed could disagree with the
       # build about where the tree was.
       TREE: repo
-      # The 保留窗口: how many 版本 of each package the served tree keeps. A
-      # number the README promises users, and until it was declared here the
-      # only copy CI never saw -- build-repo.sh's own default was the
-      # declaration, so changing it changed nothing a test could read.
+      # The 保留窗口: how many 版本 of each package the served tree keeps. The
+      # number the README promises users, declared here so the copy they read
+      # can be held to a value CI actually passes. build-repo.sh keeps a
+      # default for a hand run; that is why the flag's presence is asserted as
+      # text in tests/test_inventory.py rather than proved by the run.
       KEEP: 2
     steps:
       - uses: actions/checkout@v7
