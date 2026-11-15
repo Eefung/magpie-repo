@@ -84,15 +84,10 @@ class UpstreamTest(unittest.TestCase):
             env=env,
         )
 
-    def lines(self, result: subprocess.CompletedProcess) -> dict[str, str]:
-        # Through the production reader, so a duplicated line is the same
-        # complaint here as in the step that consumes it. This used to split
-        # the lines itself and took the last of two `bump=`.
-        return frozen.fields(result.stdout)
-
     def handover(self, result: subprocess.CompletedProcess) -> dict[str, str]:
+        """The lines the script printed, read the way the workflow reads them."""
         self.assertEqual(result.returncode, 0, result.stderr)
-        return self.lines(result)
+        return frozen.fields(result.stdout)
 
     def test_nothing_behind_means_do_not_publish(self):
         handed = self.handover(self.run_script())
