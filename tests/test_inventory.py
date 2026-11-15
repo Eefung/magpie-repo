@@ -24,8 +24,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
+sys.path.insert(0, str(REPO / "tests"))
 
 import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
+import workflow  # noqa: E402  (the reader of .github/workflows/publish.yml)
 
 LIB = REPO / "scripts" / "lib" / "pkg.sh"
 
@@ -90,6 +92,111 @@ class UpstreamHandoverTest(unittest.TestCase):
         self.assertNotIn("bump:-", workflow)
         self.assertNotIn("WANTED:-", workflow)
         self.assertNotIn("bump.py --check", workflow)
+
+
+class PublishTransactionTest(unittest.TestCase):
+    """The publish job is one transaction, and its order is the invariant.
+
+    Every step after the entry check is gated on `bump`, the Release comes
+    before the commit that tells `main` the tree is current, and that commit is
+    last. The order exists because a failed release has to leave `main` at the
+    old pkgver: commit first, and a failed `gh release create` leaves `main`
+    looking current, so no later run ever retries and that 版本 never gets a
+    release. All three rules were prose in the file -- ADR-0001's 后果 says it
+    out loud ("插一个 step 没人拦") -- and both probes left the suite green:
+    deleting the gh-pages step's `if:`, and moving the Release after the
+    commit.
+
+    The file is read through tests/workflow.py now, so a reformat that changes
+    nothing (a comment, a quote) is not what this class notices.
+    """
+
+    CHECK = "What is upstream at, and what gets packaged"
+    RELEASE = "Publish the GitHub release"
+    COMMIT = "Commit the rendered PKGBUILDs"
+
+    def steps(self, source: str | None = None) -> list[workflow.Step]:
+        found = workflow.steps(source)
+        self.assertIn(self.CHECK, [step.name for step in found], found)
+        return found
+
+    def after_check(self, source: str | None = None) -> list[workflow.Step]:
+        found = self.steps(source)
+        return found[[step.name for step in found].index(self.CHECK) + 1 :]
+
+    def ungated(self, source: str | None = None) -> list[str]:
+        """Steps after the check that no `bump` gate can skip."""
+        return [
+            step.name
+            for step in self.after_check(source)
+            if "outputs.bump" not in (step.if_ or "")
+        ]
+
+    def misordered(self, source: str | None = None) -> list[str]:
+        """The order violations: release after commit, or a step after the commit."""
+        names = [step.name for step in self.steps(source)]
+        publishing = [
+            step.name
+            for step in self.steps(source)
+            if (step.if_ or "").endswith("== '1'")
+        ]
+        problems = []
+        if names.index(self.RELEASE) > names.index(self.COMMIT):
+            problems.append(f"{self.RELEASE} runs after {self.COMMIT}")
+        if publishing[-1] != self.COMMIT:
+            problems.append(f"{publishing[-1]} publishes after {self.COMMIT}")
+        return problems
+
+    def dead_outputs(self, source: str | None = None) -> list[str]:
+        """Keys written to $GITHUB_OUTPUT that no step reads back."""
+        written = workflow.output_keys(source)
+        self.assertTrue(
+            written,
+            "no `printf ... >> $GITHUB_OUTPUT` left; teach this reader the new carrier",
+        )
+        return sorted(written - workflow.output_reads(source))
+
+    def test_every_step_after_the_check_is_gated(self):
+        self.assertEqual(self.ungated(), [])
+
+    def test_the_commit_comes_after_the_release_and_last(self):
+        self.assertEqual(self.misordered(), [])
+
+    def test_every_declared_output_has_a_reader(self):
+        # `upstream` was written and read by nobody: a handover line nothing
+        # consumes is a promise the next person has to keep guessing about. It
+        # has its reader now (the skipped run's line names the 版本); this is
+        # what stops the next dead one.
+        self.assertEqual(self.dead_outputs(), [])
+
+    def test_a_step_added_without_a_gate_is_caught(self):
+        text = workflow.text()
+        moved = text.replace(
+            f"      - name: {self.RELEASE}\n"
+            "        if: steps.upstream.outputs.bump == '1'\n",
+            f"      - name: {self.RELEASE}\n",
+        )
+        self.assertNotEqual(moved, text)
+        self.assertEqual(self.ungated(moved), [self.RELEASE])
+
+    def test_the_release_moved_after_the_commit_is_caught(self):
+        text = workflow.text()
+        start = text.index("      # Before the commit, deliberately")
+        commit = text.index(f"      - name: {self.COMMIT}")
+        release = text[start:commit]
+        moved = text[:start] + text[commit:]
+        moved = moved.rstrip("\n") + "\n\n" + release
+        self.assertNotEqual(moved, text)
+        self.assertEqual(len(self.misordered(moved)), 2, self.misordered(moved))
+
+    def test_an_output_nobody_reads_is_caught(self):
+        text = workflow.text()
+        moved = text.replace(
+            "printf 'upstream=%s\\ntarget=%s\\nbump=%s\\n' \\",
+            "printf 'upstream=%s\\ntarget=%s\\nbump=%s\\nunused=%s\\n' \\",
+        )
+        self.assertNotEqual(moved, text)
+        self.assertEqual(self.dead_outputs(moved), ["unused"])
 
 
 class ContainerWorkdirTest(unittest.TestCase):
