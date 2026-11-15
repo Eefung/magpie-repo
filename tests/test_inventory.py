@@ -51,7 +51,7 @@ class InventoryAgreementTest(unittest.TestCase):
         # install lines in the release notes -- a bare `pacman -S magpie-bin` --
         # went unseen. Reading the inventory instead of one hardcoded string
         # means a third package is held to this too.
-        source = (REPO / ".github" / "workflows" / "publish.yml").read_text()
+        source = workflow.text()
         self.assertEqual([pkg for pkg in bump.PACKAGES if pkg in source], [])
 
 
@@ -66,7 +66,7 @@ class UpstreamHandoverTest(unittest.TestCase):
     """
 
     def workflow(self) -> str:
-        return (REPO / ".github" / "workflows" / "publish.yml").read_text()
+        return workflow.text()
 
     def test_the_step_calls_the_entry_check_once(self):
         self.assertEqual(self.workflow().count("./scripts/upstream.sh"), 1)
@@ -279,8 +279,8 @@ class ContainerWorkdirTest(unittest.TestCase):
     """
 
     def test_the_build_mounts_the_root_and_works_from_it(self):
-        workflow = (REPO / ".github" / "workflows" / "publish.yml").read_text()
-        self.assertIn('--volume "$PWD:/src" --workdir /src', workflow)
+        source = workflow.text()
+        self.assertIn('--volume "$PWD:/src" --workdir /src', source)
 
     def test_the_package_list_is_named_relative_to_that_root(self):
         for directory, _ in bump.package_entries(bump.layout_for(REPO)):
@@ -381,10 +381,8 @@ class ServedIdentityTest(unittest.TestCase):
     around them still reads correctly. That is what it is for.
     """
 
-    WORKFLOW = REPO / ".github" / "workflows" / "publish.yml"
-
     def workflow(self) -> str:
-        return self.WORKFLOW.read_text()
+        return workflow.text()
 
     def readme(self) -> str:
         return (REPO / "README.md").read_text()
@@ -498,7 +496,7 @@ class ArchTableTest(unittest.TestCase):
     """
 
     def workflow(self) -> str:
-        return (REPO / ".github" / "workflows" / "publish.yml").read_text()
+        return workflow.text()
 
     def served(self) -> str:
         return workflow.env()["ARCH"]
@@ -519,7 +517,7 @@ class PackageFilePatternTest(unittest.TestCase):
     """
 
     def workflow(self) -> str:
-        return (REPO / ".github" / "workflows" / "publish.yml").read_text()
+        return workflow.text()
 
     def spelling(self, text: str) -> list[str]:
         """Live lines that spell the extension themselves.
@@ -585,7 +583,6 @@ class SeedTest(unittest.TestCase):
     the test author's copy.
     """
 
-    WORKFLOW = REPO / ".github" / "workflows" / "publish.yml"
     SEED_RE = re.compile(
         r'git archive FETCH_HEAD \| tar -x -C \S+ --wildcards "[^"]+"'
     )
@@ -598,7 +595,7 @@ class SeedTest(unittest.TestCase):
         self.work = self.root / "work"
 
     def seed_line(self) -> str:
-        found = self.SEED_RE.findall(self.WORKFLOW.read_text())
+        found = self.SEED_RE.findall(workflow.text())
         self.assertEqual(len(found), 1, found)
         return found[0]
 
@@ -635,16 +632,20 @@ class SeedTest(unittest.TestCase):
         self.git("remote", "add", "origin", str(self.origin), cwd=self.work)
         self.git("fetch", "--depth", "1", "origin", "main", cwd=self.work)
 
+        declared = {
+            key: value for key, value in workflow.env().items() if key in ("ARCH", "TREE")
+        }
         result = subprocess.run(
             [
                 "bash",
                 "-c",
-                f'set -euo pipefail; source {LIB}; ARCH=x86_64; TREE=repo; '
+                f'set -euo pipefail; source {LIB}; '
                 f'mkdir -p "$TREE"; {self.seed_line()}',
             ],
             cwd=self.work,
             text=True,
             capture_output=True,
+            env={**os.environ, **declared},
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -706,10 +707,13 @@ class RetentionWindowTest(unittest.TestCase):
 
     def test_the_env_declares_it_and_the_container_gets_it(self):
         self.assertRegex(self.keep(), r"^[1-9][0-9]*$")
-        # The value crosses into the container through `-e`, beside REPO_NAME:
-        # a script default equal to the declared value makes a forgotten flag
-        # invisible, which is why this is asserted as text rather than by a run.
-        self.assertIn("-e REPO_NAME -e KEEP", workflow.text())
+        # The value crosses into the container through `-e`, beside REPO_NAME.
+        # Both flags, each on its own: a single-string assertion would fail on
+        # a reordering that changes nothing. A script default equal to the
+        # declared value makes a forgotten flag invisible, which is why this is
+        # asserted as text rather than by a run.
+        self.assertIn("-e REPO_NAME", workflow.text())
+        self.assertIn("-e KEEP", workflow.text())
 
     def test_the_readme_promises_the_versions_the_window_keeps(self):
         self.assertIn(f"保留 {self.keep()} 个版本", (REPO / "README.md").read_text())
@@ -738,10 +742,8 @@ class WorkflowShellTest(unittest.TestCase):
     satisfy a check that is guarding a different file.
     """
 
-    WORKFLOW = REPO / ".github" / "workflows" / "publish.yml"
-
     def text(self) -> str:
-        return self.WORKFLOW.read_text()
+        return workflow.text()
 
     def missing_scripts(self, text: str) -> list[str]:
         """Every `./scripts/...` the workflow names that cannot be run."""
