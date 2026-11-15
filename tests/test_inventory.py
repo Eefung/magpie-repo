@@ -74,7 +74,15 @@ class UpstreamHandoverTest(unittest.TestCase):
 
     def test_the_step_reads_the_lines_it_was_handed(self):
         for key in ("upstream", "target", "bump", "packages"):
-            self.assertIn(f"line_field {key} /tmp/up.txt", self.workflow())
+            self.assertIn(f'line_field {key} "$UP.txt"', self.workflow())
+
+    def test_the_handover_path_is_declared_once(self):
+        # The path was spelled seven times across three steps, while
+        # `packages=` existed precisely so that a path would not be spelled
+        # twice. One declaration in the job env; every reader asks it.
+        workflow = self.workflow()
+        self.assertIn("UP: /tmp/up", workflow)
+        self.assertEqual(workflow.count("/tmp/up"), 1)
 
     def test_the_render_step_takes_the_version_the_check_decided(self):
         workflow = self.workflow()

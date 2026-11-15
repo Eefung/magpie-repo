@@ -64,6 +64,13 @@ jobs:
       # default for a hand run; that is why the flag's presence is asserted as
       # text in tests/test_inventory.py rather than proved by the run.
       KEEP: 2
+      # The run's own handover: scripts/upstream.sh takes a work dir and prints
+      # its four frozen lines on stdout, so the step that runs it redirects them
+      # here (and into the work dir's sibling). Declared once, because three
+      # steps read the file and its path used to be spelled seven times -- two
+      # of them `cat` -- while `packages=` existed precisely so that a path
+      # would not be spelled twice.
+      UP: /tmp/up
     steps:
       - uses: actions/checkout@v7
 
@@ -82,14 +89,14 @@ jobs:
           # right here, where only a grep over this file could hold it: a
           # reformat turned the test job red, and flipping the default that
           # decides "publish" did not.
-          ./scripts/upstream.sh /tmp/up > /tmp/up.txt
-          cat /tmp/up.txt
+          ./scripts/upstream.sh "$UP" > "$UP.txt"
+          cat "$UP.txt"
           # Assigned first, then written: `echo "x=$(reader)" >> "$GITHUB_OUTPUT"`
           # writes an empty value and exits 0 when the reader fails, which would
           # hand an empty 版本 to a step whose gate already opened.
-          upstream="$(line_field upstream /tmp/up.txt)"
-          target="$(line_field target /tmp/up.txt)"
-          bump="$(line_field bump /tmp/up.txt)"
+          upstream="$(line_field upstream "$UP.txt")"
+          target="$(line_field target "$UP.txt")"
+          bump="$(line_field bump "$UP.txt")"
           printf 'upstream=%s\ntarget=%s\nbump=%s\n' \
             "$upstream" "$target" "$bump" >> "$GITHUB_OUTPUT"
 
@@ -153,7 +160,7 @@ jobs:
           # malformed 包清单 would reach build-repo.sh as "name at least one
           # package directory" -- the wrong module, inside the container, with
           # the reader's own message already printed and ignored.
-          packages="$(line_field packages /tmp/up.txt)"
+          packages="$(line_field packages "$UP.txt")"
           dirs="$(pkglist_dirs "$packages")" || exit 1
           [ -n "$dirs" ] || { echo "the 包清单 names no package directories" >&2; exit 1; }
           mapfile -t pkgdirs <<<"$dirs"
@@ -198,7 +205,7 @@ jobs:
           # SHA256SUMS built from exactly those, the notes whose install lines
           # come from the 包清单 -- is scripts/release.sh's answer. gh is what is
           # left here, and it is the only part a publish run can prove.
-          packages="$(line_field packages /tmp/up.txt)"
+          packages="$(line_field packages "$UP.txt")"
           ./scripts/release.sh "$TREE/$ARCH" "$ver" "$packages" /tmp/rel \
             > /tmp/release.txt
           cat /tmp/release.txt
