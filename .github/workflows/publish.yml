@@ -159,19 +159,13 @@ jobs:
         if: steps.upstream.outputs.bump == '1'
         run: |
           set -euo pipefail
-          cd repo
-          git init --quiet --initial-branch=gh-pages
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          touch .nojekyll
-          # The seed brought only the 包文件 across, so this tree is exactly what
-          # this run wrote -- nothing has to be retired file by file.
-          git add --all
-          git commit --quiet -m "build(gh-pages): magpie $ver"
-          # One squashed commit per release keeps the branch from growing a copy
-          # of every 30 MB package it ever served.
-          git push --quiet --force \
-            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:gh-pages
+          # What "publish to the pages branch" means -- `.nojekyll`, one
+          # squashed commit per release, the force push -- is
+          # scripts/publish-pages.sh's answer, and it runs offline against a
+          # bare repository in tests/test_publish_pages.py. What is left here
+          # is the one part a publish run still proves: the token URL.
+          ./scripts/publish-pages.sh "repo" "$ver" \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           echo "repository published: $PAGES_URL/$ARCH"
 
       # Before the commit, deliberately: a failure here leaves main at the old

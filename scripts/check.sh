@@ -161,15 +161,18 @@ cat <<'EOF'
   real tools do what their stubs pretend. tests/test_build_repo.py drives the
   real build-repo.sh the same way, and the probe gate above runs the real
   makepkg and repo-add -- on a machine that has them, which the runner has not.
-- the publish steps themselves -- seeding repo/ from the previous gh-pages
-  tree, the force push, `gh release create`, the commit back to main: they only
-  exist in the publish job, and a real publish is what proves them. The Release
-  step's own rules are no longer in this list: scripts/release.sh builds the
-  asset list, the SHA256SUMS and the notes, and tests/test_release.py drives it
-  against a two-version tree offline. The seed carries only the 包文件 across,
-  under the pattern pkg.sh owns (`$ARCH/$(pkgfile_pattern)`), so a file this
-  repository still needs but does not write under that pattern would stop being
-  served -- and nothing in this gate runs the seed line itself.
+- the publish job's own plumbing -- `git ls-remote` and `git fetch` of the
+  branch, `gh release create`, and the commit and push back to main: they only
+  exist in the publish job, and a real publish is what proves them. The branch
+  push is no longer in this list: scripts/publish-pages.sh owns the tree it
+  publishes (`.nojekyll`, one squashed commit per release, the force push) and
+  tests/test_publish_pages.py drives it against a local bare repository, so what
+  a publish run still proves there is the token URL and Pages itself. The seed
+  line is not in this list either: tests/test_inventory.py runs it, against a
+  branch carrying a signature and a stray file, so what stays unproven about it
+  is the real previous tree it fetches, not the pattern it carries. The
+  Release's rules are scripts/release.sh's, driven offline by
+  tests/test_release.py.
 EOF
 
 if [ "$failures" -ne 0 ]; then
