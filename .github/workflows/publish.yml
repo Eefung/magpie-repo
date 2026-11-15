@@ -136,7 +136,14 @@ jobs:
           # container mounts $PWD and works from /src. Those two facts are one
           # assumption -- move the mount, keep the paths, and every build step
           # resolves a directory that is not there.
-          mapfile -t pkgdirs < <(pkglist_dirs /tmp/packages.txt)
+          # Captured first, not read through a process substitution:
+          # `mapfile < <(reader)` exits 0 when the reader rejects a line, so a
+          # malformed 包清单 would reach build-repo.sh as "name at least one
+          # package directory" -- the wrong module, inside the container, with
+          # the reader's own message already printed and ignored.
+          dirs="$(pkglist_dirs /tmp/packages.txt)" || exit 1
+          [ -n "$dirs" ] || { echo "the 包清单 names no package directories" >&2; exit 1; }
+          mapfile -t pkgdirs <<<"$dirs"
           # REPO_NAME crosses into the container so the database is named after
           # the section the README tells users to write, instead of by the
           # script's own default agreeing with it by luck.

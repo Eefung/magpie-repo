@@ -218,5 +218,87 @@ class ServedIdentityTest(unittest.TestCase):
                 )
 
 
+class WorkflowShellTest(unittest.TestCase):
+    """The workflow's `run:` blocks are shell, and two shapes in them bite.
+
+    One file, two contexts: most steps run on the runner, and a few cross into
+    `docker run`, where the checkout is mounted at /src. A path written as if
+    the step ran inside the container -- `/src/scripts/release.sh` in a step
+    that does not -- fails only when that step runs, which for the release is
+    after the branch has been pushed. That is one typo away from what this
+    session wrote before checking the diff.
+
+    The other: `mapfile -t x < <(reader)` exits 0 when the reader rejects a
+    line, so the reader's message is printed and then discarded and the next
+    module reports the failure in its own words, from inside the container.
+
+    The scope is the workflow on purpose. In `scripts/`, `set -e` plus the
+    empty-list guards already turn those reads into named failures, and four
+    deliberate `mapfile < <(...)` sites there would have to be rewritten to
+    satisfy a check that is guarding a different file.
+    """
+
+    WORKFLOW = REPO / ".github" / "workflows" / "publish.yml"
+
+    def text(self) -> str:
+        return self.WORKFLOW.read_text()
+
+    def missing_scripts(self, text: str) -> list[str]:
+        """Every `./scripts/...` the workflow names that cannot be run."""
+        return [
+            path
+            for path in sorted(set(re.findall(r"\./scripts/[\w./-]+", text)))
+            if not (REPO / path).is_file() or not os.access(REPO / path, os.X_OK)
+        ]
+
+    def mismounted(self, text: str) -> list[str]:
+        """Lines that reach for the container's mount outside a `docker run`."""
+        return [
+            line.strip()
+            for line in text.splitlines()
+            if "/src" in line
+            and not line.strip().startswith("#")
+            and "docker run" not in line
+        ]
+
+    def swallowed(self, text: str) -> list[str]:
+        """`mapfile` reads whose reader's failure never reaches the step."""
+        return [
+            line.strip()
+            for line in text.splitlines()
+            if re.search(r"mapfile\s+-\S+\s+\w+\s*<\s*<\(", line)
+        ]
+
+    def test_every_script_it_names_exists_and_can_run(self):
+        named = re.findall(r"\./scripts/[\w./-]+", self.text())
+        self.assertTrue(named, "the workflow names no script at all")
+        self.assertEqual(self.missing_scripts(self.text()), [])
+
+    def test_the_container_mount_is_used_only_by_docker(self):
+        self.assertIn("/src", self.text(), "the mount is gone; drop this check")
+        self.assertEqual(self.mismounted(self.text()), [])
+
+    def test_no_reader_is_consumed_through_a_process_substitution(self):
+        self.assertEqual(self.swallowed(self.text()), [])
+
+    def test_a_path_in_the_wrong_context_is_caught(self):
+        moved = self.text().replace("./scripts/release.sh", "/src/scripts/release.sh")
+        self.assertTrue(
+            moved != self.text(), "the workflow no longer names ./scripts/release.sh"
+        )
+        self.assertTrue(self.mismounted(moved))
+
+    def test_a_script_that_cannot_run_is_caught(self):
+        broken = self.text().replace("./scripts/release.sh", "./scripts/released.sh")
+        self.assertTrue(
+            broken != self.text(), "the workflow no longer names ./scripts/release.sh"
+        )
+        self.assertEqual(self.missing_scripts(broken), ["./scripts/released.sh"])
+
+    def test_a_swallowed_reader_is_caught(self):
+        self.assertTrue(self.swallowed("mapfile -t x < <(reader)"))
+        self.assertEqual(self.swallowed('mapfile -t x <<<"$value"'), [])
+
+
 if __name__ == "__main__":
     unittest.main()
