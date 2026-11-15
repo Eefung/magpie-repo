@@ -45,6 +45,25 @@ line_field() {
     printf '%s\n' "$value"
 }
 
+# line_field_or <name> <file> <default> -- the line's value, or <default> when
+# the producer wrote no such line at all.
+#
+# "Absent" and "broken" are different failures, and only the caller knows the
+# first one's meaning: an absent `bump=` is a check with nothing to say, while
+# two `bump=` lines is a producer that wrote twice. `line_field ... || true`
+# collapses the two into the default, so a duplicated line read as "nothing to
+# do" -- a check that broke now looks like a quiet day.
+line_field_or() {
+    local name="$1" file="$2" default="$3" count
+    [ -r "$file" ] || { echo "no such file: $file" >&2; return 1; }
+    count="$(grep -c "^${name}=" "$file" || true)"
+    if [ "${count:-0}" -eq 0 ]; then
+        printf '%s\n' "$default"
+        return 0
+    fi
+    line_field "$name" "$file"
+}
+
 # pkglist_field <file> <index> -- one column of the 包清单, in its order.
 #
 # The line is `package <dir> <pkgname>`, which bump.py writes once per package.

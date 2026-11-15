@@ -306,6 +306,49 @@ class LineFieldTest(unittest.TestCase):
         self.assertIn("no such file", result.stderr)
 
 
+class LineFieldOrTest(unittest.TestCase):
+    """The reader that tells "absent" (a default) from "broken" (a failure)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.log = Path(self._tmp.name) / "out.txt"
+
+    def field(self, body: str, default: str = "0") -> subprocess.CompletedProcess:
+        self.log.write_text(body)
+        return call(
+            f"line_field_or bump {shlex.quote(str(self.log))} {shlex.quote(default)}"
+        )
+
+    def test_an_absent_line_is_the_callers_default(self):
+        # A check with nothing to say: not a failure, and not a publish.
+        result = self.field("upstream=0.1.2\n")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "0\n")
+
+    def test_a_present_line_wins_over_the_default(self):
+        result = self.field("bump=1\n", default="0")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "1\n")
+
+    def test_two_lines_are_still_a_protocol_break(self):
+        # `line_field ... || true` collapsed this into the default, so a check
+        # that wrote twice read as "nothing to do" and the publish was skipped
+        # without a word.
+        result = self.field("bump=0\nbump=1\n")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("2 bump= lines", result.stderr)
+
+    def test_an_empty_value_is_a_break_not_the_default(self):
+        result = self.field("bump=\n")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("empty bump=", result.stderr)
+
+
 class PkglistTest(unittest.TestCase):
     """The one reader of the 包清单 lines bump.py writes."""
 
