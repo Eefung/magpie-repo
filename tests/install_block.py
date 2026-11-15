@@ -10,7 +10,9 @@ copy of this rule would be the drift it exists to catch.
 
 `ReleaseTest` feeds it the notes release.sh writes, `ServedIdentityTest` feeds it
 README's fenced block, and the identity on both sides is the workflow's env --
-the one place ARCH, REPO_NAME and PAGES_URL are declared.
+the one place ARCH, REPO_NAME and PAGES_URL are declared. `Served` is that
+identity, so the block's nouns and the env's names are converted in one place
+instead of at every call site.
 
 The three config lines live in the block; the install lines may sit anywhere in
 the document, which is why the two scopes arrive as separate arguments.
@@ -19,6 +21,7 @@ the document, which is why the two scopes arrive as separate arguments.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Iterable
 
 # The line the whole install depends on: an unsigned 软件源 inherits `Required`
@@ -32,9 +35,31 @@ SIGLEVEL = "SigLevel = Optional"
 _INSTALL_LINE = re.compile(r"pacman\s+-S(?!\w)([^#\n]*)")
 
 
-def facts(*, section: str, url: str, arch: str) -> tuple[str, ...]:
-    """The three lines a user copies into pacman.conf, as written."""
-    return (f"[{section}]", SIGLEVEL, f"Server = {url}/{arch}")
+@dataclass(frozen=True)
+class Served:
+    """What this 软件源 is served as: the three facts the workflow declares.
+
+    They travel together everywhere they appear -- the block a user pastes, the
+    env a step passes, the `Server =` URL in the notes -- and unpacking them by
+    hand at each call is how a guard ends up with seven keyword arguments.
+    """
+
+    section: str
+    url: str
+    arch: str
+
+    @property
+    def server(self) -> str:
+        """The value of the `Server =` line: the URL plus the served arch dir."""
+        return f"{self.url}/{self.arch}"
+
+    def lines(self) -> tuple[str, ...]:
+        """The three lines a user copies into pacman.conf, as written."""
+        return (f"[{self.section}]", SIGLEVEL, f"Server = {self.server}")
+
+    def env(self) -> dict[str, str]:
+        """The names the workflow declares the same three under."""
+        return {"ARCH": self.arch, "REPO_NAME": self.section, "PAGES_URL": self.url}
 
 
 def installed(installs: str) -> set[str]:
@@ -52,13 +77,11 @@ def installed(installs: str) -> set[str]:
 
 
 def problems(
+    served: Served,
     *,
     config: str,
     installs: str,
     label: str,
-    section: str,
-    url: str,
-    arch: str,
     packages: Iterable[str],
 ) -> list[str]:
     """Every install-block fact `config`/`installs` does not restate.
@@ -67,9 +90,7 @@ def problems(
     notes"), because the message is read by whoever broke it.
     """
     missing = [
-        f"{label} carries no {literal!r}"
-        for literal in facts(section=section, url=url, arch=arch)
-        if literal not in config
+        f"{label} carries no {literal!r}" for literal in served.lines() if literal not in config
     ]
     named = installed(installs)
     missing += [f"{label} never installs {pkg}" for pkg in packages if pkg not in named]

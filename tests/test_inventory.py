@@ -403,16 +403,14 @@ class ServedIdentityTest(unittest.TestCase):
     def readme(self) -> str:
         return (REPO / "README.md").read_text()
 
-    def declared(self, source: str | None = None) -> dict[str, str]:
+    def declared(self, source: str | None = None) -> install_block.Served:
         """The identity the workflow declares, or the text standing in for it."""
         found = workflow.env(source=source)
         missing = [key for key in ("ARCH", "PAGES_URL", "REPO_NAME") if key not in found]
         self.assertEqual(missing, [], f"the workflow declares no {missing}")
-        return {
-            "arch": found["ARCH"],
-            "url": found["PAGES_URL"],
-            "name": found["REPO_NAME"],
-        }
+        return install_block.Served(
+            section=found["REPO_NAME"], url=found["PAGES_URL"], arch=found["ARCH"]
+        )
 
     def install_block(self, readme: str) -> str:
         """The fenced block a user copies into pacman.conf.
@@ -434,17 +432,14 @@ class ServedIdentityTest(unittest.TestCase):
         """Every install-block fact the README does not restate exactly."""
         want = self.declared(source)
         missing = install_block.problems(
+            want,
             config=self.install_block(readme),
             installs=readme,
             label="README",
-            section=want["name"],
-            url=want["url"],
-            arch=want["arch"],
             packages=bump.PACKAGES,
         )
-        server = f"{want['url']}/{want['arch']}"
-        if f"{server}/{want['name']}.db" not in readme:
-            missing.append(f"README carries no {server}/{want['name']}.db")
+        if f"{want.server}/{want.section}.db" not in readme:
+            missing.append(f"README carries no {want.server}/{want.section}.db")
         return missing
 
     def test_the_install_block_matches_what_the_repository_serves(self):

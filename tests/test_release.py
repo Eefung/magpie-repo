@@ -37,7 +37,9 @@ CURRENT = "0.1.10"
 PREVIOUS = "0.1.9"
 # What the workflow's env declares this 软件源 is served as. The test spells it
 # so the notes are held to a value the script was *given*, not to today's.
-SERVED = {"ARCH": "x86_64", "REPO_NAME": "magpie", "PAGES_URL": "https://example.invalid/repo"}
+SERVED = install_block.Served(
+    section="magpie", url="https://example.invalid/repo", arch="x86_64"
+)
 
 
 def pkgfile(pkg: str, version: str, rel: str = fixtures.REL) -> str:
@@ -64,9 +66,9 @@ class ReleaseTest(unittest.TestCase):
 
     def run_script(self, *argv: str, env: dict[str, str] | None = None):
         full = dict(os.environ)
-        for key in SERVED:
+        for key in SERVED.env():
             full.pop(key, None)
-        full.update(SERVED)
+        full.update(SERVED.env())
         full.update(env or {})
         return subprocess.run(
             ["bash", str(SCRIPT), *argv],
@@ -130,12 +132,10 @@ class ReleaseTest(unittest.TestCase):
         self.assertIn(f"v{CURRENT}", notes)
         self.assertEqual(
             install_block.problems(
+                SERVED,
                 config=notes,
                 installs=notes,
                 label="the Release notes",
-                section=SERVED["REPO_NAME"],
-                url=SERVED["PAGES_URL"],
-                arch=SERVED["ARCH"],
                 packages=PKGS,
             ),
             [],
@@ -144,28 +144,24 @@ class ReleaseTest(unittest.TestCase):
     def test_the_block_is_emitted_from_the_identity_it_was_given(self):
         # Held to a value this run did not use before: a guard against the
         # current wording would pass with the literal still in the heredoc.
-        served = {
-            **SERVED,
-            "REPO_NAME": "nightly",
-            "PAGES_URL": "https://example.invalid/nightly",
-        }
+        served = install_block.Served(
+            section="nightly", url="https://example.invalid/nightly", arch=SERVED.arch
+        )
         result = self.run_script(
-            str(self.repo), CURRENT, str(self.listing), str(self.out), env=served
+            str(self.repo), CURRENT, str(self.listing), str(self.out), env=served.env()
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
         notes = (self.out / "notes.md").read_text()
         self.assertIn("[nightly]", notes)
         self.assertNotIn("[magpie]", notes)
-        self.assertIn("Server = https://example.invalid/nightly/x86_64", notes)
+        self.assertIn(f"Server = {served.server}", notes)
         self.assertEqual(
             install_block.problems(
+                served,
                 config=notes,
                 installs=notes,
                 label="the Release notes",
-                section="nightly",
-                url="https://example.invalid/nightly",
-                arch="x86_64",
                 packages=PKGS,
             ),
             [],
