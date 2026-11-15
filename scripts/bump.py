@@ -73,9 +73,14 @@ PACKAGES = {
 # hands to the render; nothing inside render() or read_template reads it as a
 # module global any more, which is what made "a different arch table" untestable
 # without monkeypatching.
+#
+# Only what this repository builds and 载荷核对s is here (ADR-0003). aarch64 used
+# to be listed beside it while CI built x86_64 alone: the render asked upstream
+# for an arm64 asset nobody built, so a release that stopped publishing one
+# would have stopped x86_64 too -- an arch we never shipped holding the switch
+# for the one we do.
 ARCHES = {
     "x86_64": "linux-amd64",
-    "aarch64": "linux-arm64",
 }
 
 

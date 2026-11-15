@@ -239,6 +239,29 @@ class ServedIdentityTest(unittest.TestCase):
                 )
 
 
+class ArchTableTest(unittest.TestCase):
+    """What the arch 表 declares is what CI builds and serves.
+
+    aarch64 lived in the table and in both templates while CI built x86_64
+    alone. The render then demanded an upstream arm64 asset nobody packaged, so
+    a release that stopped publishing one stopped the x86_64 release too
+    (ADR-0003). An arch may not be declared here without a build behind it.
+    """
+
+    def workflow(self) -> str:
+        return (REPO / ".github" / "workflows" / "publish.yml").read_text()
+
+    def served(self) -> str:
+        match = re.search(r"^\s+ARCH: (\S+)$", self.workflow(), re.M)
+        assert match is not None, "the workflow declares no ARCH"
+        return match.group(1)
+
+    def test_every_arch_the_table_names_is_the_one_ci_serves(self):
+        # The mutation that mattered: the table gains an arch while no container
+        # builds it, and the next render asks upstream for its asset.
+        self.assertEqual(set(bump.ARCHES), {self.served()})
+
+
 class PackageFilePatternTest(unittest.TestCase):
     """What counts as a 包文件 is one rule, and it lives in pkg.sh.
 

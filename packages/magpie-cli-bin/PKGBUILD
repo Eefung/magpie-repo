@@ -3,7 +3,7 @@ pkgname=magpie-cli-bin
 pkgver=0.1.4249
 pkgrel=1
 pkgdesc="Terminal build of magpie: pick every AI coding agent's model without GUI dependencies"
-arch=('x86_64' 'aarch64')
+arch=('x86_64')
 url="https://usemagpie.ai"
 license=('MIT')
 # Static build: no webkit2gtk/gtk3 needed. It installs as `magpie-cli`, so it
@@ -14,16 +14,13 @@ options=('!strip' '!debug')
 
 source=("magpie-${pkgver}-LICENSE::https://raw.githubusercontent.com/yetone/magpie/v${pkgver}/LICENSE")
 source_x86_64=("magpie-cli-${pkgver}-amd64::https://github.com/yetone/magpie-releases/releases/download/v${pkgver}/magpie-cli-linux-amd64")
-source_aarch64=("magpie-cli-${pkgver}-arm64::https://github.com/yetone/magpie-releases/releases/download/v${pkgver}/magpie-cli-linux-arm64")
 sha256sums=('79d2c8444715d4bc453ec4f8a0aaf2051a4c1ee5ac08f5bd2e5848aef87c7572')
 sha256sums_x86_64=('5d9b5d4b08111c5652c4ee5b6b38ef060a46bb23fb10f9895469c93da2c90cc0')
-sha256sums_aarch64=('093fc366f74b2d3a5773ea63361cd1d3bf0cb89ce415b7af8002973510d42448')
 
 package() {
     local _suffix
     case "$CARCH" in
         x86_64)  _suffix=amd64 ;;
-        aarch64) _suffix=arm64 ;;
     esac
 
     install -Dm755 "${srcdir}/magpie-cli-${pkgver}-${_suffix}" "${pkgdir}/usr/bin/magpie-cli"

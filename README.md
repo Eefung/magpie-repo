@@ -19,7 +19,7 @@ scripts/upstream.sh       入口检查：跑 --check，决定这次要不要发�
       强制推送到 gh-pages 分支（每个软件包保留 2 个版本）→ 发布 Release v<版本> → 把 PKGBUILD 提交回 main
 ```
 
-`gh-pages` 上的 `x86_64/` 就是软件源。先发布后提交：中途失败时 main 上没有新 `pkgver`，下次运行重做。PKGBUILD 里还写着 aarch64，但 CI 不构建也不验证。
+`gh-pages` 上的 `x86_64/` 就是软件源。先发布后提交：中途失败时 main 上没有新 `pkgver`，下次运行重做。只发 x86_64：arch 表里只有构建并核对过的 arch，加一个 arch 要先给它一条构建与载荷核对的路（[ADR-0003](docs/adr/0003-only-ship-arches-we-build-and-check.md)）。
 
 改了 `templates/` 就必须重渲染 `packages/`：`tests/test_templates.py` 断言每个已提交的 PKGBUILD 仍是它的模板填上值的结果，只改模板不重渲染会让 test job 直接失败（`publish` 是 `needs: test`，因此也发不出去）。
 

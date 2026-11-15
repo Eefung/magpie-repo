@@ -118,7 +118,6 @@ def staged_root(root: Path, versions: dict[str, str]) -> Path:
             "sha_license": "0" * 64,
             "sha_icon": "1" * 64,
             "sha_linux-amd64": "2" * 64,
-            "sha_linux-arm64": "3" * 64,
         }
         wanted = bump.placeholders(template)
         path = root / "packages" / pkg / "PKGBUILD"
@@ -352,7 +351,7 @@ class RenderTest(unittest.TestCase):
         self.assertIn(sha(b"the license"), self.pkgbuild("magpie-bin"))
         self.assertIn(sha(b"the icon"), self.pkgbuild("magpie-bin"))
         self.assertIn(self.ASSETS["magpie-linux-amd64"], self.pkgbuild("magpie-bin"))
-        self.assertIn(self.ASSETS["magpie-cli-linux-arm64"], self.pkgbuild("magpie-cli-bin"))
+        self.assertIn(self.ASSETS["magpie-cli-linux-amd64"], self.pkgbuild("magpie-cli-bin"))
 
     def test_a_package_that_ships_no_icon_never_asks_for_one(self):
         # magpie-cli-bin's template has no {{sha_icon}}; the icon URL is absent
@@ -427,11 +426,11 @@ class RenderTest(unittest.TestCase):
         self.assertFalse((self.out_root / "packages").exists())
 
     def test_a_missing_arch_asset_names_the_package(self):
-        assets = {k: v for k, v in self.ASSETS.items() if k != "magpie-linux-arm64"}
+        assets = {k: v for k, v in self.ASSETS.items() if k != "magpie-linux-amd64"}
         fetch = FetchSpy(self.table(assets=assets))
         with self.assertRaises(bump.BumpError) as caught:
             bump.render(self.VERSION, layout=self.layout, fetch=fetch)
-        self.assertIn("magpie-bin: the release has no magpie-linux-arm64", str(caught.exception))
+        self.assertIn("magpie-bin: the release has no magpie-linux-amd64", str(caught.exception))
         self.assertFalse((self.out_root / "packages").exists())
 
     def test_refuses_a_version_that_is_not_dotted_digits(self):
@@ -691,7 +690,16 @@ class TemplatePkgnameTest(unittest.TestCase):
 
 
 class TemplateArchesTest(unittest.TestCase):
-    """A template's arches are held to the table before anything is fetched."""
+    """A template's arches are held to the table before anything is fetched.
+
+    The table handed in is this class's own two-arch one, not the repository's:
+    what is under test is the mechanism (a table with N arches versus a template
+    with M), and coupling it to today's table would make every arch decision
+    here look like fifteen broken tests. `test_our_own_templates_pass` holds the
+    real files to the real table.
+    """
+
+    ARCHES = {"x86_64": "linux-amd64", "aarch64": "linux-arm64"}
 
     TEMPLATE = (
         "pkgname=magpie-bin\n"
@@ -713,14 +721,14 @@ class TemplateArchesTest(unittest.TestCase):
             pkg="magpie-bin",
             prefix="magpie",
             text=template,
-            arches=bump.ARCHES if arches is None else arches,
+            arches=self.ARCHES if arches is None else arches,
         )
 
     def test_a_template_that_agrees_with_the_table_passes(self):
         self.check(self.TEMPLATE)
 
     def test_an_arch_the_table_gained_names_the_template_that_lags(self):
-        arches = {**bump.ARCHES, "riscv64": "linux-riscv64"}
+        arches = {**self.ARCHES, "riscv64": "linux-riscv64"}
         with self.assertRaises(bump.BumpError) as caught:
             self.check(self.TEMPLATE, arches)
         self.assertIn("magpie-bin", str(caught.exception))
@@ -785,14 +793,17 @@ class TemplateArchesTest(unittest.TestCase):
 
     def test_the_real_template_is_read_past_its_first_line(self):
         # magpie-bin spreads source_x86_64 over several lines; the guard has to
-        # read the array, not just find the key.
+        # read the array, not just find the key. The asset it is held to is the
+        # one the 包清单 publishes, so a URL naming another arch's asset is
+        # what this mutation puts there.
         text = (REPO / "templates" / "magpie-bin.PKGBUILD.in").read_text()
-        mutated = text.replace("magpie-linux-arm64", "magpie-linux-amd64")
+        mutated = text.replace("magpie-linux-amd64", "magpie-linux-arm64")
+        self.assertNotEqual(mutated, text, "the fixture stopped changing anything")
         with self.assertRaises(bump.BumpError) as caught:
             bump.read_template(
                 pkg="magpie-bin", prefix="magpie", text=mutated, arches=bump.ARCHES
             )
-        self.assertIn("source_aarch64", str(caught.exception))
+        self.assertIn("source_x86_64", str(caught.exception))
 
     def test_an_asset_name_the_inventory_never_publishes_is_named(self):
         # The gap this closed: the guard compared the URL's *tail*, and the
