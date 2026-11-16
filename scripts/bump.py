@@ -10,8 +10,9 @@ published checksums -- no compilation.
     ./scripts/bump.py --render --version 0.1.3702
 
 Checksums come from the release's own SHA256SUMS asset (which the site's
-/api/latest agrees with); the LICENSE and the icon are hashed from the bytes
-they serve, so a silent upstream change cannot slip in.
+/api/latest agrees with). The LICENSE and the icon are hashed from the bytes
+the URLs in the template serve -- the template decides what makepkg downloads,
+so the digest is of those bytes -- and a silent upstream change cannot slip in.
 
 The network enters through an injected `fetch`, so the decisions -- which
 version wins, which checksum goes where, whether a template and its values
@@ -50,9 +51,7 @@ from typing import Mapping, Protocol, Sequence
 ROOT = Path(__file__).resolve().parent.parent
 RELEASES = "https://github.com/yetone/magpie-releases/releases"
 GITHUB_RELEASES = "https://api.github.com/repos/yetone/magpie-releases/releases?per_page=30"
-SOURCE_REPO = "https://raw.githubusercontent.com/yetone/magpie"
 SITE_API = "https://usemagpie.ai/api/latest"
-ICON_URL = "https://usemagpie.ai/img/icon-256.png"
 UA = "magpie-repo-bump (+https://github.com/Eefung/magpie-repo)"
 VERSION_RE = re.compile(r"[0-9]+(?:\.[0-9]+)+")
 PKGNAME_RE = re.compile(r"^pkgname=(\S+)", re.M)
@@ -452,6 +451,29 @@ class ArchAsset:
 
 
 @dataclass(frozen=True)
+class SourceAsset:
+    """One plain `source=` entry: the URL, and the marker that takes its digest.
+
+    The template decides both, because the template is what makepkg reads: it
+    names the URL that will be downloaded, and its `sha256sums=` entry is the
+    slot that digest goes into. They used to live apart -- this module held
+    `ICON_URL` and `SOURCE_REPO`, decided what to fetch and hash from them,
+    while the template carried its own copy of both URLs, and the only guard on
+    the plain arrays compared their *lengths*. So an upstream URL that moved
+    (fixed in the template, say) got the *old* URL's digest written into the
+    PKGBUILD, and the disagreement surfaced as a checksum error inside the
+    container -- after the entry check had said `bump=1` and the render had
+    already written.
+
+    The pairing is positional because that is how makepkg pairs them: entry i
+    of `sha256sums=` is the digest of entry i of `source=`.
+    """
+
+    url: str
+    placeholder: str
+
+
+@dataclass(frozen=True)
 class Template:
     """A template read once: its text, the markers it asks for, and its assets.
 
@@ -465,6 +487,7 @@ class Template:
     text: str
     markers: tuple[str, ...]
     assets: tuple[ArchAsset, ...]
+    sources: tuple[SourceAsset, ...]
 
 
 @dataclass(frozen=True)
@@ -479,6 +502,33 @@ class Rendered:
 
     template: Template
     values: dict[str, str] | None
+
+
+def pair_sources(pkg: str, template: str) -> tuple[SourceAsset, ...]:
+    """The plain `source=` entries, each paired with its `sha256sums=` marker.
+
+    `check_sums` already holds the two arrays to the same length; this is what
+    turns that length into the pairing the render needs, so a digest fetched
+    from a URL lands in the marker that belongs to it. The sums entries must be
+    `{{...}}` placeholders: a literal digest is a value nobody re-derives, and
+    this repository has no such entry to keep working.
+    """
+    sources = array_entries(template, "source") or []
+    sums = array_entries(template, "sha256sums") or []
+    paired = []
+    for index, entry in enumerate(sources):
+        name, separator, url = entry.partition("::")
+        if not separator:
+            url = name  # a bare URL entry names no local file
+        marker = sums[index]
+        wanted = PLACEHOLDER_RE.fullmatch(marker)
+        if wanted is None:
+            raise BumpError(
+                f"{pkg}: sha256sums= entry {index + 1} is {marker!r}, "
+                "not a {{...}} placeholder the render can fill"
+            )
+        paired.append(SourceAsset(url=url, placeholder=wanted.group(1)))
+    return tuple(paired)
 
 
 def read_template(
@@ -576,7 +626,12 @@ def read_template(
             ArchAsset(arch=arch, suffix=suffix, placeholder=placeholder, asset=asset)
         )
 
-    return Template(text=text, markers=tuple(markers), assets=tuple(assets))
+    return Template(
+        text=text,
+        markers=tuple(markers),
+        assets=tuple(assets),
+        sources=pair_sources(pkg, text),
+    )
 
 
 def render_pkgbuild(template: str, values: Mapping[str, str]) -> str:
@@ -776,37 +831,41 @@ def render(
 
     sums = release_sums(version, fetch=fetch)
 
-    # Fetch by what the templates ask for, not by what upstream offers: a
-    # package that ships no icon must not be held up by an icon it never
-    # installs.
-    wanted = {marker for _, template in plans for marker in template.markers}
+    # The plain `source=` URLs come from the template, and the render fetches
+    # exactly those: the digest written into the PKGBUILD is then a digest of
+    # the bytes the package will download, by construction. One cache, because
+    # both templates name the same LICENSE and only one of them names the icon.
+    digests: dict[str, str] = {}
 
-    license_bytes = None
-    if "sha_license" in wanted:
-        license_bytes = fetch(f"{SOURCE_REPO}/v{version}/LICENSE", missing_ok=True)
-        if license_bytes is None:
-            raise BumpError(f"v{version} publishes no LICENSE; pick a tag that has one")
-
-    icon_bytes = None
-    if "sha_icon" in wanted:
-        icon_bytes = fetch(ICON_URL, missing_ok=True)
-        if icon_bytes is None:
-            raise BumpError(f"could not download {ICON_URL}")
+    def digest_of(pkg: str, asset: SourceAsset) -> str:
+        # `${pkgver}` is the only variable the templates put in a URL, and it is
+        # this function's own value; anything else is a URL it cannot fetch.
+        url = asset.url.replace("${pkgver}", version)
+        if re.search(r"\$\{[^}]*\}", url):
+            raise BumpError(
+                f"{pkg}: source= names {url!r}, which this renderer cannot fetch"
+            )
+        if url not in digests:
+            body = fetch(url, missing_ok=True)
+            if body is None:
+                raise BumpError(
+                    f"{pkg}: {url} is not there; "
+                    "upstream publishes nothing at the URL the template names"
+                )
+            digests[url] = sha256_of(body)
+        return digests[url]
 
     # Render everything before writing anything: a template that disagrees with
     # its values then leaves the tree alone instead of half-updated.
     rendered = []
     for pkg, template in plans:
-        supplied = {
-            "pkgver": version,
-            "maintainer": layout.maintainer,
-            "sha_license": sha256_of(license_bytes) if license_bytes is not None else None,
-            "sha_icon": sha256_of(icon_bytes) if icon_bytes is not None else None,
-        }
         values = {
-            name: value for name, value in supplied.items()
-            if name in template.markers and value is not None
+            name: value
+            for name, value in (("pkgver", version), ("maintainer", layout.maintainer))
+            if name in template.markers
         }
+        for asset in template.sources:
+            values[asset.placeholder] = digest_of(pkg, asset)
         # The plan already decided which asset feeds which marker, compared
         # against the 包清单; the render only looks the digest up.
         for planned in template.assets:

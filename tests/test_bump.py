@@ -79,7 +79,19 @@ def sums_url(version: str) -> str:
 
 
 def license_url(version: str) -> str:
-    return f"{bump.SOURCE_REPO}/v{version}/LICENSE"
+    """The LICENSE URL the templates name -- the fixture's copy of it.
+
+    Production has no constant for this any more: the template's `source=` entry
+    is what the render fetches. A fixture still has to spell what it pretends to
+    serve, so this line moves when a template's URL moves -- which is the
+    coupling the render now makes visible instead of hiding behind a constant
+    both sides happened to agree with.
+    """
+    return f"https://raw.githubusercontent.com/yetone/magpie/v{version}/LICENSE"
+
+
+# The icon URL the desktop template names, for the same reason.
+ICON_URL = "https://usemagpie.ai/img/icon-256.png"
 
 
 def version_sources(
@@ -366,7 +378,7 @@ class RenderTest(unittest.TestCase):
         return {
             sums_url(self.VERSION): sums_body(self.ASSETS if assets is None else assets),
             license_url(self.VERSION): license_bytes,
-            bump.ICON_URL: icon_bytes,
+            ICON_URL: icon_bytes,
         }
 
     def pkgbuild(self, pkg: str) -> str:
@@ -402,7 +414,7 @@ class RenderTest(unittest.TestCase):
         cli_only = layout_at(self.out_root, inventory={"magpie-cli-bin": "magpie-cli"})
         bump.render(self.VERSION, layout=cli_only, fetch=fetch)
 
-        self.assertNotIn(bump.ICON_URL, fetch.urls)
+        self.assertNotIn(ICON_URL, fetch.urls)
         self.assertNotIn("sha_icon", self.pkgbuild("magpie-cli-bin"))
 
     def test_templates_come_from_the_layout_not_from_the_repository(self):
@@ -455,11 +467,60 @@ class RenderTest(unittest.TestCase):
         self.assertIn("no template for magpie-bin", str(caught.exception))
         self.assertFalse((self.out_root / "packages").exists())
 
+    def decoy(self) -> Path:
+        """A copy of this repository's templates, for the tests that edit one."""
+        templates = self.out_root / "templates"
+        templates.mkdir(exist_ok=True)
+        for pkg in bump.PACKAGES:
+            (templates / f"{pkg}.PKGBUILD.in").write_text(
+                (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
+            )
+        return templates
+
+    def test_the_url_fetched_is_the_one_the_template_names(self):
+        # The whole point of the pairing: move the URL in the template and the
+        # render fetches the moved one. While ICON_URL decided, the digest was
+        # of the old URL's bytes and the PKGBUILD named the new one -- a
+        # checksum error inside the container, after the write.
+        moved = "https://usemagpie.ai/img/icon-512.png"
+        templates = self.decoy()
+        icon = templates / "magpie-bin.PKGBUILD.in"
+        icon.write_text(icon.read_text().replace(ICON_URL, moved))
+        table = self.table()
+        table.pop(ICON_URL)
+        table[moved] = b"the moved icon"
+
+        fetch = FetchSpy(table)
+        bump.render(self.VERSION, layout=layout_at(self.out_root, templates=templates), fetch=fetch)
+
+        self.assertIn(moved, fetch.urls)
+        self.assertNotIn(ICON_URL, fetch.urls)
+        self.assertIn(sha(b"the moved icon"), self.pkgbuild("magpie-bin"))
+
+    def test_a_sums_entry_the_render_cannot_fill_is_refused(self):
+        # A literal digest in the plain array is a value nobody re-derives. The
+        # render fills these slots by position, so it needs to know which marker
+        # belongs to which source.
+        templates = self.decoy()
+        icon = templates / "magpie-bin.PKGBUILD.in"
+        icon.write_text(icon.read_text().replace("{{sha_icon}}", "0" * 64))
+        fetch = FetchSpy(self.table())
+
+        with self.assertRaises(bump.BumpError) as caught:
+            bump.render(self.VERSION, layout=layout_at(self.out_root, templates=templates), fetch=fetch)
+
+        self.assertIn("placeholder", str(caught.exception))
+        self.assertEqual(fetch.urls, [])
+        self.assertFalse((self.out_root / "packages").exists())
+
     def test_a_missing_license_stops_before_writing_anything(self):
         fetch = FetchSpy(self.table(license_bytes=None))
         with self.assertRaises(bump.BumpError) as caught:
             bump.render(self.VERSION, layout=self.layout, fetch=fetch)
-        self.assertIn("no LICENSE", str(caught.exception))
+        # The URL is the template's, so the failure names it rather than a
+        # constant, and it says which package could not be rendered.
+        self.assertIn("magpie-bin", str(caught.exception))
+        self.assertIn(license_url(self.VERSION), str(caught.exception))
         self.assertFalse((self.out_root / "packages").exists())
 
     def test_a_missing_arch_asset_names_the_package(self):
@@ -768,7 +829,7 @@ class SyntaxDoorTest(unittest.TestCase):
                         }
                     ),
                     license_url("0.1.2"): b"license",
-                    bump.ICON_URL: b"icon",
+                    ICON_URL: b"icon",
                 }
             )
             with self.assertRaises(bump.BumpError) as caught:
@@ -966,7 +1027,7 @@ class MainTest(unittest.TestCase):
                 }
             ),
             license_url(version): b"license",
-            bump.ICON_URL: b"icon",
+            ICON_URL: b"icon",
         }
 
     def cli(self, *argv, fetch) -> tuple[object, str]:
