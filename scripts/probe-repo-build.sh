@@ -13,7 +13,7 @@
 # which only exist inside the publish container -- the adapter around them and
 # its order run offline in tests/test_build_check.py.
 #
-# Five cases; any of them failing prints "!! FAIL" and exits 1. Every case is
+# Six cases; any of them failing prints "!! FAIL" and exits 1. Every case is
 # asserted -- the two that used to only print their state are the retention
 # window and the database entry, which is where a broken prune() hides.
 #
@@ -179,6 +179,34 @@ expect 1 "$(db_entries)" "database entries"
 expect 1 "$(disk_files)" "files on disk"
 expect_gone "repo/x86_64/$PKG-$OLD-1-x86_64.pkg.tar.zst"
 show
+
+echo
+echo "########## 6. every committed PKGBUILD is one makepkg can parse ##########"
+# What reads a template outside the container -- bump.py's read_template --
+# checks the five ways the arch table is restated and never parses the file.
+# Only makepkg can say whether the rest of it (depends, the package() body, the
+# heredoc inside it) is a PKGBUILD at all. Until this case existed the first
+# parse of the real file happened inside the publish container at step 2, after
+# the render had already written it; an error there costs a whole run and reads
+# as a bash syntax error rather than as a template that is broken.
+rm -rf real && cp -R "$REPO/packages" real
+for dir in real/*/; do
+    dir="${dir%/}"
+    name="$(basename "$dir")"
+    if ! printed="$(cd "$dir" && makepkg --printsrcinfo 2>&1)"; then
+        printf '%s\n' "$printed" >&2
+        echo "!! FAIL: $name: makepkg cannot parse its PKGBUILD"
+        exit 1
+    fi
+    ok "$name: makepkg parses its PKGBUILD"
+    if printf '%s\n' "$printed" | sed -n 's/^[[:space:]]*arch = //p' | grep -qx "$ARCH"; then
+        ok "$name: declares the arch this repository serves ($ARCH)"
+    else
+        printf '%s\n' "$printed" | sed -n 's/^[[:space:]]*arch = /  arch: /p' >&2
+        echo "!! FAIL: $name: its PKGBUILD does not declare $ARCH"
+        exit 1
+    fi
+done
 
 # The handover, last: how many assertions ran. A reader that finds no such line
 # is reading a probe that never finished its cases.
