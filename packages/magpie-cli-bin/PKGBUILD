@@ -1,6 +1,6 @@
 # Maintainer: Eefung <eefung@tuta.io>
 pkgname=magpie-cli-bin
-pkgver=0.1.4322
+pkgver=0.1.4323
 pkgrel=1
 pkgdesc="Terminal build of magpie: pick every AI coding agent's model without GUI dependencies"
 arch=('x86_64')
@@ -15,7 +15,7 @@ options=('!strip' '!debug')
 source=("magpie-${pkgver}-LICENSE::https://raw.githubusercontent.com/yetone/magpie/v${pkgver}/LICENSE")
 source_x86_64=("magpie-cli-${pkgver}-amd64::https://github.com/yetone/magpie-releases/releases/download/v${pkgver}/magpie-cli-linux-amd64")
 sha256sums=('79d2c8444715d4bc453ec4f8a0aaf2051a4c1ee5ac08f5bd2e5848aef87c7572')
-sha256sums_x86_64=('8ee61760d8ed26c684e18b4ece718178a22174d477ae80dcb7eedeb381158680')
+sha256sums_x86_64=('41f2e814869a11e5dffa1a84d1dc358ea5393fff810d5771e51c5f3b196f85a3')
 
 package() {
     local _suffix
