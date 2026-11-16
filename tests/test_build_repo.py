@@ -206,6 +206,31 @@ class BuildRepoTest(unittest.TestCase):
                 f"pruning {fixtures.pkgfile_name('magpie-bin', version)}", result.stdout
             )
 
+    def test_a_window_that_cannot_compute_stops_the_run(self):
+        # The anchor is the 包文件 this run made, and the window refuses when
+        # the directory does not carry it under the package's name. That refusal
+        # used to die inside a process substitution -- the run printed the
+        # complaint, pruned nothing, and handed repo-add the stale tree.
+        self.seed("0.1.9")
+        self.stage("0.1.10")
+        liar = self.root / "build-check-lying.sh"
+        liar.write_text(
+            "#!/usr/bin/env bash\n"
+            'dir="$1"\n'
+            'source "${PKG_SH:?}"\n'
+            'artifact="$dir/other-bin-0.1.10-${PKG_REL}-${PKG_ARCH}$PKG_SUFFIX"\n'
+            ': > "$artifact"\n'
+            'echo "pkgname=magpie-bin"\n'
+            'echo "artifact=$artifact"\n'
+        )
+        liar.chmod(0o755)
+
+        result = self.run_script(build_check=liar)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not in", result.stderr)
+        self.assertFalse((self.out / "testrepo.db.tar.gz").exists())
+
     def test_a_failed_build_writes_no_database(self):
         self.stage("0.1.10")
         failing = self.root / "build-check-fails.sh"
