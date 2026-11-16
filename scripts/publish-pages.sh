@@ -26,6 +26,13 @@ dir="${1:?usage: publish-pages.sh <repo dir> <version> <remote>}"
 version="${2:?usage: publish-pages.sh <repo dir> <version> <remote>}"
 remote="${3:?usage: publish-pages.sh <repo dir> <version> <remote>}"
 
+# The commit this makes is signed by whatever the workflow's env declares the
+# bot to be; a hand-run must name one rather than this script inventing it.
+# An identity literal here would be a second source for the fact the job env
+# holds, and it is the same persona as the main-branch commit the workflow makes.
+GIT_NAME="${GIT_NAME:?publish-pages.sh needs GIT_NAME: the committer name}"
+GIT_EMAIL="${GIT_EMAIL:?publish-pages.sh needs GIT_EMAIL: the committer email}"
+
 [ -d "$dir" ] || { echo "no such tree: $dir" >&2; exit 1; }
 case "$version" in
     "" | *[!0-9.]*) echo "not a 版本: '$version'" >&2; exit 1 ;;
@@ -35,8 +42,8 @@ cd "$dir"
 
 # The branch is a deployment, not a history: init, commit once, force push.
 git init --quiet --initial-branch=gh-pages
-git config user.name "github-actions[bot]"
-git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+git config user.name "$GIT_NAME"
+git config user.email "$GIT_EMAIL"
 touch .nojekyll
 git add --all
 git commit --quiet -m "build(gh-pages): magpie $version"

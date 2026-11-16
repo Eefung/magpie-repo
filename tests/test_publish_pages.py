@@ -15,10 +15,12 @@ difference. What a publish run still proves is the token URL and Pages itself.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -27,6 +29,24 @@ SCRIPT = REPO / "scripts" / "publish-pages.sh"
 sys.path.insert(0, str(REPO / "tests"))
 
 import fixtures  # noqa: E402  (the one spelling of a 包文件's name in the test tree)
+
+
+@dataclass(frozen=True)
+class GitIdentity:
+    """The bot the workflow's env declares, so the test can feed the script it.
+
+    Mirrors `install_block.Served` in test_release.py: the script is held to
+    a value it was *given*, not to today's literal.
+    """
+
+    name: str
+    email: str
+
+    def env(self) -> dict[str, str]:
+        return {"GIT_NAME": self.name, "GIT_EMAIL": self.email}
+
+
+GIT = GitIdentity(name="github-actions[bot]", email="41898282+github-actions[bot]@users.noreply.github.com")
 
 # The tree this publishes is served as uploaded, so the name is only a name --
 # but it is still a 包文件's name, and the test tree spells those one way.
@@ -60,12 +80,19 @@ class PublishPagesTest(unittest.TestCase):
             (path / "x86_64" / file).touch()
         return path
 
-    def publish(self, tree: Path, version: str) -> subprocess.CompletedProcess:
+    def publish(self, tree: Path, version: str,
+                env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+        full = dict(os.environ)
+        for key in GIT.env():
+            full.pop(key, None)
+        full.update(GIT.env())
+        full.update(env or {})
         return subprocess.run(
             ["bash", str(SCRIPT), str(tree), version, str(self.remote)],
             cwd=self.root,
             text=True,
             capture_output=True,
+            env=full,
         )
 
     def branch_files(self) -> list[str]:
@@ -106,6 +133,27 @@ class PublishPagesTest(unittest.TestCase):
 
         message = git("log", "-1", "--format=%s", "gh-pages", cwd=self.remote)
         self.assertEqual(message.stdout.strip(), "build(gh-pages): magpie 0.1.9")
+
+    def test_the_commit_is_signed_by_the_given_identity(self):
+        self.publish(self.tree("one", CURRENT), "0.1.9")
+
+        author = git(
+            "log", "-1", "--format=%an <%ae>", "gh-pages", cwd=self.remote
+        )
+        self.assertEqual(
+            author.stdout.strip(), f"{GIT.name} <{GIT.email}>"
+        )
+
+    def test_the_identity_is_required(self):
+        # A hand-run that forgets the env must fail rather than commit as
+        # whatever git's local defaults happen to be.
+        for key in ("GIT_NAME", "GIT_EMAIL"):
+            with self.subTest(key=key):
+                result = self.publish(
+                    self.tree(f"req_{key}", CURRENT), "0.1.9", env={key: ""}
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(key, result.stderr)
 
     def test_a_tree_that_is_not_there_is_refused(self):
         result = self.publish(self.root / "absent", "0.1.9")

@@ -505,6 +505,51 @@ class ArchTableTest(unittest.TestCase):
         self.assertEqual(set(bump.ARCHES), {self.served()})
 
 
+class GitIdentityTest(unittest.TestCase):
+    """The bot both commits sign as is declared once, and both consume it.
+
+    The two commits this workflow makes -- the gh-pages squash in
+    scripts/publish-pages.sh and the main-branch PKGBUILD commit -- used to
+    spell the committer verbatim in their own files, and nothing held the two
+    copies together: renaming the bot in one place shipped two different
+    committers. The env declares it once; this holds the step and the script
+    to the same source, the way ServedIdentityTest does for the served facts.
+    """
+
+    def name(self) -> str:
+        return workflow.env()["GIT_NAME"]
+
+    def email(self) -> str:
+        return workflow.env()["GIT_EMAIL"]
+
+    def test_both_commits_sign_as_the_declared_identity(self):
+        text = self.text()
+
+        # The main-branch commit step reads the env, not its own literal: a
+        # second spelling no test could compare against would be a second
+        # source for the fact the env holds.
+        self.assertIn('git config user.name "$GIT_NAME"', text)
+        self.assertIn('git config user.email "$GIT_EMAIL"', text)
+        # Each identity literal appears only in its env declaration. The name
+        # is also a substring of the email, so the email's are counted from
+        # their full `GIT_NAME:` / `GIT_EMAIL:` lines, not bare substrings.
+        self.assertEqual(text.count(f"GIT_NAME: {self.name()}"), 1)
+        self.assertEqual(text.count(f"GIT_EMAIL: {self.email()}"), 1)
+
+    def test_publish_pages_consumes_the_same_identity(self):
+        # The script signs the gh-pages squash as the same env. Holding it to
+        # the declared values is what stops it printing a second literal the
+        # step's guard would not see.
+        script = (REPO / "scripts" / "publish-pages.sh").read_text()
+        for literal in (self.name(), self.email()):
+            self.assertNotIn(f'"{literal}"', script)
+        self.assertIn("$GIT_NAME", script)
+        self.assertIn("$GIT_EMAIL", script)
+
+    def text(self) -> str:
+        return workflow.text()
+
+
 class PackageFilePatternTest(unittest.TestCase):
     """What counts as a 包文件 is one rule, and it lives in pkg.sh.
 

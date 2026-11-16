@@ -71,6 +71,14 @@ jobs:
       # of them `cat` -- while `packages=` existed precisely so that a path
       # would not be spelled twice.
       UP: /tmp/up
+      # The bot both commits are signed by: the gh-pages squash that
+      # scripts/publish-pages.sh makes and the main-branch PKGBUILD commit the
+      # last step makes. The identity used to be spelled verbatim in both --
+      # the script pinned to its own copy, the step to another -- and nothing
+      # held the two together, so renaming the bot in one place shipped two
+      # different committers. Declared here, once; both consumers reference it.
+      GIT_NAME: github-actions[bot]
+      GIT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
     steps:
       - uses: actions/checkout@v7
 
@@ -222,8 +230,10 @@ jobs:
         if: steps.upstream.outputs.bump == '1'
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # The step's own copy of the identity would be a second source for a
+          # fact the job env already holds; both commits sign as it instead.
+          git config user.name "$GIT_NAME"
+          git config user.email "$GIT_EMAIL"
           git add packages
           if git diff --cached --quiet; then
             echo "PKGBUILDs are already at $ver, nothing to commit"
