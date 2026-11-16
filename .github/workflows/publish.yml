@@ -207,7 +207,13 @@ jobs:
       # pkgver, so the next run retries. With the commit first, a failed
       # release would leave main looking current and the release would never
       # exist -- no later run would try again.
-      - name: Publish the GitHub release
+      #
+      # Which of the two shapes the step below uses is a value it is handed, not
+      # the exit status of a lookup: `gh release view` failed the same way for
+      # "no such Release" and "the API said no", so a transient failure took the
+      # create path and reported `already_exists`.
+      - name: Does this version already have a Release?
+        id: release_state
         if: steps.upstream.outputs.bump == '1'
         env:
           VER: ${{ steps.render.outputs.ver }}
@@ -215,16 +221,37 @@ jobs:
           set -euo pipefail
           # shellcheck source=scripts/lib/pkg.sh
           source scripts/lib/pkg.sh
-          # What the release is made of -- this version's 包文件 only, the
+          # The answer is a value GitHub gives (an HTTP status), read through
+          # the one reader like every other handover.
+          ./scripts/release-state.sh "$VER" "$GITHUB_REPOSITORY" > /tmp/release-state.txt
+          cat /tmp/release-state.txt
+          release="$(line_field release /tmp/release-state.txt)"
+          printf 'release=%s\n' \
+            "$release" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the GitHub release
+        if: steps.upstream.outputs.bump == '1'
+        env:
+          VER: ${{ steps.render.outputs.ver }}
+          STATE: ${{ steps.release_state.outputs.release }}
+        run: |
+          set -euo pipefail
+          # shellcheck source=scripts/lib/pkg.sh
+          source scripts/lib/pkg.sh
+          # What the release is made of -- this build's 包文件 only, the
           # SHA256SUMS built from exactly those, the notes whose install lines
           # come from the 包清单 -- is scripts/release.sh's answer. gh is what is
           # left here, and it is the only part a publish run can prove.
+          case "$STATE" in
+            present | absent) ;;
+            *) echo "the Release lookup answered '$STATE', not present or absent" >&2; exit 1 ;;
+          esac
           packages="$(line_field packages "$UP.txt")"
           ./scripts/release.sh "$TREE/$ARCH" "$VER" "$packages" /tmp/rel \
             > /tmp/release.txt
           cat /tmp/release.txt
           mapfile -t assets < "$(line_field assets /tmp/release.txt)"
-          if gh release view "v$VER" >/dev/null 2>&1; then
+          if [ "$STATE" = present ]; then
             # The tag exists -- but a rebuild of the same 版本 lands here with
             # different bytes, and the 软件源 now carries them (the entry check
             # compares the two). Leaving the old assets would describe one

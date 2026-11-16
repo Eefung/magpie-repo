@@ -36,6 +36,7 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 | `test_build_check.py` | `build-check.sh`：一次构建的生命周期，`BUILD_AS` 的两个 adapter，交回来的目录里有什么 |
 | `test_build_repo.py` | `build-repo.sh`：保留窗口、db 条目、退役包 |
 | `test_release.py` | `release.sh`：这一版的资产、校验和、发布说明 |
+| `test_release_state.py` | `release-state.sh`：Release 有没有、唯一的那条 gh 查询、查失败不等于没有 |
 | `test_publish_pages.py` | `publish-pages.sh`：一棵树变成 gh-pages 上的一个 squash 提交（裸库当 remote） |
 | `test_upstream.py` | `upstream.sh`：这次要不要发布、发哪个版本 |
 | `test_frozen.py` | 测试侧的冻结行读者与 `line_field` 同规则 |

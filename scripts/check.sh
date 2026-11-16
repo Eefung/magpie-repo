@@ -193,7 +193,10 @@ cat <<'EOF'
   branch carrying a signature and a stray file, so what stays unproven about it
   is the real previous tree it fetches, not the pattern it carries. The
   Release's rules are scripts/release.sh's, driven offline by
-  tests/test_release.py.
+  tests/test_release.py. Which of create/update to run is
+  scripts/release-state.sh's answer, driven offline against a stub `gh` by
+  tests/test_release_state.py -- what a publish run still proves there is that
+  the real gh answers the status line this script reads.
 EOF
 
 if [ "$failures" -ne 0 ]; then
