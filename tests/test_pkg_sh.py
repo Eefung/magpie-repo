@@ -143,15 +143,27 @@ class RepoDirectory(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.out = Path(self._tmp.name)
+        self.touched: list[str] = []
 
     def touch(self, *names: str) -> None:
         for name in names:
             (self.out / name).touch()
+            self.touched.append(name)
 
     def answer(self, script: str) -> list[str]:
         result = call(script)
         self.assertEqual(result.returncode, 0, result.stderr)
         return [Path(line).name for line in result.stdout.splitlines()]
+
+    def pruned(self, keep: int, anchor: str | None = None) -> list[str]:
+        """The files the 保留窗口 drops, with the window ending at `anchor`.
+
+        Every test below lays its 包文件 down oldest first, so the default --
+        the last one put down -- is the build a normal run would have just made.
+        """
+        anchor = anchor or self.touched[-1]
+        path = shlex.quote(str(self.out / anchor))
+        return self.answer(f"pkgfiles_prune {self.out_arg()} magpie-bin {keep} {path}")
 
     def out_arg(self) -> str:
         return shlex.quote(str(self.out))
@@ -162,10 +174,10 @@ def build(version: str, rel: str = fixtures.REL, arch: str = fixtures.ARCH) -> s
 
 
 class PkgfilesPruneTest(RepoDirectory):
-    """The retention window: which files fall out, given KEEP."""
+    """The retention window: which files fall out, given KEEP and a build."""
 
-    def prune(self, keep: int) -> list[str]:
-        return self.answer(f"pkgfiles_prune {self.out_arg()} magpie-bin {keep}")
+    def prune(self, keep: int, anchor: str | None = None) -> list[str]:
+        return self.pruned(keep, anchor)
 
     def test_drops_the_oldest_once_the_window_is_full(self):
         self.touch(build("0.1.9"), build("0.1.10"), build("0.1.1000"))
@@ -207,7 +219,36 @@ class PkgfilesPruneTest(RepoDirectory):
         self.assertEqual(self.prune(2), [build("0.1.999")])
 
     def test_a_package_with_no_builds_prunes_nothing(self):
-        self.assertEqual(self.prune(2), [])
+        # The first publish of a package: nothing in the directory, so there is
+        # nothing to anchor on either and the answer is empty rather than an
+        # error about a build that never landed.
+        self.assertEqual(self.prune(2, anchor=build("0.1.9")), [])
+
+    def test_the_window_ends_at_the_build_this_run_made(self):
+        # A pinned 版本 (`WANTED`) is the oldest file in the directory. The
+        # window used to count back from the maximum, so it deleted the build
+        # the run had just made and the release step found nothing to publish,
+        # after gh-pages had already been force-pushed.
+        self.touch(build("0.1.8"), build("0.1.9"), build("0.1.10"))
+        self.assertEqual(
+            self.prune(2, anchor=build("0.1.8")), [build("0.1.9"), build("0.1.10")]
+        )
+
+    def test_anything_above_the_build_stops_being_served(self):
+        # The database names the build this run published; a version above it is
+        # no longer what a client is offered, so it does not get to hold a slot
+        # in the window either.
+        self.touch(build("0.1.9"), build("0.1.10"))
+        self.assertEqual(self.prune(2, anchor=build("0.1.9")), [build("0.1.10")])
+
+    def test_a_build_the_directory_does_not_carry_is_refused(self):
+        # The anchor is the caller's claim about what it just built. If the file
+        # is not there, the claim is wrong -- not a window to compute.
+        self.touch(build("0.1.9"))
+        missing = shlex.quote(str(self.out / build("0.1.8")))
+        result = call(f"pkgfiles_prune {self.out_arg()} magpie-bin 2 {missing}")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not in", result.stderr)
 
 
 class PkgfilesCurrentTest(RepoDirectory):
@@ -222,7 +263,7 @@ class PkgfilesCurrentTest(RepoDirectory):
 
     def test_the_window_and_the_database_read_one_order(self):
         self.touch(build("0.1.9"), build("0.1.10"), build("0.1.1000"))
-        pruned = self.answer(f"pkgfiles_prune {self.out_arg()} magpie-bin 2")
+        pruned = self.pruned(2)
         self.assertNotIn(self.current()[0], pruned)
 
     def test_every_arch_of_the_newest_version_is_current(self):

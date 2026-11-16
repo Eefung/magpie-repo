@@ -66,12 +66,15 @@ build_one() {
 
 # One walk over the package directories: build each, then name the package once.
 # The window and the database below read this list instead of parsing the same
-# PKGBUILD a second and third time.
+# PKGBUILD a second and third time. `anchors` is what this run made: the window
+# ends at that build, not at the greatest version in the directory.
 declare -a pkgnames=()
+declare -A anchors=()
 for dir in "$@"; do
     build_one "$dir"
     mv -f "$built" "$out/"
     pkgnames+=("$built_name")
+    anchors["$built_name"]="$out/$(basename "$built")"
 done
 
 # --- retire the packages that left the 包清单 --------------------------------
@@ -99,17 +102,21 @@ while IFS= read -r carried_name; do
     esac
 done <<<"$carried"
 
-# --- keep only the newest KEEP builds of every package ------------------------
+# --- keep only the newest KEEP 版本, counted back from the build just made -----
+# The window ends at this run's build. Counting back from the directory's
+# maximum instead deleted the build a run had just made whenever the versions
+# did not climb -- the one case `WANTED` produces, and the reason a pinned
+# rollback could never publish.
 prune() {
-    local pkgname="$1" file
+    local pkgname="$1" anchor="$2" file
     while IFS= read -r file; do
         echo "pruning $(basename "$file")"
         rm -f "$file"
-    done < <(pkgfiles_prune "$out" "$pkgname" "$KEEP")
+    done < <(pkgfiles_prune "$out" "$pkgname" "$KEEP" "$anchor")
 }
 
 for pkgname in "${pkgnames[@]}"; do
-    prune "$pkgname"
+    prune "$pkgname" "${anchors[$pkgname]}"
 done
 
 # --- rebuild the database from what is on disk -------------------------------

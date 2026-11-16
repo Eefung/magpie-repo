@@ -182,6 +182,30 @@ class BuildRepoTest(unittest.TestCase):
             self.database_entries(), [fixtures.pkgfile_name("magpie-bin", "0.1.10")]
         )
 
+    def test_a_pinned_older_version_is_the_one_that_ships(self):
+        # `WANTED` pins a 版本 and upstream.sh publishes it without a
+        # comparison, so this is the rollback path. The window used to count
+        # back from the directory's maximum and deleted the build the run had
+        # just made: the database named 0.1.10 and release.sh -- which asks for
+        # the pinned 版本's files -- found nothing, after the push had landed.
+        self.seed("0.1.9")
+        self.seed("0.1.10")
+        self.stage("0.1.8")
+
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.database_entries(), [fixtures.pkgfile_name("magpie-bin", "0.1.8")]
+        )
+        self.assertEqual(
+            self.files_on_disk(), [fixtures.pkgfile_name("magpie-bin", "0.1.8")]
+        )
+        for version in ("0.1.9", "0.1.10"):
+            self.assertIn(
+                f"pruning {fixtures.pkgfile_name('magpie-bin', version)}", result.stdout
+            )
+
     def test_a_failed_build_writes_no_database(self):
         self.stage("0.1.10")
         failing = self.root / "build-check-fails.sh"

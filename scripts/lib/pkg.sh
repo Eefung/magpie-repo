@@ -271,27 +271,56 @@ pkgfiles_packages() {
     done < <(pkgfiles_all "$out")
 }
 
-# pkgfiles_prune <repo dir> <pkgname> <keep> -- the files the 保留窗口 drops,
-# oldest first: every file of a 版本 that falls out of the newest <keep> 版本.
+# pkgfiles_prune <repo dir> <pkgname> <keep> <anchor 包文件> -- the files the
+# 保留窗口 drops, oldest first: every 版本 outside the window that ends at the
+# build this run published.
 #
 # GLOSSARY defines the window as 每个包同时保留的版本数, so it counts 版本 and not
 # files: the same 版本 built for two arches is one version, and both files stay
 # or go together. Counting files kept a single version in a two-arch repository
-# and dropped one arch of the older one. The decision lives here, next to the
-# ordering it depends on.
+# and dropped one arch of the older one.
+#
+# The window ends at <anchor> -- the 包文件 this run built and moved here -- and
+# not at the greatest 版本 in the directory. The two are the same answer while
+# versions only climb, and they are not the same answer when a human pins one
+# (`WANTED`): the pinned 版本 is the oldest file in the directory, so a window
+# that started at the maximum deleted the very build the run had just made, and
+# the release step then found nothing to publish -- after gh-pages had already
+# been force-pushed. Anything above the anchor goes too: it is no longer what
+# the database names. The decision lives here, next to the order it reads.
 pkgfiles_prune() {
-    local out="$1" pkgname="$2" keep="$3" file version
+    local out="$1" pkgname="$2" keep="$3" anchor="$4" file version current
     local -a versions=()
     local -A dropped=()
+    local index current_index="" first
+
     while IFS= read -r file; do
         version="$(pkgfile_version "$pkgname" "$file")"
         [ "${#versions[@]}" -gt 0 ] && [ "${versions[${#versions[@]}-1]}" = "$version" ] \
             || versions+=("$version")
     done < <(pkgfiles "$out" "$pkgname")
-    [ "${#versions[@]}" -gt "$keep" ] || return 0
-    for version in "${versions[@]:0:${#versions[@]}-keep}"; do
-        dropped["$version"]=1
+    # An empty directory has nothing to prune and nothing to anchor on: this is
+    # the first publish of a package.
+    [ "${#versions[@]}" -gt 0 ] || return 0
+    current="$(pkgfile_version "$pkgname" "$anchor")"
+    for index in "${!versions[@]}"; do
+        if [ "${versions[$index]}" = "$current" ]; then
+            current_index="$index"
+            break
+        fi
     done
+    if [ -z "$current_index" ]; then
+        echo "the build this run made is not in $out: ${anchor##*/}" >&2
+        return 1
+    fi
+    first=$((current_index - keep + 1))
+    [ "$first" -ge 0 ] || first=0
+    for index in "${!versions[@]}"; do
+        if [ "$index" -lt "$first" ] || [ "$index" -gt "$current_index" ]; then
+            dropped["${versions[$index]}"]=1
+        fi
+    done
+    [ "${#dropped[@]}" -gt 0 ] || return 0
     while IFS= read -r file; do
         version="$(pkgfile_version "$pkgname" "$file")"
         if [ -n "${dropped["$version"]:-}" ]; then
