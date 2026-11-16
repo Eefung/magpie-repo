@@ -207,6 +207,20 @@ pkgfile_version() {
     printf '%s\n' "${name#"$pkgname"-}" | cut -d- -f1
 }
 
+# pkgfile_evr <pkgname> <包文件> -- `<pkgver>-<pkgrel>`, the build that file is.
+#
+# The name is `<pkgname>-<pkgver>-<pkgrel>-<arch><suffix>`, so peeling the
+# suffix, the arch and the pkgname off leaves the two fields makepkg decided
+# from the PKGBUILD. The database entry and the release both describe a build;
+# `pkgfile_version` answers the other question (which 版本, i.e. which upstream
+# release), and the window counts those.
+pkgfile_evr() {
+    local pkgname="$1" name="${2##*/}" base
+    base="${name%"$(pkgfile_suffix)"}"
+    base="${base%-*}"
+    printf '%s\n' "${base#"$pkgname"-}"
+}
+
 # pkgfile_pkgname <包文件> -- the pkgname in that file's name.
 #
 # The inverse of the naming rule, for the question pkg.sh did not answer: which
@@ -286,18 +300,23 @@ pkgfiles_prune() {
 }
 
 # pkgfiles_current <repo dir> <pkgname> -- the files that belong in the database:
-# every arch of the newest 版本, read off the tail of the same order the window
-# reads its head from. Today's single arch makes that one file; a second arch
-# gets an entry of its own instead of being left out of the db.
+# every arch of the newest build, read off the tail of the same order the window
+# reads its head from.
+#
+# A build is `<pkgver>-<pkgrel>`, not `<pkgver>`: rebuilding 0.1.9 as pkgrel 2
+# leaves both files on disk (the window keeps 版本, and they are one 版本), and
+# handing repo-add both of them would enter one pkgname twice. The database
+# lists the build a client gets today, so it takes the newest `<pkgver>-<pkgrel>`
+# and one file per arch.
 pkgfiles_current() {
-    local out="$1" pkgname="$2" file version newest
+    local out="$1" pkgname="$2" file build newest
     local -a files=()
     mapfile -t files < <(pkgfiles "$out" "$pkgname")
     [ "${#files[@]}" -gt 0 ] || return 0
-    newest="$(pkgfile_version "$pkgname" "${files[${#files[@]}-1]}")"
+    newest="$(pkgfile_evr "$pkgname" "${files[${#files[@]}-1]}")"
     for file in "${files[@]}"; do
-        version="$(pkgfile_version "$pkgname" "$file")"
-        if [ "$version" = "$newest" ]; then
+        build="$(pkgfile_evr "$pkgname" "$file")"
+        if [ "$build" = "$newest" ]; then
             printf '%s\n' "$file"
         fi
     done

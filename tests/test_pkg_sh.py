@@ -228,12 +228,20 @@ class PkgfilesCurrentTest(RepoDirectory):
     def test_every_arch_of_the_newest_version_is_current(self):
         # One database entry per arch. With one arch built that is one file,
         # which is what build-repo.sh hands repo-add today; the rule behind it
-        # is "the newest 版本", not "the last file in the sort order".
+        # is "the newest build", not "the last file in the sort order".
         self.touch(build("0.1.9"), build("0.1.10"), build("0.1.10", arch="aarch64"))
         self.assertEqual(
             sorted(self.current()),
             sorted([build("0.1.10"), build("0.1.10", arch="aarch64")]),
         )
+
+    def test_a_rebuild_is_the_database_entry_not_the_build_it_replaces(self):
+        # pkgrel 2 of the same 版本. The window keeps both files -- they are one
+        # 版本 -- and handing repo-add both would enter magpie-bin twice, so the
+        # entry takes the newest <pkgver>-<pkgrel>. This is the path the entry
+        # check now opens: a rebuild is a publish, and it must land as one build.
+        self.touch(build("0.1.9"), build("0.1.9", rel="2"))
+        self.assertEqual(self.current(), [build("0.1.9", rel="2")])
 
     def test_nothing_on_disk_is_empty_not_an_error(self):
         self.assertEqual(self.current(), [])
@@ -280,9 +288,19 @@ class PkgfileNamingTest(RepoDirectory):
     def pkgname(self, name: str) -> subprocess.CompletedProcess:
         return call(f"pkgfile_pkgname {shlex.quote(str(self.out / name))}")
 
+    def evr(self, name: str) -> subprocess.CompletedProcess:
+        return call(f"pkgfile_evr magpie-bin {shlex.quote(str(self.out / name))}")
+
     def test_the_pattern_is_the_suffix_with_a_star(self):
         self.assertEqual(self.suffix(), ".pkg.tar.zst")
         self.assertEqual(self.pattern(), "*.pkg.tar.zst")
+
+    def test_the_evr_is_the_pkgver_and_the_pkgrel(self):
+        # What the database entry and the release describe, as opposed to the
+        # 版本 the window counts: two builds of one 版本 differ here.
+        self.assertEqual(
+            self.evr("magpie-bin-0.1.1000-2-aarch64.pkg.tar.zst").stdout, "0.1.1000-2\n"
+        )
 
     def test_a_dash_in_the_pkgname_survives_the_peel(self):
         # The three fields makepkg appends come off the right; magpie-cli-bin is
