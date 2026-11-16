@@ -155,6 +155,23 @@ def output_reads(source: str | None = None) -> set[str]:
     }
 
 
+SCHEDULE_RE = re.compile(r"^\s+- cron:\s*(.+?)\s*$", re.M)
+
+
+def schedule(source: str | None = None) -> str:
+    """The ``cron:`` this file declares, as the five fields crontab reads.
+
+    The README quotes the time the run happens, so the time has a producer and
+    the sentence can be held to it (tests/test_docs.py). Exactly one: a second
+    cron line would be a second answer to "when does this run", and the
+    schedule is the one fact in this file a reader plans around.
+    """
+    found = [value.strip("'\"") for value in SCHEDULE_RE.findall(text() if source is None else source)]
+    if len(found) != 1:
+        raise AssertionError(f"{WORKFLOW} declares {len(found)} cron lines: {found}")
+    return found[0]
+
+
 def unparsed_output_writes(source: str | None = None) -> list[str]:
     """Writes to the output carrier that ``output_keys`` cannot see.
 
