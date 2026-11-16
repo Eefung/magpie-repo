@@ -34,10 +34,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
 import sys
+import tarfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -85,6 +87,27 @@ ARCHES = {
 
 
 @dataclass(frozen=True)
+class Served:
+    """Where this 软件源 is served: the three names the workflow declares.
+
+    The entry check compares the tree against the database pacman reads, so it
+    needs the URL, the section (which is the database's file name) and the
+    served arch directory. They travel together -- the block a user pastes is
+    the same three -- and a layout without them (a hand run that declares
+    nothing) simply compares against 上游 alone.
+    """
+
+    url: str
+    section: str
+    arch: str
+
+    @property
+    def database(self) -> str:
+        """The URL of the database: what pacman reads, so what was published."""
+        return f"{self.url}/{self.arch}/{self.section}.db.tar.gz"
+
+
+@dataclass(frozen=True)
 class Layout:
     """What the renderer needs to know about this repository, handed in.
 
@@ -95,6 +118,10 @@ class Layout:
     was the fifth global render() and read_template both read. The maintainer is
     read from the environment in main(), when the layout is built -- not when
     this file is imported.
+
+    `served` is Optional because it is not a fact about the tree: a hand run
+    that declares no address still answers "is this tree 落后", it just cannot
+    answer "does what is served match it".
     """
 
     templates: Path
@@ -103,6 +130,7 @@ class Layout:
     arches: Mapping[str, str]
     maintainer: str
     root: Path
+    served: Served | None = None
 
 
 def layout_for(
@@ -113,6 +141,7 @@ def layout_for(
     maintainer: str = DEFAULT_MAINTAINER,
     inventory: Mapping[str, str] | None = None,
     arches: Mapping[str, str] | None = None,
+    served: Served | None = None,
 ) -> Layout:
     """The one way a Layout is built, for production and for tests alike.
 
@@ -128,6 +157,7 @@ def layout_for(
         arches=dict(ARCHES if arches is None else arches),
         maintainer=maintainer,
         root=root,
+        served=served,
     )
 
 
@@ -564,15 +594,102 @@ def render_pkgbuild(template: str, values: Mapping[str, str]) -> str:
     return rendered
 
 
-def packaged_versions(layout: Layout) -> dict[str, str]:
+def pkg_field(text: str, name: str) -> str | None:
+    """One field of a rendered PKGBUILD, read the way pkg.sh's `pkg_field` reads it.
+
+    First matching line wins, the value is its first token, and one matching
+    pair of quotes comes off -- the shape the renderer writes. One table of
+    shapes is fed to both readers (tests/test_pkg_sh.py), because two readers of
+    one field that disagree is a split nothing would notice.
+    """
+    prefix = f"{name}="
+    for line in text.splitlines():
+        if not line.startswith(prefix):
+            continue
+        rest = line[len(prefix):].split()
+        return rest[0].strip("'\"") if rest else ""
+    return None
+
+
+def packaged_evr(layout: Layout) -> dict[str, str]:
+    """What each package in this tree would publish: `<pkgver>-<pkgrel>`.
+
+    That pair is the version a 包文件's name carries and the one a database
+    entry states, so it is also the thing the 软件源 can be compared against.
+    Reading `pkgver` alone made a rebuild -- the same 上游 version, a new
+    pkgrel -- invisible: the render wrote it, every gate was green, and the
+    entry check reported that there was nothing to do.
+    """
     found = {}
     for pkg in layout.inventory:
         pkgbuild = layout.packages_dir / pkg / "PKGBUILD"
         if not pkgbuild.exists():
             continue
-        match = re.search(r"^pkgver=(\S+)", pkgbuild.read_text(), re.M)
-        if match:
-            found[pkg] = match.group(1).strip("'\"")
+        text = pkgbuild.read_text()
+        pkgver = pkg_field(text, "pkgver")
+        pkgrel = pkg_field(text, "pkgrel")
+        if pkgver and pkgrel:
+            found[pkg] = f"{pkgver}-{pkgrel}"
+    return found
+
+
+def pkgver_of(evr: str | None) -> str:
+    """The pkgver half of `<pkgver>-<pkgrel>`; blank when nothing is rendered."""
+    return "" if evr is None else evr.split("-", 1)[0]
+
+
+def served_evr(layout: Layout, *, fetch: Fetch = http_fetch) -> dict[str, str] | None:
+    """The version each package is served at, read from the database pacman reads.
+
+    None means "cannot be compared" -- either this layout declares no address
+    (a hand run), or the 软件源 could not be read. The caller logs both, and
+    neither may read as "nothing is published": a failed read that looked like
+    an empty repository would rebuild and republish on a day Pages had a bad
+    minute. A 404 is different, and is an empty map -- nothing published yet.
+    """
+    served = layout.served
+    if served is None:
+        return None
+    try:
+        body = fetch(served.database, missing_ok=True)
+    except (urllib.error.URLError, OSError) as exc:
+        log(f"warning: cannot read {served.database} ({exc}); comparing against 上游 alone")
+        return None
+    if body is None:
+        return {}
+    try:
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:*") as archive:
+            return _desc_versions(archive)
+    except tarfile.TarError as exc:
+        log(f"warning: {served.database} is not a database ({exc}); comparing against 上游 alone")
+        return None
+
+
+def _desc_versions(archive: tarfile.TarFile) -> dict[str, str]:
+    """{pkgname: <pkgver>-<pkgrel>} from the `desc` entries repo-add writes.
+
+    One entry per package, holding `%NAME%` and `%VERSION%` blocks. The
+    database lists only the current 版本 of each package, which is exactly the
+    question: what does a client get when it installs today.
+    """
+    found = {}
+    for member in archive.getmembers():
+        if not member.name.endswith("/desc"):
+            continue
+        handle = archive.extractfile(member)
+        if handle is None:
+            continue
+        name = version = ""
+        for block in handle.read().decode().split("\n\n"):
+            lines = block.splitlines()
+            if len(lines) < 2:
+                continue
+            if lines[0] == "%NAME%":
+                name = lines[1]
+            elif lines[0] == "%VERSION%":
+                version = lines[1]
+        if name and version:
+            found[name] = version
     return found
 
 
@@ -772,22 +889,46 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     # fails here rather than being reported as "upstream has no such asset".
     check_templates(layout)
     upstream = latest_version(fetch=fetch)
-    packaged = packaged_versions(layout)
+    packaged = packaged_evr(layout)
     log(f"upstream={upstream}")
-    for pkg, ver in sorted(packaged.items()):
-        log(f"packaged {pkg}={ver}")
-
+    for pkg, evr in sorted(packaged.items()):
+        log(f"packaged {pkg}={evr}")
     if not packaged:
         log("warning: no rendered PKGBUILD yet")
-    # Walk the inventory, not what happens to be on disk: a package whose
-    # PKGBUILD was never rendered, or was lost, is behind just as much as a
-    # stale one. Reading `packaged` alone would report the tree current
-    # forever.
-    behind = sorted(pkg for pkg in layout.inventory if packaged.get(pkg) != upstream)
+    served = served_evr(layout, fetch=fetch)
+    if served is not None:
+        for pkg, evr in sorted(served.items()):
+            log(f"served {pkg}={evr}")
+    # Two reasons to publish, one answer. 上游 moved past the 版本 this tree
+    # renders, so the render has something new to do; or the tree's
+    # `<pkgver>-<pkgrel>` is not what the 软件源 serves, so what is committed
+    # never reached a client -- a rebuild, a run that died between the push and
+    # the commit, or a first publish. Walking the inventory rather than what is
+    # on disk keeps a package whose PKGBUILD was never rendered 落后.
+    behind = sorted(
+        pkg
+        for pkg in layout.inventory
+        if pkgver_of(packaged.get(pkg)) != upstream
+        or (served is not None and served.get(pkg) != packaged.get(pkg))
+    )
     log(f"bump={'1' if behind else '0'}")
     if behind:
         log("behind=" + " ".join(behind))
     return 0
+
+
+def served_from_env() -> Served | None:
+    """The 软件源's address, when this run declares one.
+
+    The workflow declares all three for every publish job; a hand run that
+    leaves them out gets the 上游-only comparison instead of a wrong URL.
+    """
+    url = os.environ.get("PAGES_URL")
+    section = os.environ.get("REPO_NAME")
+    arch = os.environ.get("ARCH")
+    if not (url and section and arch):
+        return None
+    return Served(url=url, section=section, arch=arch)
 
 
 def main(
@@ -817,7 +958,10 @@ def main(
 
     try:
         if layout is None:
-            layout = layout_for(maintainer=os.environ.get("MAINTAINER", DEFAULT_MAINTAINER))
+            layout = layout_for(
+                maintainer=os.environ.get("MAINTAINER", DEFAULT_MAINTAINER),
+                served=served_from_env(),
+            )
         if args.packages:
             for directory, pkg in package_entries(layout):
                 log(f"package {directory} {pkg}")

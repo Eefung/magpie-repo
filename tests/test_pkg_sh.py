@@ -759,23 +759,27 @@ class PayloadTest(unittest.TestCase):
 
 
 class PkgverReadersTest(unittest.TestCase):
-    """One shape for pkgver, read from both runtimes.
+    """One shape for the 版本, read from both runtimes.
 
-    `pkg_field` is the shell's reader and `bump.packaged_versions` is python's:
-    they answer the same question about the same file in two languages, because
-    the build container has no python3. Their agreement used to live in a
-    comment under a shell-only test, and their leniency had already drifted --
-    so one table is fed to both and both answers are compared.
+    `pkg_field` is the shell's reader and `bump.packaged_evr` is python's: they
+    answer the same question about the same file in two languages, because the
+    build container has no python3. Their agreement used to live in a comment
+    under a shell-only test, and their leniency had already drifted -- so one
+    table is fed to both and both answers are compared. The answer is the pair
+    `<pkgver>-<pkgrel>`, which is what the entry check compares against the
+    软件源, so both halves are in the table.
     """
 
     SHAPES = [
-        "pkgver=0.1.4147\n",
-        "pkgver='0.1.4147'\n",
-        'pkgver="0.1.4147"\n',
+        "pkgver=0.1.4147\npkgrel=1\n",
+        "pkgver='0.1.4147'\npkgrel=1\n",
+        'pkgver="0.1.4147"\npkgrel=1\n',
         # The first line wins on both sides.
-        "pkgver=0.1.1\npkgver=0.1.2\n",
+        "pkgver=0.1.1\npkgver=0.1.2\npkgrel=1\n",
         # A hand edit that leaves a trailing space used to split them.
-        "pkgver=0.1.4147   \n",
+        "pkgver=0.1.4147   \npkgrel=1\n",
+        # The other half is read by the same rule, and a rebuild changes it.
+        "pkgver=0.1.4147\npkgrel='2'\n",
     ]
 
     def setUp(self):
@@ -791,13 +795,19 @@ class PkgverReadersTest(unittest.TestCase):
                 pkgbuild.parent.mkdir(parents=True, exist_ok=True)
                 pkgbuild.write_text(shape)
 
-                from_python = bump.packaged_versions(bump.layout_for(self.root))[pkg]
-                from_shell = call(f"pkg_field {shlex.quote(str(pkgbuild))} pkgver")
+                from_python = bump.packaged_evr(bump.layout_for(self.root))[pkg]
+                pkgver = call(f"pkg_field {shlex.quote(str(pkgbuild))} pkgver")
+                pkgrel = call(f"pkg_field {shlex.quote(str(pkgbuild))} pkgrel")
 
-                self.assertEqual(from_shell.returncode, 0, from_shell.stderr)
-                # Exact, not stripped: a trailing space is one of the shapes,
-                # and stripping stdout here would hide the split it describes.
-                self.assertEqual(from_shell.stdout, from_python + "\n")
+                self.assertEqual(pkgver.returncode, 0, pkgver.stderr)
+                self.assertEqual(pkgrel.returncode, 0, pkgrel.stderr)
+                # Exact, not stripped beyond the line's own newline: a trailing
+                # space is one of the shapes, and stripping it here would hide
+                # the split the table describes.
+                self.assertEqual(
+                    from_python, pkgver.stdout.rstrip("\n") + "-" + pkgrel.stdout.rstrip("\n")
+                )
+
 
 
 if __name__ == "__main__":

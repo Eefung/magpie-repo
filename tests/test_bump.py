@@ -12,14 +12,17 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import shutil
 import sys
+import tarfile
 import tempfile
 import unittest
 import urllib.error
 from email.message import Message
 from pathlib import Path
 from typing import Mapping, Sequence
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
@@ -105,14 +108,15 @@ def sums_body(entries: dict[str, str]) -> bytes:
     return "".join(f"{digest}  {name}\n" for name, digest in entries.items()).encode()
 
 
-def staged_root(root: Path, versions: dict[str, str]) -> Path:
+def staged_root(root: Path, versions: dict[str, str], *, templates: Path | None = None) -> Path:
     """A fake checkout whose packages/<pkg>/PKGBUILD are their templates' renders.
 
     Rendered, not hand-written: `--check` now holds every committed PKGBUILD to
     its template, so a three-line stub would be reported as drift.
     """
+    templates = REPO / "templates" if templates is None else templates
     for pkg, version in versions.items():
-        template = (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
+        template = (templates / f"{pkg}.PKGBUILD.in").read_text()
         supplied = {
             "pkgver": version,
             "maintainer": "Test Maintainer <test@example.invalid>",
@@ -137,13 +141,16 @@ def layout_at(
     templates: Path | None = None,
     inventory: dict[str, str] | None = None,
     arches: dict[str, str] | None = None,
+    served: bump.Served | None = None,
 ) -> bump.Layout:
     """A layout pointing the renderer at a temporary tree.
 
     Only the output directory moves: the templates and the inventory are the
     repository's own unless a test overrides them. This goes through the
     production constructor now, so the defaults under test are the ones that
-    ship.
+    ship. `served` is None unless a test is about the comparison against what
+    the 软件源 carries, which is also what a hand run without the three names
+    gets.
     """
     return bump.layout_for(
         REPO,
@@ -152,7 +159,28 @@ def layout_at(
         inventory=inventory,
         arches=arches,
         maintainer="Test Maintainer <test@example.invalid>",
+        served=served,
     )
+
+
+def served_at(url: str = "https://example.invalid/repo") -> bump.Served:
+    """The address a test's fake 软件源 is served at."""
+    return bump.Served(url=url, section="magpie", arch="x86_64")
+
+
+def database_body(entries: dict[str, str]) -> bytes:
+    """A repo-add database: one `<pkgname>-<evr>/desc` member per package."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for name, evr in entries.items():
+            payload = (
+                f"%FILENAME%\n{name}-{evr}-x86_64.pkg.tar.zst\n\n"
+                f"%NAME%\n{name}\n\n%VERSION%\n{evr}\n"
+            ).encode()
+            info = tarfile.TarInfo(f"{name}-{evr}/desc")
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+    return buffer.getvalue()
 
 
 class LayoutForTest(unittest.TestCase):
@@ -451,19 +479,28 @@ class RenderTest(unittest.TestCase):
         self.assertIn(f"ver={self.VERSION}", buffer.getvalue().splitlines())
 
 
-class PackagedVersionsTest(unittest.TestCase):
-    def test_reads_pkgver_from_each_package_dir(self):
+class PackagedEvrTest(unittest.TestCase):
+    def test_reads_the_pair_a_package_file_is_named_after(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = staged_root(Path(tmp), {"magpie-bin": "0.1.2", "magpie-cli-bin": "0.1.1"})
             self.assertEqual(
-                bump.packaged_versions(layout_at(root)),
-                {"magpie-bin": "0.1.2", "magpie-cli-bin": "0.1.1"},
+                bump.packaged_evr(layout_at(root)),
+                {"magpie-bin": "0.1.2-1", "magpie-cli-bin": "0.1.1-1"},
             )
 
     def test_skips_packages_that_were_never_rendered(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = staged_root(Path(tmp), {"magpie-bin": "0.1.2"})
-            self.assertEqual(bump.packaged_versions(layout_at(root)), {"magpie-bin": "0.1.2"})
+            self.assertEqual(bump.packaged_evr(layout_at(root)), {"magpie-bin": "0.1.2-1"})
+
+    def test_a_pkgbuild_without_a_pkgrel_is_not_an_answer(self):
+        # Half a version is not a version: a file with pkgver and no pkgrel is
+        # one makepkg would refuse, and it must not read as a publishable tree.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = staged_root(Path(tmp), {"magpie-bin": "0.1.2"})
+            path = root / "packages" / "magpie-bin" / "PKGBUILD"
+            path.write_text("pkgname=magpie-bin\npkgver=0.1.2\n")
+            self.assertEqual(bump.packaged_evr(layout_at(root)), {})
 
 
 class CheckTest(unittest.TestCase):
@@ -494,6 +531,7 @@ class CheckTest(unittest.TestCase):
         parsed = {
             "upstream": frozen.field("upstream", text),
             "packaged": {},
+            "served": {},
             "bump": frozen.field("bump", text),
             "behind": set(),
             "warnings": [],
@@ -502,6 +540,9 @@ class CheckTest(unittest.TestCase):
             if line.startswith("packaged "):
                 pkg, _, ver = line.removeprefix("packaged ").partition("=")
                 parsed["packaged"][pkg] = ver
+            elif line.startswith("served "):
+                pkg, _, ver = line.removeprefix("served ").partition("=")
+                parsed["served"][pkg] = ver
             elif line.startswith("behind="):
                 parsed["behind"] = set(line.removeprefix("behind=").split())
             elif line.startswith("warning:"):
@@ -514,7 +555,7 @@ class CheckTest(unittest.TestCase):
             root = staged_root(Path(tmp), {"magpie-bin": "0.1.9", "magpie-cli-bin": "0.1.9"})
             log = self.log_of(fetch, root)
         self.assertEqual(log["upstream"], "0.1.10")
-        self.assertEqual(log["packaged"], {"magpie-bin": "0.1.9", "magpie-cli-bin": "0.1.9"})
+        self.assertEqual(log["packaged"], {"magpie-bin": "0.1.9-1", "magpie-cli-bin": "0.1.9-1"})
         self.assertEqual(log["bump"], "1")
         self.assertEqual(log["behind"], {"magpie-bin", "magpie-cli-bin"})
 
@@ -526,7 +567,7 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(log["bump"], "0")
         self.assertEqual(log["behind"], set())
         self.assertEqual(
-            log["packaged"], {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"}
+            log["packaged"], {"magpie-bin": "0.1.10-1", "magpie-cli-bin": "0.1.10-1"}
         )
 
     def test_treats_a_missing_pkgbuild_as_behind(self):
@@ -547,7 +588,7 @@ class CheckTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = staged_root(Path(tmp), {"magpie-bin": "0.1.10"})
             log = self.log_of(fetch, root)
-        self.assertEqual(log["packaged"], {"magpie-bin": "0.1.10"})
+        self.assertEqual(log["packaged"], {"magpie-bin": "0.1.10-1"})
         self.assertEqual(log["bump"], "1")
         self.assertEqual(log["behind"], {"magpie-cli-bin"})
 
@@ -620,6 +661,133 @@ class CheckTest(unittest.TestCase):
                 bump.check(layout=layout_at(Path(tmp), templates=templates), fetch=fetch)
         self.assertIn("magpie-cli-bin", str(caught.exception))
         self.assertEqual(fetch.urls, [])
+
+
+class ServedTest(unittest.TestCase):
+    """What the 软件源 carries, compared against what this tree would publish.
+
+    `bump=` used to mean one thing: the rendered pkgver is not 上游's. The
+    版本 a 包文件 is named after and a database entry states is the pair
+    `<pkgver>-<pkgrel>`, and only the second half can say "rebuild this" -- so
+    the entry check reads the database pacman reads, and a tree that differs
+    from it is 落后 even when 上游 has not moved. That is the difference
+    between a rebuild shipping and a rebuild being a silent no-op.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+
+    def rebuilt_templates(self, pkgrel: str = "2") -> Path:
+        """The repository's templates with a different pkgrel -- a rebuild."""
+        templates = self.tmp / "templates"
+        shutil.copytree(REPO / "templates", templates)
+        for path in templates.glob("*.PKGBUILD.in"):
+            path.write_text(path.read_text().replace("pkgrel=1", f"pkgrel={pkgrel}"))
+        return templates
+
+    def log_of(self, fetch, root: Path, *, templates: Path | None = None) -> dict:
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            bump.check(
+                layout=layout_at(root, templates=templates, served=served_at()),
+                fetch=fetch,
+            )
+        lines = buffer.getvalue().splitlines()
+        served = {}
+        for line in lines:
+            if line.startswith("served "):
+                pkg, _, evr = line.removeprefix("served ").partition("=")
+                served[pkg] = evr
+        return {
+            "bump": frozen.field("bump", "\n".join(lines) + "\n"),
+            "served": served,
+            "lines": lines,
+        }
+
+    def fetch_with(self, served_body, versions=("0.1.10",)) -> FetchSpy:
+        table = version_sources(github=versions[0], site=versions[0])
+        table[served_at().database] = served_body
+        return FetchSpy(table)
+
+    def test_a_rebuild_the_tree_has_and_the_repository_does_not_is_behind(self):
+        # pkgrel is the only way to say "same 版本, rebuilt": every gate is
+        # green, 上游 has not moved, and before this the run said
+        # "nothing to publish" while a client kept the old bytes.
+        templates = self.rebuilt_templates("2")
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"},
+                           templates=templates)
+        fetch = self.fetch_with(
+            database_body({"magpie-bin": "0.1.10-1", "magpie-cli-bin": "0.1.10-1"})
+        )
+        self.assertEqual(self.log_of(fetch, root, templates=templates)["bump"], "1")
+
+    def test_a_tree_the_repository_already_serves_is_not_behind(self):
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+        fetch = self.fetch_with(
+            database_body({"magpie-bin": "0.1.10-1", "magpie-cli-bin": "0.1.10-1"})
+        )
+        log = self.log_of(fetch, root)
+        self.assertEqual(log["bump"], "0")
+        self.assertEqual(
+            log["served"], {"magpie-bin": "0.1.10-1", "magpie-cli-bin": "0.1.10-1"}
+        )
+
+    def test_nothing_published_yet_is_behind(self):
+        # No gh-pages on the first run: a 404 is an empty repository, not a
+        # reason to call the tree current.
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+        fetch = self.fetch_with(None)
+        log = self.log_of(fetch, root)
+        self.assertEqual(log["bump"], "1")
+        self.assertEqual(log["served"], {})
+
+    def test_a_repository_that_cannot_be_read_falls_back_to_upstream(self):
+        # Pages having a bad minute must not read as "nothing is published":
+        # that answer would rebuild and republish, and it would look like a
+        # rebuild the tree asked for.
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+        fetch = self.fetch_with(urllib.error.URLError("connection refused"))
+        log = self.log_of(fetch, root)
+        self.assertEqual(log["bump"], "0")
+        self.assertTrue(
+            any("comparing against 上游 alone" in line for line in log["lines"]),
+            log["lines"],
+        )
+
+    def test_a_body_that_is_not_a_database_falls_back_to_upstream(self):
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+        log = self.log_of(self.fetch_with(b"not a tarball"), root)
+        self.assertEqual(log["bump"], "0")
+        self.assertTrue(any("is not a database" in line for line in log["lines"]), log["lines"])
+
+    def test_a_layout_without_an_address_never_asks_for_the_database(self):
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+        fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            bump.check(layout=layout_at(root), fetch=fetch)
+        self.assertIn(f"{bump.RELEASES}/download/v0.1.10/SHA256SUMS", fetch.urls)
+        self.assertEqual([url for url in fetch.urls if url.endswith(".db.tar.gz")], [])
+
+
+class ServedFromEnvTest(unittest.TestCase):
+    """The three names a run declares, and what their absence means."""
+
+    def test_all_three_make_the_address_and_its_database(self):
+        env = {"PAGES_URL": "https://h.invalid/r", "REPO_NAME": "magpie", "ARCH": "x86_64"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            served = bump.served_from_env()
+        self.assertEqual(served, bump.Served(url="https://h.invalid/r", section="magpie", arch="x86_64"))
+        self.assertEqual(served.database, "https://h.invalid/r/x86_64/magpie.db.tar.gz")
+
+    def test_a_missing_name_declares_no_address(self):
+        for missing in ("PAGES_URL", "REPO_NAME", "ARCH"):
+            with self.subTest(missing=missing):
+                env = {"PAGES_URL": "https://h.invalid/r", "REPO_NAME": "magpie", "ARCH": "x86_64"}
+                env.pop(missing)
+                with mock.patch.dict(os.environ, env, clear=True):
+                    self.assertIsNone(bump.served_from_env())
 
 
 class MainTest(unittest.TestCase):
