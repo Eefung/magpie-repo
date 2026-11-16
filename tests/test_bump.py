@@ -932,6 +932,22 @@ class ServedTest(unittest.TestCase):
         # The 软件源 still has to be readable for this direction to be known.
         self.assertEqual(log["served"]["ghost-bin"], "9.9.9-1")
 
+    def test_a_tree_that_renders_an_older_build_than_the_one_served_is_refused(self):
+        # pkgrel only goes up. `-1` against a 软件源 serving `-2` of the same
+        # 版本 is not 落后 -- it contradicts itself, and reading it as 未发布
+        # published the wrong build (a Release takes the newest on disk) and then
+        # reported itself as 未发布 again: a green loop that shipped nothing new.
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+        fetch = self.fetch_with(
+            database_body({"magpie-bin": "0.1.10-2", "magpie-cli-bin": "0.1.10-2"})
+        )
+
+        with self.assertRaises(bump.BumpError) as caught:
+            self.log_of(fetch, root)
+
+        self.assertIn("pkgrel", str(caught.exception))
+        self.assertIn("0.1.10-2", str(caught.exception))
+
     def test_a_tree_the_repository_already_serves_is_not_behind(self):
         root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
         fetch = self.fetch_with(

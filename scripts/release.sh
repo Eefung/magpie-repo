@@ -74,7 +74,10 @@ for pkgname in "${pkgnames[@]}"; do
     for file in "${current[@]}"; do
         # The tree's current build is a fact; the 版本 this run rendered is the
         # caller's claim. When they disagree, publishing would ship a build
-        # nobody rendered -- so say so instead.
+        # nobody rendered -- so say so instead. This leans on one thing: the
+        # entry check refuses a tree whose committed build is *older* than the
+        # one being served (pkgrel 只能往上加), so once a run gets this far the
+        # newest build in the directory is the build this run made.
         built="$(pkgfile_version "$pkgname" "$file")"
         if [ "$built" != "$version" ]; then
             echo "$pkgname: $dir's build is $built, not the $version this run rendered" >&2
