@@ -541,7 +541,7 @@ class CheckTest(unittest.TestCase):
             "packaged": {},
             "served": {},
             "bump": frozen.field("bump", text),
-            "behind": set(),
+            "behind": {},
             "warnings": [],
         }
         for line in text.splitlines():
@@ -551,8 +551,9 @@ class CheckTest(unittest.TestCase):
             elif line.startswith("served "):
                 pkg, _, ver = line.removeprefix("served ").partition("=")
                 parsed["served"][pkg] = ver
-            elif line.startswith("behind="):
-                parsed["behind"] = set(line.removeprefix("behind=").split())
+            elif line.startswith("behind "):
+                pkg, _, reason = line.removeprefix("behind ").partition("=")
+                parsed["behind"][pkg] = reason
             elif line.startswith("warning:"):
                 parsed["warnings"].append(line)
         return parsed
@@ -565,7 +566,9 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(log["upstream"], "0.1.10")
         self.assertEqual(log["packaged"], {"magpie-bin": "0.1.9-1", "magpie-cli-bin": "0.1.9-1"})
         self.assertEqual(log["bump"], "1")
-        self.assertEqual(log["behind"], {"magpie-bin", "magpie-cli-bin"})
+        self.assertEqual(
+            log["behind"], {"magpie-bin": "upstream", "magpie-cli-bin": "upstream"}
+        )
 
     def test_says_nothing_to_do_when_the_versions_match(self):
         fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
@@ -573,7 +576,7 @@ class CheckTest(unittest.TestCase):
             root = staged_root(Path(tmp), {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
             log = self.log_of(fetch, root)
         self.assertEqual(log["bump"], "0")
-        self.assertEqual(log["behind"], set())
+        self.assertEqual(log["behind"], {})
         self.assertEqual(
             log["packaged"], {"magpie-bin": "0.1.10-1", "magpie-cli-bin": "0.1.10-1"}
         )
@@ -587,7 +590,9 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(log["packaged"], {})
         self.assertEqual(len(log["warnings"]), 1)
         self.assertEqual(log["bump"], "1")
-        self.assertEqual(log["behind"], {"magpie-bin", "magpie-cli-bin"})
+        self.assertEqual(
+            log["behind"], {"magpie-bin": "upstream", "magpie-cli-bin": "upstream"}
+        )
 
     def test_one_missing_pkgbuild_is_still_behind(self):
         # The other package is current, so only the absent one is behind; a
@@ -598,7 +603,7 @@ class CheckTest(unittest.TestCase):
             log = self.log_of(fetch, root)
         self.assertEqual(log["packaged"], {"magpie-bin": "0.1.10-1"})
         self.assertEqual(log["bump"], "1")
-        self.assertEqual(log["behind"], {"magpie-cli-bin"})
+        self.assertEqual(log["behind"], {"magpie-cli-bin": "upstream"})
 
     def test_an_upstream_reupload_under_the_same_tag_is_behind(self):
         # 上游 replaced the asset without moving the tag: the version matches,
@@ -619,8 +624,9 @@ class CheckTest(unittest.TestCase):
             )
             log = self.log_of(fetch, root)
         self.assertEqual(log["bump"], "1")
-        # One package's bytes changed, and only that package is behind.
-        self.assertEqual(log["behind"], {"magpie-bin"})
+        # One package's bytes changed, and only that package is behind -- for
+        # the reason only the release's own sums can see.
+        self.assertEqual(log["behind"], {"magpie-bin": "checksums"})
 
     def test_a_committed_pkgbuild_that_is_not_its_render_is_reported(self):
         # The edit that starts a run through publish.yml's paths filter, finds
@@ -804,13 +810,18 @@ class ServedTest(unittest.TestCase):
             )
         lines = buffer.getvalue().splitlines()
         served = {}
+        behind = {}
         for line in lines:
             if line.startswith("served "):
                 pkg, _, evr = line.removeprefix("served ").partition("=")
                 served[pkg] = evr
+            elif line.startswith("behind "):
+                pkg, _, reason = line.removeprefix("behind ").partition("=")
+                behind[pkg] = reason
         return {
             "bump": frozen.field("bump", "\n".join(lines) + "\n"),
             "served": served,
+            "behind": behind,
             "lines": lines,
         }
 
@@ -829,7 +840,36 @@ class ServedTest(unittest.TestCase):
         fetch = self.fetch_with(
             database_body({"magpie-bin": "0.1.10-1", "magpie-cli-bin": "0.1.10-1"})
         )
-        self.assertEqual(self.log_of(fetch, root, templates=templates)["bump"], "1")
+        log = self.log_of(fetch, root, templates=templates)
+        self.assertEqual(log["bump"], "1")
+        # pkgver matches 上游 and only the build does not: that is the reason
+        # the run prints, instead of leaving the reader to diff two sections.
+        self.assertEqual(
+            log["behind"],
+            {"magpie-bin": "unpublished", "magpie-cli-bin": "unpublished"},
+        )
+
+    def test_a_package_the_repository_serves_and_the_inventory_dropped_is_behind(self):
+        # The fourth direction. A package that left the 包清单 is not in the
+        # inventory loop, so nothing counted it: its files and its database
+        # entry kept being served, and build-repo.sh's retire only runs behind
+        # `bump=1`. Dropping a package therefore waited for an unrelated 上游
+        # move -- forever, if 上游 went quiet.
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+        fetch = self.fetch_with(
+            database_body(
+                {
+                    "magpie-bin": "0.1.10-1",
+                    "magpie-cli-bin": "0.1.10-1",
+                    "ghost-bin": "9.9.9-1",
+                }
+            )
+        )
+        log = self.log_of(fetch, root)
+        self.assertEqual(log["bump"], "1")
+        self.assertEqual(log["behind"], {"ghost-bin": "retired"})
+        # The 软件源 still has to be readable for this direction to be known.
+        self.assertEqual(log["served"]["ghost-bin"], "9.9.9-1")
 
     def test_a_tree_the_repository_already_serves_is_not_behind(self):
         root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})

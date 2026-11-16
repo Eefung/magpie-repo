@@ -555,7 +555,11 @@ class LineFieldTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "0.1.2\n")
 
-    def test_a_list_valued_line_survives_whole(self):
+    def test_a_value_with_spaces_survives_whole(self):
+        # line_field hands back the rest of the line, whatever it holds. No
+        # frozen line carries a list today (the 包清单's rows go through
+        # pkglist_field, not here), so this pins the reader's shape rather than
+        # a producer: a future line-valued list line is read whole.
         result = self.field("behind", "behind=magpie-bin magpie-cli-bin\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "magpie-bin magpie-cli-bin\n")
