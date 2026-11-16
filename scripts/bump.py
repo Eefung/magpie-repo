@@ -1087,9 +1087,12 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     sums = uploaded_sums(upstream, fetch=fetch) or {}
     stale = set()
     for pkg, plan in rendered.items():
-        evr = packaged.get(pkg)
-        if evr is None or pkgver_of(evr) != upstream or plan.values is None:
-            continue  # already behind: the render will take the new sums
+        # An unrendered package has no values to compare, and pkgver_of answers
+        # "" for a build that is not there -- one guard, two real shapes (no
+        # PKGBUILD at all; a PKGBUILD that yields no pkgver). Both mean the
+        # render will take the new sums, so neither is a stale checksum.
+        if plan.values is None or pkgver_of(packaged.get(pkg)) != upstream:
+            continue
         for planned in plan.template.assets:
             upstream_sum = sums.get(planned.asset)
             if upstream_sum is not None and plan.values.get(planned.placeholder) != upstream_sum:
