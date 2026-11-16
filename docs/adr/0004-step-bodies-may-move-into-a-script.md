@@ -22,7 +22,7 @@
 ## 后果
 
 - ADR-0001 的其余部分照旧：`if:` 仍然是门，`needs`/`concurrency` 仍然是约束，"先发布、最后提交"的顺序仍然靠 step 顺序（这条顺序后来由 `tests/test_inventory.py` 的 `PublishTransactionTest` 按住）。
-- 外提的脚本，argv 与冻结行变成契约：`publish-pages.sh <tree> <版本> <remote>`、`build-repo.sh` 的 `-e REPO_NAME -e KEEP`、`upstream.sh` 的四条冻结行。改它们的接口等于改 workflow。
+- 外提的脚本，argv 与冻结行变成契约：`publish-pages.sh <tree> <版本> <remote>`、`build-repo.sh` 的 `-e REPO_NAME -e KEEP`、`upstream.sh` 的四条冻结行。改它们的接口等于改 workflow。后来 `publish-pages.sh` 的接口又多了一条：`GIT_NAME` / `GIT_EMAIL` 必填（签名 gh-pages 那次提交的身份），由 workflow 的 job env 声明——一个在 `publish.yml` 里声明一次、脚本拒绝自己编的值。
 - 秘密留在 YAML：token URL 由 step 拼好传进去，脚本自己不认识 token。一个需要 `GITHUB_*` 或 `secrets` 才能跑的脚本，是外提错了方向。
 - 一个 step 的"顺序约束"并没有因此进代码——它进了测试。ADR-0001 的"后果"第一条因此不再只是注释。
 

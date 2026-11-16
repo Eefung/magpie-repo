@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The shell side of what a rendered package is: its identity, the names of the
-# package files built from it, what the built file's payload reports, and the
-# one-line answers the producers hand back.
+# package files built from it, what the built file's payload reports, what a
+# build leaves behind in its directory, and the one-line answers the producers
+# hand back.
 #
 #   source "$(dirname "${BASH_SOURCE[0]}")/lib/pkg.sh"
 #   pkg_field packages/magpie-bin/PKGBUILD pkgver

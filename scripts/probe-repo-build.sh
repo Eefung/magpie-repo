@@ -199,11 +199,14 @@ for dir in real/*/; do
         exit 1
     fi
     ok "$name: makepkg parses its PKGBUILD"
-    if printf '%s\n' "$printed" | sed -n 's/^[[:space:]]*arch = //p' | grep -qx "$ARCH"; then
-        ok "$name: declares the arch this repository serves ($ARCH)"
+    # One arch, and it is the one this repository serves. `arch=()` restated
+    # with a second entry is the shape ADR-0003 refuses -- an arch nobody
+    # builds -- so the whole set is compared, not "contains".
+    arches="$(printf '%s\n' "$printed" | sed -n 's/^[[:space:]]*arch = //p' | paste -sd, -)"
+    if [ "$arches" = "$ARCH" ]; then
+        ok "$name: declares $ARCH and nothing else"
     else
-        printf '%s\n' "$printed" | sed -n 's/^[[:space:]]*arch = /  arch: /p' >&2
-        echo "!! FAIL: $name: its PKGBUILD does not declare $ARCH"
+        echo "!! FAIL: $name: its PKGBUILD declares '${arches}', the arch 表 has $ARCH"
         exit 1
     fi
 done

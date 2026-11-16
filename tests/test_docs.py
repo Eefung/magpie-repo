@@ -81,21 +81,29 @@ class ProvidesClaimTest(unittest.TestCase):
                 return line
         raise AssertionError("README no longer says what provides/conflicts are")
 
-    def test_the_readme_names_the_name_the_template_declares(self):
-        text = template(self.DESKTOP)
-        provides = bump.array_entries(text, "provides")
-        self.assertEqual(provides, bump.array_entries(text, "conflicts"))
-        self.assertTrue(provides, "the template declares no provides=")
-        line = self.claimed(readme())
-        for name in provides:
-            self.assertIn(f"`{name}`", line)
+    def problems(self, document: str, template_text: str) -> list[str]:
+        """Names the template declares that the document's sentence omits."""
+        claim = self.claimed(document)
+        names = (bump.array_entries(template_text, "provides") or []) + (
+            bump.array_entries(template_text, "conflicts") or []
+        )
+        return [
+            f"the claim does not name {name!r}" for name in names if f"`{name}`" not in claim
+        ]
 
-    def test_a_template_that_stops_conflicting_is_caught(self):
-        text = template(self.DESKTOP)
-        drifted = text.replace("conflicts=('magpie')", "conflicts=()")
-        self.assertNotEqual(drifted, text)
-        self.assertNotEqual(
-            bump.array_entries(text, "provides"), bump.array_entries(drifted, "conflicts")
+    def test_the_readme_names_what_the_template_declares(self):
+        self.assertEqual(self.problems(readme(), template(self.DESKTOP)), [])
+
+    def test_a_name_the_template_drops_is_caught(self):
+        # The guard's own fixture: a template whose conflict is another name
+        # while the sentence still says `magpie`. The previous version of this
+        # test asserted on the string it had just edited and passed with the
+        # guard removed.
+        drifted = template(self.DESKTOP).replace("conflicts=('magpie')", "conflicts=('magpie-x')")
+        self.assertIn("conflicts=('magpie-x')", drifted, "the conflict line moved; reword this test")
+        self.assertEqual(
+            [problem for problem in self.problems(readme(), drifted) if "magpie-x" in problem],
+            ["the claim does not name 'magpie-x'"],
         )
 
 

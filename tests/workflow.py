@@ -9,10 +9,11 @@ the env block into a step turned the test job red without changing anything the
 workflow does -- while a guard whose subject is the workflow's *behaviour* (the
 step order, the gates) could not be written at all.
 
-One reader here, used by every test that needs the file. It parses the two
-shapes this workflow uses -- a job-level ``env:`` block and ``- name:`` steps --
-and nothing else: it is not a YAML parser, and a shape it does not know is a
-step with no ``if`` or no name, which the tests then report.
+One reader here, used by every test that needs the file. It parses the three
+shapes this workflow uses -- a job-level ``env:`` block, ``- name:`` steps, and
+the one ``cron:`` line a reader plans around -- and nothing else: it is not a
+YAML parser, and a step shape it does not know arrives with no ``if`` or no
+name, which the tests then report.
 
     python3 -m unittest discover -s tests
 """
@@ -170,6 +171,25 @@ def schedule(source: str | None = None) -> str:
     if len(found) != 1:
         raise AssertionError(f"{WORKFLOW} declares {len(found)} cron lines: {found}")
     return found[0]
+
+
+def env_writes(source: str | None = None) -> list[str]:
+    """Live lines that write to ``$GITHUB_ENV`` -- the carrier this file avoids.
+
+    Step-to-step facts ride ``$GITHUB_OUTPUT``, where ``output_keys`` and
+    ``output_reads`` hold "every key has a reader" and "one write shape".
+    ``$GITHUB_ENV`` had neither rule, so ``ver`` used to ride it and a dead
+    handover there would have been invisible. The tests assert this list is
+    empty instead of grepping the file themselves: the shape belongs to the
+    reader, and the day a step really needs the second carrier is the day this
+    function has to grow the same two rules.
+    """
+    text_ = text() if source is None else source
+    return [
+        line.strip()
+        for line in text_.splitlines()
+        if "$GITHUB_ENV" in line and not line.strip().startswith("#")
+    ]
 
 
 def unparsed_output_writes(source: str | None = None) -> list[str]:

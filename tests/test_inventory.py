@@ -204,11 +204,7 @@ class PublishTransactionTest(unittest.TestCase):
         give the second carrier the same two rules -- not a line to write the
         fact on and hope.
         """
-        live = [
-            line.strip()
-            for line in workflow.text().splitlines()
-            if "$GITHUB_ENV" in line and not line.strip().startswith("#")
-        ]
+        live = workflow.env_writes()
         self.assertEqual(live, [])
         self.assertIn("ver", workflow.output_keys())
         self.assertIn("ver", workflow.output_reads())
@@ -543,7 +539,7 @@ class GitIdentityTest(unittest.TestCase):
         return workflow.env()["GIT_EMAIL"]
 
     def test_both_commits_sign_as_the_declared_identity(self):
-        text = self.text()
+        text = workflow.text()
 
         # The main-branch commit step reads the env, not its own literal: a
         # second spelling no test could compare against would be a second
@@ -565,9 +561,6 @@ class GitIdentityTest(unittest.TestCase):
             self.assertNotIn(f'"{literal}"', script)
         self.assertIn("$GIT_NAME", script)
         self.assertIn("$GIT_EMAIL", script)
-
-    def text(self) -> str:
-        return workflow.text()
 
 
 class PackageFilePatternTest(unittest.TestCase):
