@@ -45,7 +45,7 @@ _Avoid_: 编译
 _Avoid_: 过期、不同步
 
 **软件源**：
-gh-pages 上 `x86_64/` 目录与 `magpie.db` 合起来的东西，pacman 的 `[magpie]` 段指向它。目录按 arch 分，今天只有一个：workflow 的 `ARCH`（目录名）、`REPO_NAME`（节名，也就是 db 的文件名）与 `TREE`（这次运行组装它的那棵树）是这三个名字唯一的出处，`REPO_NAME` 与 `TREE` 还跨进容器或脚本交给下一步。用户可见的安装段有两份抄写，都不许自己拼名字：README 的安装段由人敲，`tests/test_inventory.py` 逐字对账；Release 说明里那一段由 `release.sh` 用 `ARCH`/`REPO_NAME`/`PAGES_URL` 生成，`tests/test_release.py` 用同一个读者（`tests/install_block.py`）对账。arch 表 管的是另一半（上游资产后缀）。
+gh-pages 上 `x86_64/` 目录与 `magpie.db` 合起来的东西，pacman 的 `[magpie]` 段指向它。目录按 arch 分，今天只有一个：workflow 的 `ARCH`（目录名）、`REPO_NAME`（节名，也就是 db 的文件名）与 `TREE`（这次运行组装它的那棵树）是这三个名字唯一的出处，`REPO_NAME` 与 `TREE` 还跨进容器或脚本交给下一步。用户可见的安装段有两份抄写，都不许自己拼名字：README 的安装段由人敲，`tests/test_inventory.py` 逐字对账；Release 说明里那一段由 `release.sh` 用 `ARCH`/`REPO_NAME`/`PAGES_URL` 生成，`tests/test_release.py` 用同一个读者（`tests/install_block.py`）对账。arch 表管的是另一半（上游资产后缀）。
 _Avoid_: 仓库（会和 git 仓库混淆）
 
 **保留窗口**：

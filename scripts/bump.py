@@ -217,7 +217,7 @@ def highest(versions: Sequence[str]) -> str:
 
 
 def offered_versions(fetch: Fetch = http_fetch) -> list[str]:
-    """Every usable 版本 上游 offers, newest first.
+    """Every usable 版本 that 上游 offers, newest first.
 
     The release list is the source that knows more than "the latest": a tag
     exists before its assets do, so the release *before* the newest one can be
@@ -292,7 +292,7 @@ def release_sums(version: str, *, fetch: Fetch = http_fetch) -> dict[str, str]:
 def latest_version(fetch: Fetch = http_fetch) -> str:
     """Upstream's newest 版本 this run can 打包: its release is uploaded.
 
-    The tag and the assets do not arrive together, so the newest 版本 上游
+    The tag and the assets do not arrive together, so the newest 版本 that 上游
     advertises can be one whose SHA256SUMS is still a 404. Taking the maximum of
     the two sources and hoping was how a run holding a complete release
     published nothing: `--check` said bump, `--render` asked a second time, and
