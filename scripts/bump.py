@@ -23,9 +23,9 @@ prints `upstream=<version>` (the 版本 the render is supposed to take, so the
 render never asks 上游 a second time), and `--check` prints `bump=0|1`.
 `--packages` prints `package <dir> <pkgname>`, one line per package, read
 through pkglist_field. Those are contracts -- change one with its reader in
-pkg.sh. The rest of `--check`'s output (`packaged <pkg>=`, `behind=`) is a log
-for whoever reads the run: reword it freely, and let the tests assert what it
-means rather than how it reads.
+pkg.sh. The rest of `--check`'s output (`packaged <pkg>=`, `served <pkg>=`,
+`behind <pkg>=<reason>`) is a log for whoever reads the run: reword it freely,
+and let the tests assert what it means rather than how it reads.
 
 Stdlib only: runs on any python3 in CI and on the user's machine alike.
 """
@@ -467,6 +467,20 @@ class Template:
     assets: tuple[ArchAsset, ...]
 
 
+@dataclass(frozen=True)
+class Rendered:
+    """One package's template and the values its committed PKGBUILD carries.
+
+    The entry check asks two questions of the same pair -- is this pair sound,
+    and where does it sit against 上游 and the 软件源 -- and answered the second
+    by matching the file against its template all over again. `values` is None
+    for a package that was never rendered: 落后, but not drift.
+    """
+
+    template: Template
+    values: dict[str, str] | None
+
+
 def read_template(
     *, pkg: str, prefix: str, text: str, arches: Mapping[str, str]
 ) -> Template:
@@ -884,7 +898,7 @@ def parse_failure(text: str) -> str | None:
     return lines[0] if lines else f"bash exited {result.returncode}"
 
 
-def check_templates(layout: Layout) -> dict[str, Template]:
+def check_templates(layout: Layout) -> dict[str, Rendered]:
     """Is this tree sound? The template's own rules, then the drift guard.
 
     `--check` answered one question -- is the packaged 版本 behind 上游 -- and
@@ -915,17 +929,20 @@ def check_templates(layout: Layout) -> dict[str, Template]:
     parser, so the only one in the pipeline was `makepkg --printsrcinfo` -- in a
     probe the runner skips for want of makepkg.
     """
-    found: dict[str, Template] = {}
+    found: dict[str, Rendered] = {}
     for pkg, prefix in layout.inventory.items():
         text = template_text(layout, pkg)
-        found[pkg] = read_template(pkg=pkg, prefix=prefix, text=text, arches=layout.arches)
+        template = read_template(pkg=pkg, prefix=prefix, text=text, arches=layout.arches)
 
         pkgbuild = layout.packages_dir / pkg / "PKGBUILD"
         if not pkgbuild.exists():
+            # Never rendered: 落后, which check() reports, but not drift -- and
+            # the template above is still one this repository will render.
+            found[pkg] = Rendered(template=template, values=None)
             continue
         committed = pkgbuild.read_text()
         try:
-            values_of(text, committed)
+            values = values_of(text, committed)
         except BumpError as exc:
             raise BumpError(f"{pkg}: {exc}") from exc
         # The third door on this artifact, and it is the parser's own: the file
@@ -937,14 +954,62 @@ def check_templates(layout: Layout) -> dict[str, Template]:
             raise BumpError(
                 f"{pkg}: bash cannot parse {layout_path(layout, pkgbuild)}: {problem}"
             )
+        found[pkg] = Rendered(template=template, values=values)
     return found
+
+
+# The four directions 落后 can come from, as the words a run prints. GLOSSARY
+# defines the union; these are its members.
+UPSTREAM_MOVED = "upstream"
+NOT_PUBLISHED = "unpublished"
+UPSTREAM_REUPLOADED = "checksums"
+RETIRED = "retired"
+
+
+def behind(
+    layout: Layout,
+    *,
+    upstream: str,
+    packaged: Mapping[str, str],
+    served: Mapping[str, str] | None,
+    stale: set[str],
+) -> dict[str, str]:
+    """Every package that is 落后, and which direction says so.
+
+    GLOSSARY defines 落后 as a union of directions. This used to be a five-line
+    comprehension inside check() that answered "is anything behind" and threw
+    the reason away, so a run left its reader to compare the `packaged` and
+    `served` sections by hand to learn why it was publishing.
+
+    The fourth direction had no home at all. A package that left the 包清单 is
+    not in the inventory loop, so its files and its database entry kept being
+    served -- and build-repo.sh's retire, which deletes them, only runs behind
+    `bump=1`. Withdrawing a package therefore waited for an unrelated 上游 move,
+    and forever if 上游 went quiet.
+
+    `served` is None when the address could not be read. The second and fourth
+    directions cannot be answered then, and served_evr has already logged why.
+    """
+    reasons: dict[str, str] = {}
+    for pkg in layout.inventory:
+        evr = packaged.get(pkg)
+        if pkgver_of(evr) != upstream:
+            reasons[pkg] = UPSTREAM_MOVED
+        elif served is not None and served.get(pkg) != evr:
+            reasons[pkg] = NOT_PUBLISHED
+        elif pkg in stale:
+            reasons[pkg] = UPSTREAM_REUPLOADED
+    for pkg in sorted(served or {}):
+        if pkg not in layout.inventory:
+            reasons[pkg] = RETIRED
+    return reasons
 
 
 def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     # This repository's own problem first, before anything is fetched: the
     # render does the same, so a tree whose templates and PKGBUILDs disagree
     # fails here rather than being reported as "upstream has no such asset".
-    templates = check_templates(layout)
+    rendered = check_templates(layout)
     upstream = latest_version(fetch=fetch)
     packaged = packaged_evr(layout)
     log(f"upstream={upstream}")
@@ -962,36 +1027,25 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     # `makepkg` would refuse the download the day something re-rendered.
     sums = uploaded_sums(upstream, fetch=fetch) or {}
     stale = set()
-    for pkg, template in templates.items():
+    for pkg, plan in rendered.items():
         evr = packaged.get(pkg)
-        if evr is None or pkgver_of(evr) != upstream:
+        if evr is None or pkgver_of(evr) != upstream or plan.values is None:
             continue  # already behind: the render will take the new sums
-        committed = (layout.packages_dir / pkg / "PKGBUILD").read_text()
-        values = values_of(template.text, committed)
-        for planned in template.assets:
-            served_sum = sums.get(planned.asset)
-            if served_sum is not None and values.get(planned.placeholder) != served_sum:
+        for planned in plan.template.assets:
+            upstream_sum = sums.get(planned.asset)
+            if upstream_sum is not None and plan.values.get(planned.placeholder) != upstream_sum:
                 stale.add(pkg)
     if stale:
         log("checksums differ from 上游's: " + " ".join(sorted(stale)))
-    # Three reasons to publish, one answer. 上游 moved past the 版本 this tree
-    # renders, so the render has something new to do; the tree's
-    # `<pkgver>-<pkgrel>` is not what the 软件源 serves, so what is committed
-    # never reached a client -- a rebuild, a run that died between the push and
-    # the commit, or a first publish; or the bytes 上游 publishes for that 版本
-    # are not the bytes this tree was rendered against. Walking the inventory
-    # rather than what is on disk keeps a package whose PKGBUILD was never
-    # rendered 落后.
-    behind = sorted(
-        pkg
-        for pkg in layout.inventory
-        if pkgver_of(packaged.get(pkg)) != upstream
-        or (served is not None and served.get(pkg) != packaged.get(pkg))
-        or pkg in stale
+    # The four directions, one answer. Walking the inventory rather than what is
+    # on disk keeps a package whose PKGBUILD was never rendered 落后; walking
+    # what the 软件源 serves as well is what lets a withdrawn package leave it.
+    reasons = behind(
+        layout, upstream=upstream, packaged=packaged, served=served, stale=stale
     )
-    log(f"bump={'1' if behind else '0'}")
-    if behind:
-        log("behind=" + " ".join(behind))
+    for pkg, reason in sorted(reasons.items()):
+        log(f"behind {pkg}={reason}")
+    log(f"bump={'1' if reasons else '0'}")
     return 0
 
 

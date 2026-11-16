@@ -22,8 +22,8 @@
 # line instead of spelling /tmp/packages.txt, so a path that moves moves here.
 #
 # The check's own output goes to stderr. It is a log -- `packaged <pkg>=`,
-# `behind=` -- and the run's reader is a human; the four lines above are what a
-# program reads.
+# `behind <pkg>=<reason>` -- and the run's reader is a human; the four lines
+# above are what a program reads.
 #
 # BUMP is the one seam: tests point it at a stub so the decision runs offline,
 # the way BUILD_CHECK lets build-repo.sh run without a container.
