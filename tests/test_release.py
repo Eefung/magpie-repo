@@ -108,6 +108,35 @@ class ReleaseTest(unittest.TestCase):
             sorted(self.sums()), sorted(pkgfile(pkg, CURRENT) for pkg in PKGS)
         )
 
+    def test_a_rebuilds_release_carries_one_build(self):
+        # The 保留窗口 keeps both files of one 版本 -- they are one 版本 -- so a
+        # selector keyed on the 版本 put the build a rebuild replaced into the
+        # Release beside the new one. GLOSSARY already said a Release describes
+        # one build; this is where that became true.
+        for pkg in PKGS:
+            (self.repo / pkgfile(pkg, CURRENT, rel="2")).write_bytes(
+                f"{pkg} rebuilt".encode()
+            )
+
+        self.release()
+
+        rebuilt = [pkgfile(pkg, CURRENT, rel="2") for pkg in PKGS]
+        self.assertEqual([Path(path).name for path in self.assets()], rebuilt)
+        self.assertEqual(sorted(self.sums()), sorted(rebuilt))
+
+    def test_a_tree_whose_build_is_another_version_is_refused(self):
+        # The selection is the tree's current build; the 版本 is the caller's
+        # claim. A tree carrying a different one is refused rather than
+        # publishing a build this run never rendered.
+        result = self.run_script(
+            str(self.repo), PREVIOUS, str(self.listing), str(self.out)
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(CURRENT, result.stderr)
+        self.assertIn(PREVIOUS, result.stderr)
+        self.assertFalse((self.out / "assets.txt").exists())
+
     def test_the_checksums_are_of_the_bytes_that_will_be_served(self):
         self.release()
 
@@ -186,7 +215,10 @@ class ReleaseTest(unittest.TestCase):
         )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("no package files for v0.1.11", result.stderr)
+        # The selection is the tree's current build, so the refusal names both
+        # the build that is there and the 版本 that is not.
+        self.assertIn("0.1.11", result.stderr)
+        self.assertIn(CURRENT, result.stderr)
         self.assertFalse((self.out / "assets.txt").exists())
 
     def test_an_empty_package_list_is_refused(self):

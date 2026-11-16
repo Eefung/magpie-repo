@@ -352,20 +352,6 @@ pkgfiles_current() {
     done
 }
 
-# pkgfiles_at <repo dir> <pkgname> <pkgver> -- that version's files only, in the
-# same order. The release step publishes exactly these and asks here, instead of
-# rebuilding the name with a pkgrel and an arch of its own (both are makepkg's
-# to decide, not the workflow's).
-pkgfiles_at() {
-    local out="$1" pkgname="$2" pkgver="$3" file name
-    while IFS= read -r file; do
-        name="${file##*/}"
-        case "$name" in
-            "$pkgname-$pkgver-"*) printf '%s\n' "$file" ;;
-        esac
-    done < <(pkgfiles "$out" "$pkgname")
-}
-
 # payload_member <包文件> -- the one program it installs under usr/bin/.
 #
 # The templates decide where that program goes; this asks the built file rather
