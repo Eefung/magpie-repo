@@ -29,6 +29,7 @@ SCRIPT = REPO / "scripts" / "publish-pages.sh"
 sys.path.insert(0, str(REPO / "tests"))
 
 import fixtures  # noqa: E402  (the one spelling of a 包文件's name in the test tree)
+import workflow  # noqa: E402  (the one reader of publish.yml, where the bot is declared)
 
 
 @dataclass(frozen=True)
@@ -36,17 +37,26 @@ class GitIdentity:
     """The bot the workflow's env declares, so the test can feed the script it.
 
     Mirrors `install_block.Served` in test_release.py: the script is held to
-    a value it was *given*, not to today's literal.
+    a value it was *given*, not to today's literal. The value is read from the
+    workflow rather than spelled here -- a literal in this file was a third
+    copy, and `GitIdentityTest` counts only the workflow's, so renaming the bot
+    left this fixture feeding the old identity while every test stayed green.
     """
 
     name: str
     email: str
 
+    @classmethod
+    def declared(cls) -> "GitIdentity":
+        """The identity the job env declares, which is the only place it lives."""
+        env = workflow.env()
+        return cls(name=env["GIT_NAME"], email=env["GIT_EMAIL"])
+
     def env(self) -> dict[str, str]:
         return {"GIT_NAME": self.name, "GIT_EMAIL": self.email}
 
 
-GIT = GitIdentity(name="github-actions[bot]", email="41898282+github-actions[bot]@users.noreply.github.com")
+GIT = GitIdentity.declared()
 
 # The tree this publishes is served as uploaded, so the name is only a name --
 # but it is still a 包文件's name, and the test tree spells those one way.
