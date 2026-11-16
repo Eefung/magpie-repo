@@ -38,6 +38,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 import tarfile
 import urllib.error
@@ -800,6 +801,14 @@ def render(
             values[planned.placeholder] = sums[planned.asset]
         rendered.append((pkg, render_pkgbuild(template.text, values)))
 
+    # Nothing is written until every render parses. The entry check asks the
+    # same question of the committed file; asking it here means a template
+    # with a broken body leaves the tree alone instead of half-updated.
+    for pkg, text in rendered:
+        problem = parse_failure(text)
+        if problem:
+            raise BumpError(f"{pkg}: the render is not a bash script: {problem}")
+
     for pkg, text in rendered:
         out = layout.packages_dir / pkg / "PKGBUILD"
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -847,6 +856,34 @@ def values_of(template: str, rendered: str) -> dict[str, str]:
     return values
 
 
+def parse_failure(text: str) -> str | None:
+    """What bash complains about in this PKGBUILD, or None when it parses.
+
+    A PKGBUILD is a bash script, and nothing here used to read one as a script:
+    `read_template` checks the five ways a template restates the arch table and
+    `values_of` checks that the committed file is that template's render, but
+    both read text. The only door that parsed it at all was
+    `makepkg --printsrcinfo` in scripts/probe-repo-build.sh's case 6, and
+    scripts/check.sh skips the probe on the machine CI runs on (no makepkg
+    there) -- so a `package()` body with a stray quote got a green `bump=0`,
+    and the failure waited inside the container for the next 上游 move.
+
+    `bash -n` is that door without makepkg: it parses everything, runs nothing,
+    and every script in this repository already assumes bash exists. Reading
+    from stdin keeps the check off the disk -- `render()` asks before it writes.
+    """
+    try:
+        result = subprocess.run(
+            ["bash", "-n"], input=text, text=True, capture_output=True
+        )
+    except OSError as exc:  # a machine with no bash cannot answer, and says so
+        raise BumpError(f"cannot run bash to parse a PKGBUILD: {exc}") from exc
+    if result.returncode == 0:
+        return None
+    lines = (result.stderr or result.stdout).strip().splitlines()
+    return lines[0] if lines else f"bash exited {result.returncode}"
+
+
 def check_templates(layout: Layout) -> dict[str, Template]:
     """Is this tree sound? The template's own rules, then the drift guard.
 
@@ -871,6 +908,12 @@ def check_templates(layout: Layout) -> dict[str, Template]:
     this repository will render, so it is still read. The templates come back
     because the caller needs the plan each one already worked out: which asset
     feeds which placeholder is what the checksum comparison below asks about.
+
+    A third door sits beside those two, and it is the parser's own answer: the
+    committed file must be a bash script bash can parse. `read_template` reads
+    five facets of the template and `values_of` proves provenance; neither is a
+    parser, so the only one in the pipeline was `makepkg --printsrcinfo` -- in a
+    probe the runner skips for want of makepkg.
     """
     found: dict[str, Template] = {}
     for pkg, prefix in layout.inventory.items():
@@ -880,10 +923,20 @@ def check_templates(layout: Layout) -> dict[str, Template]:
         pkgbuild = layout.packages_dir / pkg / "PKGBUILD"
         if not pkgbuild.exists():
             continue
+        committed = pkgbuild.read_text()
         try:
-            values_of(text, pkgbuild.read_text())
+            values_of(text, committed)
         except BumpError as exc:
             raise BumpError(f"{pkg}: {exc}") from exc
+        # The third door on this artifact, and it is the parser's own: the file
+        # is its template's render, and it is a bash script bash can parse.
+        # `read_template` reads five facets of the template; none of them is
+        # whether the text is a script at all.
+        problem = parse_failure(committed)
+        if problem:
+            raise BumpError(
+                f"{pkg}: bash cannot parse {layout_path(layout, pkgbuild)}: {problem}"
+            )
     return found
 
 

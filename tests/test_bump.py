@@ -693,6 +693,84 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(fetch.urls, [])
 
 
+class SyntaxDoorTest(unittest.TestCase):
+    """The entry check read the PKGBUILD as text; nothing asked bash about it.
+
+    `read_template` checks the five ways a template restates the arch table and
+    `values_of` checks that the committed file is that template's render, and
+    both read text -- so a `package()` body with a stray quote passed every gate
+    the job runs. The only parser in the pipeline was
+    `makepkg --printsrcinfo` in scripts/probe-repo-build.sh's case 6, and
+    scripts/check.sh skips the probe where makepkg is missing, which is the
+    runner. What the fixture below reproduces is a real edit: the same broken
+    body in the template *and* in its render, so the drift guard is satisfied
+    and only a parser can object.
+    """
+
+    # A body bash cannot parse. Appended to the end of the file: the template
+    # stays each other's exact match, which is the shape a real edit has.
+    BROKEN = "\nif true; then\n"
+
+    def broken(self, root: Path) -> Path:
+        """The tree with every template and every committed PKGBUILD broken."""
+        templates = root / "templates"
+        shutil.copytree(REPO / "templates", templates)
+        for path in [
+            *templates.glob("*.PKGBUILD.in"),
+            *(root / "packages").glob("*/PKGBUILD"),
+        ]:
+            with path.open("a") as handle:
+                handle.write(self.BROKEN)
+        return templates
+
+    def test_every_committed_pkgbuild_in_this_repository_parses(self):
+        # The real files, not a fixture: the templates this repository ships
+        # must render to something bash reads.
+        for pkg in bump.PACKAGES:
+            with self.subTest(pkg=pkg):
+                text = (REPO / "packages" / pkg / "PKGBUILD").read_text()
+                self.assertIsNone(bump.parse_failure(text))
+
+    def test_a_body_bash_cannot_parse_is_refused_before_the_network(self):
+        fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = staged_root(Path(tmp), {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+            templates = self.broken(root)
+            with self.assertRaises(bump.BumpError) as caught:
+                bump.check(layout=layout_at(root, templates=templates), fetch=fetch)
+        self.assertIn("bash cannot parse", str(caught.exception))
+        self.assertIn("magpie-bin", str(caught.exception))
+        # This repository's own problem, so it is answered before any fetch.
+        self.assertEqual(fetch.urls, [])
+
+    def test_the_render_refuses_to_write_one(self):
+        # The same question asked before the write: `--render` used to fill the
+        # markers and put the file down whatever its body said.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            templates = root / "templates"
+            shutil.copytree(REPO / "templates", templates)
+            for path in templates.glob("*.PKGBUILD.in"):
+                with path.open("a") as handle:
+                    handle.write(self.BROKEN)
+            fetch = FetchSpy(
+                {
+                    sums_url("0.1.2"): sums_body(
+                        {
+                            "magpie-linux-amd64": ASSET_SUM,
+                            "magpie-cli-linux-amd64": ASSET_SUM,
+                        }
+                    ),
+                    license_url("0.1.2"): b"license",
+                    bump.ICON_URL: b"icon",
+                }
+            )
+            with self.assertRaises(bump.BumpError) as caught:
+                bump.render("0.1.2", layout=layout_at(root, templates=templates), fetch=fetch)
+        self.assertIn("not a bash script", str(caught.exception))
+        self.assertFalse((root / "packages").exists())
+
+
 class ServedTest(unittest.TestCase):
     """What the 软件源 carries, compared against what this tree would publish.
 
