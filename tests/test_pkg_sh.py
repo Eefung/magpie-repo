@@ -736,8 +736,8 @@ class FrozenLineJoinTest(unittest.TestCase):
             f"{bump.RELEASES}/download/v{version}/SHA256SUMS": "".join(
                 f"{digest}  {name}\n" for name, digest in sums.items()
             ).encode(),
-            f"{bump.SOURCE_REPO}/v{version}/LICENSE": b"license",
-            bump.ICON_URL: b"icon",
+            f"https://raw.githubusercontent.com/yetone/magpie/v{version}/LICENSE": b"license",
+            "https://usemagpie.ai/img/icon-256.png": b"icon",
         }
 
         def fetch(url: str, *, missing_ok: bool = False) -> bytes:
