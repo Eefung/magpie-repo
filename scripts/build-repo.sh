@@ -108,11 +108,18 @@ done <<<"$carried"
 # did not climb -- the one case `WANTED` produces, and the reason a pinned
 # rollback could never publish.
 prune() {
-    local pkgname="$1" anchor="$2" file
+    local pkgname="$1" anchor="$2" file dropped
+    # Captured first, not read through a process substitution: `< <(reader)`
+    # exits 0 whatever the reader said, so a window that refused to compute
+    # (an anchor the directory does not carry) would prune nothing and let
+    # repo-add run over the stale tree. The retire step above states the same
+    # rule for the same reason.
+    dropped="$(pkgfiles_prune "$out" "$pkgname" "$KEEP" "$anchor")" || return 1
     while IFS= read -r file; do
+        [ -n "$file" ] || continue
         echo "pruning $(basename "$file")"
         rm -f "$file"
-    done < <(pkgfiles_prune "$out" "$pkgname" "$KEEP" "$anchor")
+    done <<<"$dropped"
 }
 
 for pkgname in "${pkgnames[@]}"; do
