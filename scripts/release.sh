@@ -9,8 +9,9 @@
 # `gh release create` belongs to the workflow step; everything it is handed is
 # this script's answer:
 #
-#   - the assets of *this* 版本 only. The repo directory also keeps the previous
-#     build for the 保留窗口, and those files do not belong in a release.
+#   - the assets of *this build* only. The repo directory also keeps the build
+#     a rebuild replaced -- and the earlier 版本 the 保留窗口 still holds -- and
+#     none of those belong in a release.
 #   - a SHA256SUMS built from exactly those files, so the notes and the sums
 #     cannot come from two different sets.
 #   - the notes, whose install lines are generated from the 包清单 rather than
@@ -56,15 +57,32 @@ names="$(pkglist_names "$packages")" || exit 1
 }
 mapfile -t pkgnames <<<"$names"
 
-# One package at a time, in 包清单 order, so the caller gets a stable list.
+# One package at a time, in 包清单 order, so the caller gets a stable list. The
+# selection is the build this run published -- the newest `<pkgver>-<pkgrel>`,
+# every arch of it -- and not every file of the 版本: a rebuild leaves the build
+# it replaces on disk (they are one 版本 to the 保留窗口), and a release holding
+# both would describe two builds under one tag. `pkgfiles_current` is the same
+# reader the database entry uses, so the Release and the db cannot disagree
+# about which build is current.
 assets=()
 for pkgname in "${pkgnames[@]}"; do
-    mapfile -t -O "${#assets[@]}" assets < <(pkgfiles_at "$dir" "$pkgname" "$version")
+    mapfile -t current < <(pkgfiles_current "$dir" "$pkgname")
+    if [ "${#current[@]}" -eq 0 ]; then
+        echo "no package file for $pkgname in $dir" >&2
+        exit 1
+    fi
+    for file in "${current[@]}"; do
+        # The tree's current build is a fact; the 版本 this run rendered is the
+        # caller's claim. When they disagree, publishing would ship a build
+        # nobody rendered -- so say so instead.
+        built="$(pkgfile_version "$pkgname" "$file")"
+        if [ "$built" != "$version" ]; then
+            echo "$pkgname: $dir's build is $built, not the $version this run rendered" >&2
+            exit 1
+        fi
+    done
+    assets+=("${current[@]}")
 done
-[ "${#assets[@]}" -gt 0 ] || {
-    echo "no package files for v$version in $dir" >&2
-    exit 1
-}
 
 printf '%s\n' "${assets[@]}" >"$out/assets.txt"
 # Built in the directory the files live in, from their names: the digest is of
