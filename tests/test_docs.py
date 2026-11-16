@@ -17,6 +17,8 @@ the table a checked claim rather than a hope.
 
 from __future__ import annotations
 
+import re
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -159,6 +161,64 @@ class TestMapTest(unittest.TestCase):
         )
         self.assertNotIn("test_docs.py", self.listed(drifted), "the row moved; reword this test")
         self.assertEqual(self.unlisted(drifted), ["test_docs.py"])
+
+
+class ChineseSpacingTest(unittest.TestCase):
+    """Two Chinese words in a row take no space between them.
+
+    English prose embeds a glossary term with spaces around it -- `the 包清单
+    publishes` -- and that is right: those are English word boundaries, and
+    dropping them would run two English words together. The same habit carried
+    into Chinese prose leaves a space between two Chinese words, where the
+    language has no word separator and the space does no work: it reads as a
+    typo, and this repository has made it three times.
+
+    A grep is what stops a fourth. The scope is what git tracks, so an untracked
+    scratch file is not the gate's business; the self-test below is what keeps
+    the rule from passing vacuously.
+    """
+
+    SUFFIXES = ("*.md", "*.py", "*.sh", "*.yml", "*.in")
+    SPACED = re.compile(r"[\u4e00-\u9fff] +[\u4e00-\u9fff]")
+
+    def tracked(self) -> list[Path]:
+        """The files this rule covers: what git would carry, not a walk.
+
+        `--others --exclude-standard` is what makes a brand-new file part of the
+        answer: it is not in the index until someone stages it, and the gate runs
+        before the commit.
+        """
+        result = subprocess.run(
+            ["git", "-C", str(REPO), "ls-files", "--cached", "--others",
+             "--exclude-standard", *self.SUFFIXES],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return [REPO / line for line in result.stdout.splitlines() if line]
+
+    def spaced(self, text: str) -> list[str]:
+        """The lines of this text that set two Chinese words off from each other."""
+        return [line.strip() for line in text.splitlines() if self.SPACED.search(line)]
+
+    def test_no_chinese_word_is_set_off_from_the_next(self):
+        offenders = [
+            f"{path.relative_to(REPO)}: {line[:70]}"
+            for path in self.tracked()
+            for line in self.spaced(path.read_text())
+        ]
+        self.assertEqual(offenders, [])
+
+    def test_the_rule_bites(self):
+        # Built at run time: a literal of the offending shape in this file would
+        # be found by the test above, and a self-test that reddens itself is not
+        # one. Both accepted shapes are here too, so the rule cannot be widened
+        # by accident -- an English sentence embedding a Chinese term keeps its
+        # spaces, and so does a term with a Latin half.
+        bad = "落后" + " " + "的第四向"
+        self.assertEqual(self.spaced(bad), [bad])
+        self.assertEqual(self.spaced("the 包清单 publishes"), [])
+        self.assertEqual(self.spaced("arch 表管的是另一半"), [])
 
 
 if __name__ == "__main__":
