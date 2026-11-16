@@ -36,6 +36,14 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+# The digest the fake release publishes for the arch asset, and the one
+# `staged_root` renders into the PKGBUILD. One value on purpose: `--check`
+# compares the two, so a fixture that publishes one number and renders another
+# would read as "上游 re-uploaded this asset" in every test that expects a
+# quiet tree.
+ASSET_SUM = "2" * 64
+
+
 class FetchSpy:
     """A fake `fetch`: answers from a table and records what was asked for.
 
@@ -89,7 +97,7 @@ def version_sources(
     table: dict[str, bytes | None] = {}
     for version in [*tags, site]:
         if version is not None:
-            table.setdefault(sums_url(version), sums_body({"magpie-linux-amd64": "a" * 64}))
+            table.setdefault(sums_url(version), sums_body({"magpie-linux-amd64": ASSET_SUM}))
     if github is not None:
         table[bump.GITHUB_RELEASES] = json.dumps(
             [{"tag_name": f"v{tag}", "draft": False} for tag in tags]
@@ -101,7 +109,7 @@ def version_sources(
 
 def uploaded(*versions: str) -> dict[str, bytes]:
     """The SHA256SUMS of these 版本, and of nothing else."""
-    return {sums_url(version): sums_body({"magpie-linux-amd64": "a" * 64}) for version in versions}
+    return {sums_url(version): sums_body({"magpie-linux-amd64": ASSET_SUM}) for version in versions}
 
 
 def sums_body(entries: dict[str, str]) -> bytes:
@@ -122,7 +130,7 @@ def staged_root(root: Path, versions: dict[str, str], *, templates: Path | None 
             "maintainer": "Test Maintainer <test@example.invalid>",
             "sha_license": "0" * 64,
             "sha_icon": "1" * 64,
-            "sha_linux-amd64": "2" * 64,
+            "sha_linux-amd64": ASSET_SUM,
         }
         wanted = bump.placeholders(template)
         path = root / "packages" / pkg / "PKGBUILD"
@@ -591,6 +599,28 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(log["packaged"], {"magpie-bin": "0.1.10-1"})
         self.assertEqual(log["bump"], "1")
         self.assertEqual(log["behind"], {"magpie-cli-bin"})
+
+    def test_an_upstream_reupload_under_the_same_tag_is_behind(self):
+        # 上游 replaced the asset without moving the tag: the version matches,
+        # the tree matches what the 软件源 serves, and only the release's own
+        # checksums can say the bytes changed. Without this the new bytes would
+        # never build -- and `makepkg` would refuse them the day something did.
+        table = version_sources(github="0.1.10", site="0.1.10")
+        table[sums_url("0.1.10")] = sums_body(
+            {
+                "magpie-linux-amd64": "3" * 64,  # replaced upstream
+                "magpie-cli-linux-amd64": ASSET_SUM,  # untouched
+            }
+        )
+        fetch = FetchSpy(table)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = staged_root(
+                Path(tmp), {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"}
+            )
+            log = self.log_of(fetch, root)
+        self.assertEqual(log["bump"], "1")
+        # One package's bytes changed, and only that package is behind.
+        self.assertEqual(log["behind"], {"magpie-bin"})
 
     def test_a_committed_pkgbuild_that_is_not_its_render_is_reported(self):
         # The edit that starts a run through publish.yml's paths filter, finds

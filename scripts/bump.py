@@ -847,7 +847,7 @@ def values_of(template: str, rendered: str) -> dict[str, str]:
     return values
 
 
-def check_templates(layout: Layout) -> None:
+def check_templates(layout: Layout) -> dict[str, Template]:
     """Is this tree sound? The template's own rules, then the drift guard.
 
     `--check` answered one question -- is the packaged 版本 behind 上游 -- and
@@ -868,11 +868,14 @@ def check_templates(layout: Layout) -> None:
 
     A package with no PKGBUILD is not drift -- it has never been rendered, and
     check() already reports that as 落后 -- but its template is still a template
-    this repository will render, so it is still read.
+    this repository will render, so it is still read. The templates come back
+    because the caller needs the plan each one already worked out: which asset
+    feeds which placeholder is what the checksum comparison below asks about.
     """
+    found: dict[str, Template] = {}
     for pkg, prefix in layout.inventory.items():
         text = template_text(layout, pkg)
-        read_template(pkg=pkg, prefix=prefix, text=text, arches=layout.arches)
+        found[pkg] = read_template(pkg=pkg, prefix=prefix, text=text, arches=layout.arches)
 
         pkgbuild = layout.packages_dir / pkg / "PKGBUILD"
         if not pkgbuild.exists():
@@ -881,13 +884,14 @@ def check_templates(layout: Layout) -> None:
             values_of(text, pkgbuild.read_text())
         except BumpError as exc:
             raise BumpError(f"{pkg}: {exc}") from exc
+    return found
 
 
 def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     # This repository's own problem first, before anything is fetched: the
     # render does the same, so a tree whose templates and PKGBUILDs disagree
     # fails here rather than being reported as "upstream has no such asset".
-    check_templates(layout)
+    templates = check_templates(layout)
     upstream = latest_version(fetch=fetch)
     packaged = packaged_evr(layout)
     log(f"upstream={upstream}")
@@ -899,17 +903,38 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     if served is not None:
         for pkg, evr in sorted(served.items()):
             log(f"served {pkg}={evr}")
-    # Two reasons to publish, one answer. 上游 moved past the 版本 this tree
-    # renders, so the render has something new to do; or the tree's
+    # The release's own checksums, which is the third way this tree can be
+    # 落后: 上游 re-uploaded an asset under a tag that did not move. Nothing
+    # else would ever notice -- the version matches, the render matches, and
+    # `makepkg` would refuse the download the day something re-rendered.
+    sums = uploaded_sums(upstream, fetch=fetch) or {}
+    stale = set()
+    for pkg, template in templates.items():
+        evr = packaged.get(pkg)
+        if evr is None or pkgver_of(evr) != upstream:
+            continue  # already behind: the render will take the new sums
+        committed = (layout.packages_dir / pkg / "PKGBUILD").read_text()
+        values = values_of(template.text, committed)
+        for planned in template.assets:
+            served_sum = sums.get(planned.asset)
+            if served_sum is not None and values.get(planned.placeholder) != served_sum:
+                stale.add(pkg)
+    if stale:
+        log("checksums differ from 上游's: " + " ".join(sorted(stale)))
+    # Three reasons to publish, one answer. 上游 moved past the 版本 this tree
+    # renders, so the render has something new to do; the tree's
     # `<pkgver>-<pkgrel>` is not what the 软件源 serves, so what is committed
     # never reached a client -- a rebuild, a run that died between the push and
-    # the commit, or a first publish. Walking the inventory rather than what is
-    # on disk keeps a package whose PKGBUILD was never rendered 落后.
+    # the commit, or a first publish; or the bytes 上游 publishes for that 版本
+    # are not the bytes this tree was rendered against. Walking the inventory
+    # rather than what is on disk keeps a package whose PKGBUILD was never
+    # rendered 落后.
     behind = sorted(
         pkg
         for pkg in layout.inventory
         if pkgver_of(packaged.get(pkg)) != upstream
         or (served is not None and served.get(pkg) != packaged.get(pkg))
+        or pkg in stale
     )
     log(f"bump={'1' if behind else '0'}")
     if behind:
