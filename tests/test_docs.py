@@ -8,9 +8,9 @@ dropping `conflicts=` left the prose promising something that is no longer
 true. (The third such fact, the 保留窗口's number, is held by
 `test_inventory.RetentionWindowTest`, next to the window it belongs to.)
 
-AGENTS.md's test map is the same shape and is *not* guarded here yet: a guard
-that lists files must fail until the map is complete, and the map is a file an
-agent may not edit without approval.
+AGENTS.md's test map is the same shape and is held here too: a guard that lists
+files fails until the map is complete, which is what makes the sentence above
+the table a checked claim rather than a hope.
 
     python3 -m unittest discover -s tests
 """
@@ -105,6 +105,60 @@ class ProvidesClaimTest(unittest.TestCase):
             [problem for problem in self.problems(readme(), drifted) if "magpie-x" in problem],
             ["the claim does not name 'magpie-x'"],
         )
+
+
+class TestMapTest(unittest.TestCase):
+    """AGENTS.md's test map lists every module in tests/, or it is not a map.
+
+    The map is what a reader -- human or agent -- uses instead of grepping, and
+    the sentence above it promises completeness. `tests/frozen.py` was missing
+    while every test imported it, and the line count in the same sentence had
+    drifted by six hundred lines; both are the shape this repository keeps
+    finding, a document stating a fact a directory decides. The count is gone,
+    and the listing is held to the directory here.
+
+    The names are read from the **table's rows**, not from the file: the
+    sentence above the table names a file to say who checks the map, and a
+    document-wide search would count that sentence as a row.
+    """
+
+    SECTION = "## 测试地图"
+
+    def listed(self, map_text: str) -> set[str]:
+        """The file names the map's own table rows list."""
+        section = map_text.split(self.SECTION, 1)[1].split("\n## ", 1)[0]
+        return {
+            line.split("|")[1].strip().strip("`")
+            for line in section.splitlines()
+            if line.startswith("| `")
+        }
+
+    def unlisted(self, map_text: str) -> list[str]:
+        """Modules under tests/ the map's table does not list."""
+        listed = self.listed(map_text)
+        return [
+            path.name for path in sorted((REPO / "tests").glob("*.py")) if path.name not in listed
+        ]
+
+    def agents(self) -> str:
+        return (REPO / "AGENTS.md").read_text()
+
+    def rows(self) -> set[str]:
+        return {path.name for path in (REPO / "tests").glob("*.py")}
+
+    def test_every_module_is_in_the_map(self):
+        self.assertEqual(self.unlisted(self.agents()), [])
+        # And the table lists nothing that is not a module in tests/.
+        self.assertEqual(self.listed(self.agents()) - self.rows(), set())
+
+    def test_a_module_the_map_omits_is_caught(self):
+        drifted = "\n".join(
+            line
+            for line in self.agents().splitlines()
+            if not line.startswith("| `test_docs.py`")
+        )
+        self.assertNotIn("test_docs.py", self.listed(drifted), "the row moved; reword this test")
+        self.assertEqual(self.unlisted(drifted), ["test_docs.py"])
 
 
 if __name__ == "__main__":

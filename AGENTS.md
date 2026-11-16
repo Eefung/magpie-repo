@@ -18,13 +18,13 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 
 ## 检查
 
-推送前跑 `scripts/check.sh`：它就是 CI `test` job 的全部闸门（离线单测、shellcheck、ruff、actionlint，以及本机装着 makepkg 时的 probe——真 `makepkg` + `repo-add` 跑一遍打包链），三个 linter 由脚本按固定版本下到 `~/.cache/magpie-repo`，所以本机没装也跑得动、且与 runner 同版本。分段提交时每个中间态也跑一次：它要十几秒，probe 占大头（真打包五个 case），而每次 push 都会真的跑流水线。它跑不到的边界只有一个出处：它自己打印的 `not covered here` 段——那份清单会随改动变长或变短，别在这里另抄一份。
+推送前跑 `scripts/check.sh`：它就是 CI `test` job 的全部闸门（离线单测、shellcheck、ruff、actionlint，以及本机装着 makepkg 时的 probe——真 `makepkg` + `repo-add` 跑一遍打包链），三个 linter 由脚本按固定版本下到 `~/.cache/magpie-repo`，所以本机没装也跑得动、且与 runner 同版本。分段提交时每个中间态也跑一次：它要十几秒，probe 占大头（真 `makepkg` 跑几个 case，数量看它自己打印的 `assertions=`），而每次 push 都会真的跑流水线。它跑不到的边界只有一个出处：它自己打印的 `not covered here` 段——那份清单会随改动变长或变短，别在这里另抄一份。
 
 `publish.yml` 的 `paths` 含 `scripts/**`、`tests/**`、`templates/**`，所以这些改动推送后会触发一次 publish，可能直接发一版。这类提交与别的工作分开推，相关的几笔一起推：一次推送只跑一次流水线，一笔一推就会发一遍。一次提交只做一件事。
 
 ## 测试地图
 
-`tests/` 三千七百多行，文件名说的是范围，不是它守住的事实。找一条断言时先看这张表，别从头翻：
+`tests/` 的每个文件都在下面这张表上——`tests/test_docs.py` 对账，所以漏一个文件是红测试，不是一个记性。文件名说的是范围，不是它守住的事实。找一条断言时先看这张表，别从头翻：
 
 | 文件 | 守住什么 |
 | --- | --- |
@@ -38,9 +38,11 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 | `test_upstream.py` | `upstream.sh`：这次要不要发布、发哪个版本 |
 | `test_frozen.py` | 测试侧的冻结行读者与 `line_field` 同规则 |
 | `test_inventory.py` | 包清单 ↔ 目录 ↔ workflow ↔ README 的对账；step 顺序/门/outputs、`run:` 块形状、arch 表、发布树、保留窗口的数字；seed 那一行跑真分支 |
+| `test_docs.py` | README 里由程序决定的那两句（运行时间、provides/conflicts）各有 reader；这张测试地图的完整性 |
 | `install_block.py` | 不是测试：用户要粘的安装段的唯一读者——README 的块与 Release 说明都过它 |
 | `fixtures.py` | 不是测试：包文件名的唯一拼法，`test_pkg_sh.py` 用 `pkgfile_pkgname`/`pkgfile_version` 反向钉住 |
-| `workflow.py` | 不是测试：`publish.yml` 的唯一读者（job 的 env、step 列表、`$GITHUB_OUTPUT` 的写与读） |
+| `frozen.py` | 不是测试：冻结行的测试侧读者——直接跑生产的 `line_field`，其余测试都经它 |
+| `workflow.py` | 不是测试：`publish.yml` 的唯一读者（job 的 env、step 列表、cron、`$GITHUB_OUTPUT` 的写与读、它不用的那个载体） |
 
 ## 提交
 
