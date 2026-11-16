@@ -708,6 +708,16 @@ def pkgver_of(evr: str | None) -> str:
     return "" if evr is None else evr.split("-", 1)[0]
 
 
+def pkgrel_of(evr: str | None) -> int | None:
+    """The pkgrel half of `<pkgver>-<pkgrel>`, as a number; None when unreadable."""
+    if evr is None:
+        return None
+    _, separator, rel = evr.partition("-")
+    if not separator or not rel.isdigit():
+        return None
+    return int(rel)
+
+
 def served_evr(layout: Layout, *, fetch: Fetch = http_fetch) -> dict[str, str] | None:
     """The version each package is served at, read from the database pacman reads.
 
@@ -1048,6 +1058,11 @@ def behind(
 
     `served` is None when the address could not be read. The second and fourth
     directions cannot be answered then, and served_evr has already logged why.
+
+    One state is refused rather than reported: a tree rendering an older pkgrel
+    than the one being served, of the same 版本. pkgrel is a counter that only
+    goes up, and reading it as 未发布 opens a loop that publishes the same bytes
+    every run.
     """
     reasons: dict[str, str] = {}
     for pkg in layout.inventory:
@@ -1055,6 +1070,25 @@ def behind(
         if pkgver_of(evr) != upstream:
             reasons[pkg] = UPSTREAM_MOVED
         elif served is not None and served.get(pkg) != evr:
+            published = served.get(pkg)
+            held, published_rel = pkgrel_of(evr), pkgrel_of(published)
+            # pkgrel only ever goes up within a 版本 (Arch's own rule), so a tree
+            # that renders an *older* build of the 版本 the 软件源 serves is not
+            # 落后 -- it contradicts itself. Publishing it would leave the newer
+            # build on disk (one 版本, so the 保留窗口 keeps both) while the
+            # database and the Release named the older one, and every later run
+            # would read that as 未发布 and publish again, forever.
+            if (
+                published is not None
+                and pkgver_of(published) == pkgver_of(evr)
+                and held is not None
+                and published_rel is not None
+                and held < published_rel
+            ):
+                raise BumpError(
+                    f"{pkg}: the 软件源 serves {published}, and this tree renders {evr}; "
+                    "pkgrel 只能往上加 -- raise it, then re-render"
+                )
             reasons[pkg] = NOT_PUBLISHED
         elif pkg in stale:
             reasons[pkg] = UPSTREAM_REUPLOADED
