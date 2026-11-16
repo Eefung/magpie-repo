@@ -176,6 +176,12 @@ cat <<'EOF'
   real tools do what their stubs pretend. tests/test_build_repo.py drives the
   real build-repo.sh the same way, and the probe gate above runs the real
   makepkg and repo-add -- on a machine that has them, which the runner has not.
+- the entry check's own read of the 软件源: bump.py's `served_evr` against the
+  database pacman reads. tests/test_bump.py drives it against a synthesized
+  database in repo-add's format, but the bytes a real Pages response carries --
+  and what Pages serves *during* a deploy -- are what a publish run proves. A
+  read that fails says so and falls back to comparing against 上游 alone, which
+  is a documented fallback, not a green light.
 - the publish job's own plumbing -- `git ls-remote` and `git fetch` of the
   branch, `gh release create`, and the commit and push back to main: they only
   exist in the publish job, and a real publish is what proves them. The branch
