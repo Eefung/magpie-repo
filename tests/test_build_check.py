@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -128,8 +129,23 @@ class BuildCheckTest(unittest.TestCase):
         self.assertEqual(
             [path.name for path in self.pkgdir.glob("*.pkg.tar.*")], [artifact.name]
         )
-        for leftover in ("src", "pkg", ".srcdest", ".SRCINFO"):
+        for leftover in self.leftovers():
             self.assertFalse((self.pkgdir / leftover).exists(), leftover)
+
+    def leftovers(self) -> list[str]:
+        """What pkg.sh says a build leaves -- not a second copy of the names."""
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f"source {shlex.quote(str(REPO / 'scripts' / 'lib' / 'pkg.sh'))}; "
+                "pkgfile_leftovers",
+            ],
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.split()
 
     def test_a_package_file_from_an_earlier_run_is_not_published(self):
         stale = self.pkgdir / fixtures.pkgfile_name("magpie-bin", "0.1.1")

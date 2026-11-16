@@ -13,6 +13,7 @@ tested here too instead of only inside a publish run.
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import io
 import re
 import shlex
@@ -380,6 +381,43 @@ class PackageResidueTest(unittest.TestCase):
         # the sweep cannot be left out of the ignore.
         residue = self.pattern("pkgfile_residue_pattern")
         self.assertIn(f"packages/*/{residue}", (REPO / ".gitignore").read_text())
+
+    def leftovers(self) -> list[str]:
+        result = call("pkgfile_leftovers")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.split()
+
+    def test_the_leftovers_are_the_working_trees_and_a_stale_srcinfo(self):
+        self.assertEqual(self.leftovers(), ["src", "pkg", ".srcdest", ".SRCINFO"])
+
+    def test_the_gitignore_covers_the_leftovers(self):
+        # GLOSSARY says `.gitignore` covers the same set as the sweep. Before
+        # this, only the residue glob had a reader: the four names were spelled
+        # by hand in the ignore file, in build-check's LEFTOVERS and again in
+        # the build-check test, and a fifth name would have reached main
+        # through a hand `git add packages`.
+        ignored = (REPO / ".gitignore").read_text()
+        for name in self.leftovers():
+            with self.subTest(name=name):
+                self.assertIn(f"packages/*/{name}", ignored)
+
+    def test_the_gitignore_covers_the_asset_prefixes(self):
+        # A hand-run makepkg drops the upstream assets beside the PKGBUILD,
+        # named `<prefix>-<version>-<suffix>`; the line that ignores them was
+        # the inventory's prefixes spelled a second time, with nothing holding
+        # the two together. A package whose prefix no line covers would leave
+        # a 30 MB binary for `git add packages` to pick up.
+        lines = [
+            line.strip()
+            for line in (REPO / ".gitignore").read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        for prefix in sorted(set(bump.PACKAGES.values())):
+            with self.subTest(prefix=prefix):
+                self.assertTrue(
+                    any(fnmatch.fnmatch(f"packages/x/{prefix}-0.1.9-amd64", line) for line in lines),
+                    f"no .gitignore line covers packages/*/{prefix}-*",
+                )
 
 
 class PkgfilesAllTest(RepoDirectory):

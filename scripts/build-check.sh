@@ -108,8 +108,9 @@ rm -f "$pkgdir"/$residue
 # trees makepkg creates (the trap clears them) and a srcinfo an older checkout
 # may still carry, which nothing writes any more. The trap removes these and the
 # check at the end allows them, so the two cannot disagree about what is
-# supposed to be here.
-LEFTOVERS=(src pkg .srcdest .SRCINFO)
+# supposed to be here -- and the names come from pkg.sh, which `.gitignore` and
+# the tests are held to, so the fourth copy of this set is the last.
+mapfile -t LEFTOVERS <<<"$(pkgfile_leftovers)"
 
 cleanup() {
     local name file

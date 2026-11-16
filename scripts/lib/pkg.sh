@@ -149,6 +149,21 @@ pkgfile_pattern() { printf '*%s\n' "$(pkgfile_suffix)"; }
 # tests/test_pkg_sh.py.
 pkgfile_residue_pattern() { printf '*.pkg.tar.*\n'; }
 
+# pkgfile_leftovers -- the names a build leaves in a package directory that are
+# not 包文件, one per line.
+#
+# 残留 has two halves, and they are answered by two different things. A glob can
+# answer "which files look like a build's output" (pkgfile_residue_pattern);
+# only names can answer "which entries are a build's own byproducts" --
+# makepkg's working trees, and a `.SRCINFO` an older checkout still has. Three
+# places have to agree about that second set: build-check's trap, the stray
+# check that runs before it hands the directory back, and `.gitignore`, for the
+# run a kill caught before either could fire. They were three copies of four
+# names until this function became the fourth reader of them.
+pkgfile_leftovers() {
+    printf '%s\n' src pkg .srcdest .SRCINFO
+}
+
 # pkgfiles_all <repo dir> -- every 包文件 in that directory, oldest 版本 first.
 #
 # The one glob. `pkgfiles` filters it per package and the window, the database
