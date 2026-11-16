@@ -109,6 +109,7 @@ jobs:
             "$upstream" "$target" "$bump" >> "$GITHUB_OUTPUT"
 
       - name: Render the PKGBUILDs
+        id: render
         if: steps.upstream.outputs.bump == '1'
         env:
           TARGET: ${{ steps.upstream.outputs.target }}
@@ -130,7 +131,12 @@ jobs:
           # half-published run the "publish first, commit last" order exists
           # to prevent. line_field fails the step if the line is absent.
           ver="$(line_field ver /tmp/render.txt)"
-          echo "ver=$ver" >> "$GITHUB_ENV"
+          # Out through the same carrier as the check's three facts, so the
+          # suite's "every output has a reader" rule covers it too. This key
+          # used to go to `$GITHUB_ENV`, a second carrier with none of those
+          # rules -- one place where a dead handover could come back unseen.
+          printf 'ver=%s\n' \
+            "$ver" >> "$GITHUB_OUTPUT"
 
       - name: Build the packages and assemble the pacman repository
         if: steps.upstream.outputs.bump == '1'
@@ -184,6 +190,8 @@ jobs:
 
       - name: Publish the pacman repository to gh-pages
         if: steps.upstream.outputs.bump == '1'
+        env:
+          VER: ${{ steps.render.outputs.ver }}
         run: |
           set -euo pipefail
           # What "publish to the pages branch" means -- `.nojekyll`, one
@@ -191,7 +199,7 @@ jobs:
           # scripts/publish-pages.sh's answer, and it runs offline against a
           # bare repository in tests/test_publish_pages.py. What is left here
           # is the one part a publish run still proves: the token URL.
-          ./scripts/publish-pages.sh "$TREE" "$ver" \
+          ./scripts/publish-pages.sh "$TREE" "$VER" \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           echo "repository published: $PAGES_URL/$ARCH"
 
@@ -201,6 +209,8 @@ jobs:
       # exist -- no later run would try again.
       - name: Publish the GitHub release
         if: steps.upstream.outputs.bump == '1'
+        env:
+          VER: ${{ steps.render.outputs.ver }}
         run: |
           set -euo pipefail
           # shellcheck source=scripts/lib/pkg.sh
@@ -210,33 +220,35 @@ jobs:
           # come from the 包清单 -- is scripts/release.sh's answer. gh is what is
           # left here, and it is the only part a publish run can prove.
           packages="$(line_field packages "$UP.txt")"
-          ./scripts/release.sh "$TREE/$ARCH" "$ver" "$packages" /tmp/rel \
+          ./scripts/release.sh "$TREE/$ARCH" "$VER" "$packages" /tmp/rel \
             > /tmp/release.txt
           cat /tmp/release.txt
           mapfile -t assets < "$(line_field assets /tmp/release.txt)"
-          if gh release view "v$ver" >/dev/null 2>&1; then
+          if gh release view "v$VER" >/dev/null 2>&1; then
             # The tag exists -- but a rebuild of the same 版本 lands here with
             # different bytes, and the 软件源 now carries them (the entry check
             # compares the two). Leaving the old assets would describe one
             # build in the Release and another to pacman, so the assets and the
             # notes are replaced instead. `gh release upload` is the command
             # that makes this idempotent; nothing here is a new Release.
-            gh release upload "v$ver" --clobber \
+            gh release upload "v$VER" --clobber \
               "${assets[@]}" "$(line_field sums /tmp/release.txt)"
-            gh release edit "v$ver" --notes-file "$(line_field notes /tmp/release.txt)"
-            echo "release v$ver updated: $(gh release view "v$ver" --json url -q .url)"
+            gh release edit "v$VER" --notes-file "$(line_field notes /tmp/release.txt)"
+            echo "release v$VER updated: $(gh release view "v$VER" --json url -q .url)"
             exit 0
           fi
-          gh release create "v$ver" \
-            --title "magpie $ver" \
+          gh release create "v$VER" \
+            --title "magpie $VER" \
             --notes-file "$(line_field notes /tmp/release.txt)" \
             "${assets[@]}" "$(line_field sums /tmp/release.txt)"
-          echo "release created: $(gh release view "v$ver" --json url -q .url)"
+          echo "release created: $(gh release view "v$VER" --json url -q .url)"
 
       # Last, so that every failure above is retried by the next run: main
       # still carries the old pkgver until this step succeeds.
       - name: Commit the rendered PKGBUILDs
         if: steps.upstream.outputs.bump == '1'
+        env:
+          VER: ${{ steps.render.outputs.ver }}
         run: |
           set -euo pipefail
           # The step's own copy of the identity would be a second source for a
@@ -245,9 +257,9 @@ jobs:
           git config user.email "$GIT_EMAIL"
           git add packages
           if git diff --cached --quiet; then
-            echo "PKGBUILDs are already at $ver, nothing to commit"
+            echo "PKGBUILDs are already at $VER, nothing to commit"
           else
-            git commit -m "build: magpie $ver"
+            git commit -m "build: magpie $VER"
             # A hand push landing mid-run would otherwise reject this one.
             git push || { git pull --rebase --autostash && git push; }
           fi

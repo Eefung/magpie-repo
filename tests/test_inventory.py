@@ -193,6 +193,26 @@ class PublishTransactionTest(unittest.TestCase):
         self.assertEqual(self.dead_outputs(), [])
         self.assertEqual(workflow.unparsed_output_writes(), [])
 
+    def test_every_step_to_step_fact_rides_one_carrier(self):
+        """One carrier, so one set of rules -- and `ver` is on it.
+
+        `$GITHUB_ENV` had no rule at all: no "every key has a reader", no
+        "only one write shape". `ver` travelled on it while the two invariants
+        this class asserts governed `$GITHUB_OUTPUT` only, so a dead handover
+        could come back through the unguarded carrier and the suite would stay
+        green. If a step ever needs `$GITHUB_ENV` again, that is the moment to
+        give the second carrier the same two rules -- not a line to write the
+        fact on and hope.
+        """
+        live = [
+            line.strip()
+            for line in workflow.text().splitlines()
+            if "$GITHUB_ENV" in line and not line.strip().startswith("#")
+        ]
+        self.assertEqual(live, [])
+        self.assertIn("ver", workflow.output_keys())
+        self.assertIn("ver", workflow.output_reads())
+
     def test_a_comment_on_the_gate_is_not_a_change(self):
         # The failure the reader exists to end: a behaviour-identical edit that
         # used to redden the job. `if_` is a parsed value now, not the rest of
