@@ -166,12 +166,23 @@ def layout_at(
     """A layout pointing the renderer at a temporary tree.
 
     Only the output directory moves: the templates and the inventory are the
-    repository's own unless a test overrides them. This goes through the
-    production constructor now, so the defaults under test are the ones that
-    ship. `served` is None unless a test is about the comparison against what
-    the 软件源 carries, which is also what a hand run without the three names
-    gets.
+    repository's own unless a test overrides them -- and unless the tree staged
+    its own `templates/`, which is what `layout_for` would use for that root.
+    That last clause is the one that matters: `staged_root` renders a PKGBUILD
+    from the templates it was handed, and this function builds the layout the
+    code under test reads, so a caller that names a tree to one and not the
+    other points two fixtures at two trees. The failure does not look like a
+    fixture bug -- `values_of` reports the committed file as "not its
+    template's render", which is the drift message.
+
+    This goes through the production constructor, so the defaults under test
+    are the ones that ship. `served` is None unless a test is about the
+    comparison against what the 软件源 carries, which is also what a hand run
+    without the three names gets.
     """
+    if templates is None:
+        staged = root / "templates"
+        templates = staged if staged.is_dir() else None
     return bump.layout_for(
         REPO,
         templates=templates,
@@ -221,6 +232,49 @@ class LayoutForTest(unittest.TestCase):
             layout = bump.layout_for(Path(tmp), packages_dir=Path(tmp) / "out")
             self.assertEqual(layout.templates, Path(tmp) / "templates")
             self.assertEqual(layout.packages_dir, Path(tmp) / "out")
+
+
+class LayoutAtTest(unittest.TestCase):
+    """The fixture's layout and the fixture's tree have to be the same tree.
+
+    `staged_root` renders a PKGBUILD from the templates it is handed; `layout_at`
+    builds the layout the code under test reads. Two calls, two chances to name
+    different trees -- and the failure does not read as a fixture bug: `values_of`
+    says the committed file "is not its template's render", which is the drift
+    message. It cost two detours in one session, both times because the tree
+    carried its own `templates/` and the layout was built without them.
+    """
+
+    def staged_with_marker(self, root: Path) -> Path:
+        """A staged tree whose own templates differ from the repository's."""
+        templates = root / "templates"
+        shutil.copytree(REPO / "templates", templates)
+        desktop = templates / "magpie-bin.PKGBUILD.in"
+        desktop.write_text(desktop.read_text() + "\n# the staged tree\n")
+        staged_root(
+            root,
+            {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"},
+            templates=templates,
+        )
+        return templates
+
+    def test_a_tree_that_carries_its_own_templates_is_read_against_them(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            templates = self.staged_with_marker(root)
+
+            layout = layout_at(root)
+
+            self.assertEqual(layout.templates, templates)
+            # And the question the repository asks of a tree answers clean:
+            # read against the repository's templates this tree is drift.
+            bump.check_templates(layout)
+
+    def test_a_tree_without_one_still_reads_the_repository_templates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            staged_root(root, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+            self.assertEqual(layout_at(root).templates, REPO / "templates")
 
 
 class HighestTest(unittest.TestCase):
