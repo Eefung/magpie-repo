@@ -769,6 +769,19 @@ class RetentionWindowTest(unittest.TestCase):
     def test_the_glossary_states_the_same_number(self):
         self.assertIn(f"KEEP={self.keep()}", (REPO / "GLOSSARY.md").read_text())
 
+    def test_the_scripts_default_is_the_declared_number(self):
+        # build-repo.sh keeps a default so the hand run README documents works
+        # without the flag. `REPO_NAME` lost its default for exactly this
+        # reason: a default equal to the declared value makes "the env arrived"
+        # and "the default was used" produce identical runs, so a run cannot
+        # prove either. What is left is the value itself -- a window raised in
+        # the env and not here prunes the documented hand run to the old one,
+        # and nothing else would notice.
+        script = (REPO / "scripts" / "build-repo.sh").read_text()
+        match = re.search(r'^KEEP="\$\{KEEP:-(\d+)\}"', script, re.M)
+        self.assertIsNotNone(match, "build-repo.sh no longer defaults KEEP")
+        self.assertEqual(match.group(1), self.keep())
+
 
 class WorkflowShellTest(unittest.TestCase):
     """The workflow's `run:` blocks are shell, and two shapes in them bite.
