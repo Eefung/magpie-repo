@@ -48,6 +48,7 @@ sudo pacman -S magpie-cli-bin    # 终端版（静态，无 GUI 依赖），可�
 
 ```bash
 ./scripts/upstream.sh /tmp/up                          # 入口检查：打印 upstream= / target= / bump= / packages=
+export GITHUB_TOKEN="$(gh auth token)"               # 手跑前设上：没 token 时 GitHub API 只给 60 次/小时，检查会退回站点 API
 python3 scripts/bump.py --check                     # upstream=… / packaged … / bump=0|1
 python3 scripts/bump.py --render --version <版本>    # 生成 PKGBUILD 并打印 ver=<版本>；不给 --version 时取最新的已上传版本
 python3 -m unittest discover -s tests               # 离线单测，不联网也不进容器
