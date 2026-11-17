@@ -127,8 +127,8 @@ gate_tests() {
     # The count is this gate's own frozen line. It used to be unittest's "Ran N
     # tests" prose, sed-ed out of this log by scripts/check-range.sh: a reworded
     # line printed `tests=?` and the commit still read ok. `TextTestRunner.testsRun`
-    # is the number the program itself knows, printed once here and read through
-    # line_field like every other handover.
+    # is the number the program itself knows, printed once here through the same
+    # write gate as every other handover, and read back the same way.
     tests_log="$(mktemp)"
     python3 - "$root/tests" >"$tests_log" 2>&1 <<'PY'
 import sys
@@ -240,8 +240,8 @@ gate_probe() {
     # The count is the probe's own frozen line. It used to be
     # `grep -c '^  ok:'` over this log, which made the alignment of an echo
     # the report's whole evidence: re-indenting two of them printed "ok: 3
-    # assertions" and the gate stayed green. Absent, empty or duplicated is
-    # now a failed gate, by line_field's rule.
+    # assertions" and the gate stayed green. Absent, empty, duplicated, or not
+    # an integer is a failed gate: the table says `assertions` is one.
     if ! frozen_var assertions "$log" assertions; then
         cat "$log" >&2
         rm -f "$log"
