@@ -810,12 +810,13 @@ def render_pkgbuild(template: str, values: Mapping[str, str]) -> str:
 
 
 def pkg_field(text: str, name: str) -> str | None:
-    """One field of a rendered PKGBUILD, read the way pkg.sh's `pkg_field` reads it.
+    """One field of a rendered PKGBUILD: first matching line, its first token.
 
-    First matching line wins, the value is its first token, and one matching
-    pair of quotes comes off -- the shape the renderer writes. One table of
-    shapes is fed to both readers (tests/test_pkg_sh.py), because two readers of
-    one field that disagree is a split nothing would notice.
+    The shell does not read a PKGBUILD any more -- build-check.sh asks makepkg
+    for the same two fields (`srcinfo_field`) -- so this is the only reader of
+    the file, and it reads a tree no makepkg has touched: the committed
+    PKGBUILDs the entry check compares against 软件源. One matching pair of
+    quotes comes off, which is the shape this file's renderer writes.
     """
     prefix = f"{name}="
     for line in text.splitlines():

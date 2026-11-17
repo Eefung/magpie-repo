@@ -103,38 +103,61 @@ class PkgfilesTest(unittest.TestCase):
         self.assertEqual(self.files("magpie-bin"), [])
 
 
-class PkgFieldTest(unittest.TestCase):
-    """`pkg_field` is the one place the shell parses a rendered PKGBUILD."""
+class SrcinfoFieldTest(unittest.TestCase):
+    """The fields a srcinfo block answers, and the shapes it must refuse.
 
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.pkgbuild = Path(self._tmp.name) / "PKGBUILD"
+    build-check.sh reads `pkgver`/`pkgname` out of the block makepkg printed
+    rather than parsing the PKGBUILD beside it. `pkg_field`, the shell reader
+    this replaced, existed for those two lines only, and it was half of a
+    two-runtime agreement -- bump.py reads the same fields out of a tree no
+    makepkg has touched -- that needed a table of shapes to hold together. With
+    the shell side gone there is one reader for the file and one question for
+    the block, and what has to hold is the refusal: no answer is a block that
+    decided nothing, and two answers is a block the caller cannot choose from.
+    """
 
-    def field(self, name: str) -> subprocess.CompletedProcess:
-        return call(f"pkg_field {shlex.quote(str(self.pkgbuild))} {name}")
+    def field(self, name: str, text: str) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "srcinfo"
+            path.write_text(text)
+            return call(f'srcinfo_field {name} "$(cat {shlex.quote(str(path))})"')
 
-    def test_reads_a_field_and_drops_the_quotes(self):
-        self.pkgbuild.write_text("pkgname=magpie-bin\npkgver='0.1.4131'\npkgrel=1\n")
-        self.assertEqual(self.field("pkgver").stdout, "0.1.4131\n")
-        self.assertEqual(self.field("pkgname").stdout, "magpie-bin\n")
+    def test_reads_a_field_and_drops_the_indent(self):
+        text = "pkgbase = magpie-bin\n\tpkgver = 0.1.4131\npkgname = magpie-cli-bin\n"
+        pkgver = self.field("pkgver", text)
+        self.assertEqual(pkgver.returncode, 0, pkgver.stderr)
+        self.assertEqual(pkgver.stdout, "0.1.4131\n")
+        self.assertEqual(self.field("pkgname", text).stdout, "magpie-cli-bin\n")
 
-    def test_the_first_occurrence_wins(self):
-        # bump.py's own reader takes the first match too; two readers that
-        # disagreed about a duplicated field would be a silent split.
-        self.pkgbuild.write_text("pkgver=0.1.1\npkgver=0.1.2\n")
-        self.assertEqual(self.field("pkgver").stdout, "0.1.1\n")
-
-    def test_a_missing_field_fails_loudly(self):
-        self.pkgbuild.write_text("pkgname=magpie-bin\n")
-        result = self.field("pkgver")
+    def test_a_block_that_does_not_answer_is_refused(self):
+        result = self.field("pkgver", "pkgname = magpie-bin\n")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("pkgver", result.stderr)
 
-    def test_a_missing_file_fails_loudly(self):
-        result = self.field("pkgver")
+    def offenders(self, needle: str) -> list[str]:
+        """Scripts whose live lines mention `needle`: a note about it is not it."""
+        found = []
+        for path in sorted((REPO / "scripts").rglob("*.sh")):
+            live = "\n".join(
+                line
+                for line in path.read_text().splitlines()
+                if not line.lstrip().startswith("#")
+            )
+            if needle in live:
+                found.append(path.name)
+        return found
+
+    def test_the_shell_parses_no_pkgbuild(self):
+        # The reader that pulled `pkgname=`/`pkgver=` out of a PKGBUILD is
+        # gone -- makepkg answers both, from the file it just parsed. A
+        # reintroduction would be a second parse of the same file, in the
+        # runtime that has no python3 to read it the way the renderer writes it.
+        self.assertEqual(self.offenders("pkg_field"), [])
+
+    def test_two_answers_are_refused_not_chosen(self):
+        result = self.field("pkgver", "pkgver = 0.1.1\npkgver = 0.1.2\n")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("no such PKGBUILD", result.stderr)
+        self.assertIn("not one", result.stderr)
 
 
 class RepoDirectory(unittest.TestCase):
@@ -833,57 +856,6 @@ class PayloadTest(unittest.TestCase):
         result = self.reports(artifact, "0.1.4147")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("failed to run --version", result.stderr)
-
-
-class PkgverReadersTest(unittest.TestCase):
-    """One shape for the 版本, read from both runtimes.
-
-    `pkg_field` is the shell's reader and `bump.packaged_evr` is python's: they
-    answer the same question about the same file in two languages, because the
-    build container has no python3. Their agreement used to live in a comment
-    under a shell-only test, and their leniency had already drifted -- so one
-    table is fed to both and both answers are compared. The answer is the pair
-    `<pkgver>-<pkgrel>`, which is what the entry check compares against the
-    软件源, so both halves are in the table.
-    """
-
-    SHAPES = [
-        "pkgver=0.1.4147\npkgrel=1\n",
-        "pkgver='0.1.4147'\npkgrel=1\n",
-        'pkgver="0.1.4147"\npkgrel=1\n',
-        # The first line wins on both sides.
-        "pkgver=0.1.1\npkgver=0.1.2\npkgrel=1\n",
-        # A hand edit that leaves a trailing space used to split them.
-        "pkgver=0.1.4147   \npkgrel=1\n",
-        # The other half is read by the same rule, and a rebuild changes it.
-        "pkgver=0.1.4147\npkgrel='2'\n",
-    ]
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name)
-
-    def test_both_readers_give_the_same_answer(self):
-        for shape in self.SHAPES:
-            with self.subTest(shape=shape):
-                pkg = "magpie-bin"
-                pkgbuild = self.root / "packages" / pkg / "PKGBUILD"
-                pkgbuild.parent.mkdir(parents=True, exist_ok=True)
-                pkgbuild.write_text(shape)
-
-                from_python = bump.packaged_evr(bump.layout_for(self.root))[pkg]
-                pkgver = call(f"pkg_field {shlex.quote(str(pkgbuild))} pkgver")
-                pkgrel = call(f"pkg_field {shlex.quote(str(pkgbuild))} pkgrel")
-
-                self.assertEqual(pkgver.returncode, 0, pkgver.stderr)
-                self.assertEqual(pkgrel.returncode, 0, pkgrel.stderr)
-                # Exact, not stripped beyond the line's own newline: a trailing
-                # space is one of the shapes, and stripping it here would hide
-                # the split the table describes.
-                self.assertEqual(
-                    from_python, pkgver.stdout.rstrip("\n") + "-" + pkgrel.stdout.rstrip("\n")
-                )
 
 
 class PkgrelShapeTest(unittest.TestCase):

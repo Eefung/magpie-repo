@@ -46,10 +46,19 @@ STUB_MAKEPKG = """\
 # own leftovers.
 set -euo pipefail
 case "${1:-}" in
-    --printsrcinfo) printf 'pkgbase = magpie-bin\\n\\tdepends = glibc\\n'; exit 0 ;;
+    --printsrcinfo)
+        # What makepkg prints about a PKGBUILD, one field per line. The script
+        # reads pkgver, pkgname and the runtime depends out of this one text,
+        # so the fixture answers all four: a fake that answered only `depends`
+        # would leave the two identity fields unanswered.
+        . ./PKGBUILD
+        printf 'pkgbase = %s\n\tpkgver = %s\n\tpkgrel = %s\n\tdepends = glibc\n\tpkgname = %s\n' \
+            "$pkgname" "$pkgver" "$pkgrel" "$pkgname"
+        exit 0
+        ;;
     --packagelist)
         . ./PKGBUILD
-        printf '%s/%s-%s-%s-%s%s\\n' "$PWD" "$pkgname" "$pkgver" "$pkgrel" "$PKG_ARCH" "$PKG_SUFFIX"
+        printf '%s/%s-%s-%s-%s%s\n' "$PWD" "$pkgname" "$pkgver" "$pkgrel" "$PKG_ARCH" "$PKG_SUFFIX"
         exit 0
         ;;
 esac
@@ -58,7 +67,7 @@ esac
 build="$(mktemp -d)"
 trap 'rm -rf "$build"' EXIT
 mkdir -p "$build/usr/bin"
-printf '#!/bin/sh\\necho "magpie %s"\\n' "${STUB_REPORTS:-$pkgver}" >"$build/usr/bin/magpie"
+printf '#!/bin/sh\necho "magpie %s"\n' "${STUB_REPORTS:-$pkgver}" >"$build/usr/bin/magpie"
 chmod +x "$build/usr/bin/magpie"
 tar -cf "$pkgname-$pkgver-$pkgrel-$PKG_ARCH$PKG_SUFFIX" -C "$build" usr
 """

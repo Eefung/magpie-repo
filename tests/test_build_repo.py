@@ -29,11 +29,13 @@ SCRIPT = REPO / "scripts" / "build-repo.sh"
 STUB_BUILD_CHECK = """\
 #!/usr/bin/env bash
 # Stands in for build-check.sh: names the file makepkg would have made, makes
-# it, and hands back the same two frozen lines the real one prints. The fields
-# come from pkg.sh, not from a sed of its own -- the naming rule has one reader,
-# and a stub that spelled pkgver its own way was a second copy of it. The lines
-# are the two the real script prints: pkgver= left the handover when nothing
-# read it, and a stub still printing it would be pretending otherwise.
+# it, and hands back the same two frozen lines the real one prints.
+#
+# Nothing here parses a PKGBUILD. The real script asks makepkg for the name and
+# the 版本 (srcinfo_field); a stub reading them out of the file would be a second
+# reader of the shape that just left the tree. The package name is the
+# directory's -- `packages/<pkgname>` is the layout build-repo walks -- and the
+# 版本 is what the test staged.
 #
 # The name's other three fields arrive from tests/fixtures.py (PKG_REL,
 # PKG_ARCH, PKG_SUFFIX) instead of being written into this printf: a stub that
@@ -41,9 +43,8 @@ STUB_BUILD_CHECK = """\
 # pkgrel bump or a second arch, which is the one change this file is about.
 set -euo pipefail
 dir="$1"
-source "${PKG_SH:?}"
-pkgname="$(pkg_field "$dir/PKGBUILD" pkgname)"
-pkgver="$(pkg_field "$dir/PKGBUILD" pkgver)"
+pkgname="$(basename "$dir")"
+pkgver="${STUB_PKGVER:?}"
 artifact="$dir/$pkgname-$pkgver-${PKG_REL}-${PKG_ARCH}$PKG_SUFFIX"
 : > "$artifact"
 echo "ok: $(basename "$artifact")"
@@ -83,8 +84,12 @@ class BuildRepoTest(unittest.TestCase):
         self.out.mkdir(parents=True)
         self.pkgdir = self.root / "packages" / "magpie-bin"
         self.pkgdir.mkdir(parents=True)
+        self.staged: str | None = None
 
     def stage(self, version: str) -> None:
+        # The PKGBUILD is the real input a build would read; the stub is told
+        # the 版本 separately, because makepkg is what would answer with it.
+        self.staged = version
         (self.pkgdir / "PKGBUILD").write_text(
             f"pkgname=magpie-bin\npkgver={version}\npkgrel=1\n"
         )
@@ -97,8 +102,9 @@ class BuildRepoTest(unittest.TestCase):
     ) -> subprocess.CompletedProcess:
         env = dict(os.environ)
         env["BUILD_CHECK"] = str(build_check or self.stub_build)
-        env["PKG_SH"] = str(REPO / "scripts" / "lib" / "pkg.sh")
         env["REPO_ADD_LOG"] = str(self.record)
+        if self.staged is not None:
+            env["STUB_PKGVER"] = self.staged
         env["PKG_REL"] = fixtures.REL
         env["PKG_ARCH"] = fixtures.ARCH
         env["PKG_SUFFIX"] = fixtures.SUFFIX
@@ -217,7 +223,6 @@ class BuildRepoTest(unittest.TestCase):
         liar.write_text(
             "#!/usr/bin/env bash\n"
             'dir="$1"\n'
-            'source "${PKG_SH:?}"\n'
             'artifact="$dir/other-bin-0.1.10-${PKG_REL}-${PKG_ARCH}$PKG_SUFFIX"\n'
             ': > "$artifact"\n'
             'echo "pkgname=magpie-bin"\n'

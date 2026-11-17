@@ -166,8 +166,12 @@ echo "ok: $(basename "$artifact") ships $member"
 mapfile -t deps < <(srcinfo_depends "$srcinfo")
 install_depends "${deps[@]}"
 
-pkgver="$(pkg_field PKGBUILD pkgver)"
-pkgname="$(pkg_field PKGBUILD pkgname)"
+# Both fields come out of the srcinfo this script already holds: makepkg parsed
+# the PKGBUILD to print it, so reading the file a second time for the same two
+# answers was a parse nobody needed -- and the shell reader it went through
+# existed for these two lines alone.
+pkgver="$(srcinfo_field pkgver "$srcinfo")" || exit 1
+pkgname="$(srcinfo_field pkgname "$srcinfo")" || exit 1
 
 # Running the program only proves it loads. The point of the check is that the
 # payload reports the 版本 being packaged, so a binary that came out of the

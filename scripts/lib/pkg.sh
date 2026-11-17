@@ -5,13 +5,15 @@
 # hand back.
 #
 #   source "$(dirname "${BASH_SOURCE[0]}")/lib/pkg.sh"
-#   pkg_field packages/magpie-bin/PKGBUILD pkgver
+#   srcinfo_field pkgver "$srcinfo"
 #
 # Both build scripts run inside archlinux:base-devel, which ships no python3, so
-# this is the one place the shell reads a PKGBUILD field -- and the one place it
-# reads what makepkg printed about one (srcinfo_depends). bump.py reads the same
-# file from the other side; it renders it, so it owns the writer's half. Any
-# third sed for `pkgver=` belongs here instead.
+# the shell does not parse a PKGBUILD at all: it asks makepkg. `pkg_field` used
+# to read `pkgname=`/`pkgver=` out of the file, and its only callers were two
+# lines in build-check.sh that already held `makepkg --printsrcinfo` -- the same
+# answer, asked of the program that owns the parsing. bump.py keeps its own
+# `pkg_field`, because it reads a tree no makepkg has touched. Any sed for a
+# PKGBUILD field belongs there, not here.
 #
 # The same goes for the frozen `name=value` lines: bump.py and build-check.sh
 # write them, and every reader goes through line_field rather than its own sed.
@@ -92,33 +94,41 @@ pkglist_dirs() { pkglist_field "$1" 1; }
 # release step names files without reading the PKGBUILD again.
 pkglist_names() { pkglist_field "$1" 2; }
 
-# pkg_field <pkgbuild> <field> -- one field of a rendered PKGBUILD, unquoted.
+# srcinfo_lines <name> <text> -- every value that field of a srcinfo block has,
+# one per line, in the order makepkg printed them.
 #
-# The value is the first token of the first matching line, with a matching pair
-# of quotes taken off. That is the shape the renderer writes, and it is the
-# rule bump.py's own reader applies (`^pkgver=(\S+)` then strip), so the two
-# sides answer alike on a quoted value or a trailing space. A test feeds one
-# table of shapes to both; before that, their agreement was a comment.
-pkg_field() {
-    local file="$1" name="$2" value
-    [ -r "$file" ] || { echo "no such PKGBUILD: $file" >&2; return 1; }
-    value="$(sed -n "s/^${name}=//p" "$file" | head -1)"
-    read -r value _ <<<"$value" || true
-    value="${value%\'}"; value="${value#\'}"
-    value="${value%\"}"; value="${value#\"}"
-    [ -n "$value" ] || { echo "no ${name}= in ${file}" >&2; return 1; }
-    printf '%s\n' "$value"
+# makepkg --printsrcinfo is the package's own answer to "what does this build
+# declare", and build-check.sh captures it once. The dependencies need every
+# line of their field (a build can declare several), which is why this is the
+# line reader and the two below are answers over it.
+srcinfo_lines() {
+    printf '%s\n' "$2" | sed -n "s/^[[:space:]]*${1} = //p"
+}
+
+# srcinfo_field <name> <text> -- the one value a single-valued field has.
+#
+# pkgname, pkgver and pkgrel are one line each; zero lines is a block that does
+# not answer (a build script that kept going would ship a name nobody decided),
+# and a second line is a block two answers, which the caller cannot choose
+# between. Refused by name, the way line_field refuses a duplicated line.
+srcinfo_field() {
+    local name="$1" values count
+    values="$(srcinfo_lines "$name" "$2")"
+    count="$(printf '%s\n' "$values" | grep -c . || true)"
+    [ "$count" = 1 ] || {
+        echo "the srcinfo block carries $count ${name} = lines, not one" >&2
+        return 1
+    }
+    printf '%s\n' "$values"
 }
 
 # srcinfo_depends <text> -- the depends a srcinfo block lists, one per line.
 #
-# makepkg --printsrcinfo is the package's own answer to "what does this build
-# need at runtime". build-check.sh used to write that answer to .SRCINFO only to
-# sed it back into memory, inside the root branch no offline test reaches; the
-# text is an argument now, so the read is testable and the file never exists.
-srcinfo_depends() {
-    printf '%s\n' "$1" | sed -n 's/^[[:space:]]*depends = //p'
-}
+# The runtime dependencies, and only those: makedepends/checkdepends/optdepends
+# are not what a user has to have. The read used to write .SRCINFO to disk only
+# to sed it back into memory, inside the root branch no offline test reaches;
+# the text is an argument now, so the read is testable and the file never exists.
+srcinfo_depends() { srcinfo_lines depends "$1"; }
 
 # pkgfile_suffix / pkgfile_pattern -- the one spelling of "this is a 包文件".
 #
