@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # Publish the assembled tree to the branch the 软件源 is served from.
 #
-#   ./scripts/publish-pages.sh <repo dir> <版本> <remote>
+#   ./scripts/publish-pages.sh <repo dir> <版本> <remote> <branch>
+#
+# `<branch>` is required rather than defaulted. The workflow's seed fetches
+# the same branch before this writes it, and both read the job env's
+# PAGES_BRANCH: a default here would be a second spelling of one name, and
+# the seed's copy is the one that fails quietly -- it reports `no branch
+# yet`, starts a fresh repository, and the 保留窗口 comes out empty while
+# the run stays green.
 #   ./scripts/publish-pages.sh repo 0.1.4249 "https://x-access-token:...@github.com/o/r.git"
 #
 # The tree is rebuilt from scratch on every run -- the workflow seeds only the
@@ -27,7 +34,8 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pkg.sh"
 
 dir="${1:?usage: publish-pages.sh <repo dir> <version> <remote>}"
 version="${2:?usage: publish-pages.sh <repo dir> <version> <remote>}"
-remote="${3:?usage: publish-pages.sh <repo dir> <version> <remote>}"
+remote="${3:?usage: publish-pages.sh <repo dir> <version> <remote> <branch>}"
+branch="${4:?usage: publish-pages.sh <repo dir> <version> <remote> <branch>}"
 
 # The commit this makes is signed by whatever the workflow's env declares the
 # bot to be; a hand-run must name one rather than this script inventing it.
@@ -44,12 +52,12 @@ version_shape_ok "$version" || { echo "not a 版本: '$version'" >&2; exit 1; }
 cd "$dir"
 
 # The branch is a deployment, not a history: init, commit once, force push.
-git init --quiet --initial-branch=gh-pages
+git init --quiet --initial-branch="$branch"
 git config user.name "$GIT_NAME"
 git config user.email "$GIT_EMAIL"
 touch .nojekyll
 git add --all
-git commit --quiet -m "build(gh-pages): magpie $version"
-git push --quiet --force "$remote" HEAD:gh-pages
+git commit --quiet -m "build($branch): magpie $version"
+git push --quiet --force "$remote" "HEAD:$branch"
 
-echo "published $version to gh-pages: $(git rev-parse --short HEAD)"
+echo "published $version to $branch: $(git rev-parse --short HEAD)"

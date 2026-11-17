@@ -21,7 +21,7 @@ _Avoid_: 打包版本号、release number
 _Avoid_: 包列表、packages 变量
 
 **冻结行**：
-生产者打印一次、读者不再回头解析的 `name=value` 行：`scripts/upstream.sh` 的 `upstream=` / `target=` / `bump=` / `packages=`、`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`release-state.sh` 的 `release=`、`build-check` 的 `pkgname=` / `artifact=`、`release.sh` 的 `assets=` / `sums=` / `notes=`、`probe-repo-build.sh` 的 `assertions=`、`check.sh` 的 `tests=` / `gates=`。一条行算不算冻结行由 grep 决定，不由它长得像不像：`build-check` 的 `pkgver=` 曾被列在这里，而它唯一的读者是一条测试。那份 grep 现在是 `tests/test_frozen.py` 的一条断言——`line_field` 与 `line_field_or` 的每个调用点都必须在这份清单里出现——所以加一条行而不写在这里，是红测试。读它只走 `scripts/lib/pkg.sh` 的三个 reader，不由每个调用方自己 split：`line_field`（重复一行是协议断了、空值算失败、缺行也失败）、`line_field_or`（缺行给调用方指定的默认值，但绝不把「写了两行」当成缺行）与 `pkglist_field`。措辞是契约的那几条之外，其余是日志。
+生产者打印一次、读者不再回头解析的 `name=value` 行：`scripts/upstream.sh` 的 `upstream=` / `target=` / `bump=` / `packages=`、`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`release-state.sh` 的 `release=` / `tag=`、`build-check` 的 `pkgname=` / `artifact=`、`release.sh` 的 `assets=` / `sums=` / `notes=`、`probe-repo-build.sh` 的 `assertions=`、`check.sh` 的 `tests=` / `gates=`。一条行算不算冻结行由 grep 决定，不由它长得像不像：`build-check` 的 `pkgver=` 曾被列在这里，而它唯一的读者是一条测试。那份 grep 现在是 `tests/test_frozen.py` 的一条断言——`line_field` 与 `line_field_or` 的每个调用点都必须在这份清单里出现——所以加一条行而不写在这里，是红测试。读它只走 `scripts/lib/pkg.sh` 的三个 reader，不由每个调用方自己 split：`line_field`（重复一行是协议断了、空值算失败、缺行也失败）、`line_field_or`（缺行给调用方指定的默认值，但绝不把「写了两行」当成缺行）与 `pkglist_field`。措辞是契约的那几条之外，其余是日志。
 _Avoid_: 输出格式、stdout
 
 **入口检查**：
@@ -48,7 +48,7 @@ _Avoid_: 锁版本、冻结
 _Avoid_: 过期、不同步
 
 **软件源**：
-gh-pages 上 `x86_64/` 目录与 `magpie.db` 合起来的东西，pacman 的 `[magpie]` 段指向它。目录按 arch 分，今天只有一个：workflow 的 `ARCH`（目录名）、`REPO_NAME`（节名，也就是 db 的文件名）与 `TREE`（这次运行组装它的那棵树）是这三个名字唯一的出处，`REPO_NAME` 与 `TREE` 还跨进容器或脚本交给下一步。用户可见的安装段有两份抄写，都不许自己拼名字：README 的安装段由人敲，`tests/test_inventory.py` 逐字对账；Release 说明里那一段由 `release.sh` 用 `ARCH`/`REPO_NAME`/`PAGES_URL` 生成，`tests/test_release.py` 用同一个读者（`tests/install_block.py`）对账。arch 表管的是另一半（上游资产后缀）。
+gh-pages 上 `x86_64/` 目录与 `magpie.db` 合起来的东西，pacman 的 `[magpie]` 段指向它。目录按 arch 分，今天只有一个：workflow 的 `ARCH`（目录名）、`REPO_NAME`（节名，也就是 db 的文件名）、`TREE`（这次运行组装它的那棵树）与 `PAGES_BRANCH`（它被服务的分支）是这几个名字唯一的出处，`REPO_NAME`、`TREE` 与 `PAGES_BRANCH` 还跨进容器或脚本交给下一步：播种读分支名，`publish-pages.sh` 收它做 argv，两处没有第二个拼法。用户可见的安装段有两份抄写，都不许自己拼名字：README 的安装段由人敲，`tests/test_inventory.py` 逐字对账；Release 说明里那一段由 `release.sh` 用 `ARCH`/`REPO_NAME`/`PAGES_URL` 生成，`tests/test_release.py` 用同一个读者（`tests/install_block.py`）对账。arch 表管的是另一半（上游资产后缀）。
 _Avoid_: 仓库（会和 git 仓库混淆）
 
 **保留窗口**：

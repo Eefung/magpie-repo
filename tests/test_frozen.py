@@ -158,7 +158,7 @@ class GlossaryListTest(unittest.TestCase):
         self.assertEqual(unread(GLOSSARY.read_text(), readers()), [])
 
     def test_a_key_missing_from_the_list_is_caught(self):
-        drifted = GLOSSARY.read_text().replace("`release=`、", "")
+        drifted = GLOSSARY.read_text().replace("`release=` / ", "")
         self.assertNotEqual(drifted, GLOSSARY.read_text(), "the entry moved; reword this test")
         self.assertEqual(unlisted(drifted, readers()), ["release"])
 

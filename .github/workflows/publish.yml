@@ -58,6 +58,13 @@ jobs:
       # layout -- meant editing every one, and the seed could disagree with the
       # build about where the tree was.
       TREE: repo
+      # The branch the 软件源 is served from. The seed reads it before it
+      # fetches, and scripts/publish-pages.sh writes it: one name, two
+      # consumers, both reading this line. A literal in each was two
+      # spellings, and only the script's had a reader -- renaming that copy
+      # left the seed fetching a branch nobody writes, which its
+      # `no branch yet` path read as "first publish" with the 保留窗口 empty.
+      PAGES_BRANCH: gh-pages
       # The 保留窗口: how many 版本 of each package the served tree keeps. The
       # number the README promises users, declared here so the copy they read
       # can be held to a value CI actually passes. build-repo.sh keeps a
@@ -154,12 +161,12 @@ jobs:
           # The pattern is pkg.sh's, not this file's: what counts as a 包文件 is
           # one rule, and the seed carrying a different set from the one
           # build-repo prunes is how a retired package gets served forever.
-          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
-            git fetch --depth 1 origin gh-pages
+          if git ls-remote --exit-code --heads origin "$PAGES_BRANCH" >/dev/null 2>&1; then
+            git fetch --depth 1 origin "$PAGES_BRANCH"
             git archive FETCH_HEAD | tar -x -C "$TREE" --wildcards "$ARCH/$(pkgfile_pattern)"
             echo "previous repository:"; ls "$TREE/$ARCH" || true
           else
-            echo "no gh-pages yet, starting a fresh repository"
+            echo "no $PAGES_BRANCH branch yet, starting a fresh repository"
           fi
           # The dirs come from the 包清单 the check step wrote, not from this
           # file: a package added to the inventory is built without an edit
@@ -188,7 +195,7 @@ jobs:
           du -sh "$TREE/$ARCH"; ls -l "$TREE/$ARCH"
           git status --short
 
-      - name: Publish the pacman repository to gh-pages
+      - name: Publish the pacman repository to the served branch
         if: steps.upstream.outputs.bump == '1'
         env:
           VER: ${{ steps.render.outputs.ver }}
@@ -200,7 +207,7 @@ jobs:
           # bare repository in tests/test_publish_pages.py. What is left here
           # is the one part a publish run still proves: the token URL.
           ./scripts/publish-pages.sh "$TREE" "$VER" \
-            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$PAGES_BRANCH"
           echo "repository published: $PAGES_URL/$ARCH"
 
       # Before the commit, deliberately: a failure here leaves main at the old
@@ -226,14 +233,19 @@ jobs:
           ./scripts/release-state.sh "$VER" "$GITHUB_REPOSITORY" > /tmp/release-state.txt
           cat /tmp/release-state.txt
           release="$(line_field release /tmp/release-state.txt)"
-          printf 'release=%s\n' \
-            "$release" >> "$GITHUB_OUTPUT"
+          # The tag the lookup asked about, handed on rather than spelled
+          # again: `v$VER` used to appear in five gh calls below, a second
+          # place for a name this step already holds.
+          tag="$(line_field tag /tmp/release-state.txt)"
+          printf 'release=%s\ntag=%s\n' \
+            "$release" "$tag" >> "$GITHUB_OUTPUT"
 
       - name: Publish the GitHub release
         if: steps.upstream.outputs.bump == '1'
         env:
           VER: ${{ steps.render.outputs.ver }}
           STATE: ${{ steps.release_state.outputs.release }}
+          TAG: ${{ steps.release_state.outputs.tag }}
         run: |
           set -euo pipefail
           # shellcheck source=scripts/lib/pkg.sh
@@ -258,17 +270,17 @@ jobs:
             # build in the Release and another to pacman, so the assets and the
             # notes are replaced instead. `gh release upload` is the command
             # that makes this idempotent; nothing here is a new Release.
-            gh release upload "v$VER" --clobber \
+            gh release upload "$TAG" --clobber \
               "${assets[@]}" "$(line_field sums /tmp/release.txt)"
-            gh release edit "v$VER" --notes-file "$(line_field notes /tmp/release.txt)"
-            echo "release v$VER updated: $(gh release view "v$VER" --json url -q .url)"
+            gh release edit "$TAG" --notes-file "$(line_field notes /tmp/release.txt)"
+            echo "release $TAG updated: $(gh release view "$TAG" --json url -q .url)"
             exit 0
           fi
-          gh release create "v$VER" \
+          gh release create "$TAG" \
             --title "magpie $VER" \
             --notes-file "$(line_field notes /tmp/release.txt)" \
             "${assets[@]}" "$(line_field sums /tmp/release.txt)"
-          echo "release created: $(gh release view "v$VER" --json url -q .url)"
+          echo "release created: $(gh release view "$TAG" --json url -q .url)"
 
       # Last, so that every failure above is retried by the next run: main
       # still carries the old pkgver until this step succeeds.

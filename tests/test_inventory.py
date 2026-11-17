@@ -829,6 +829,61 @@ class PinnedRollbackTest(unittest.TestCase):
         self.assertNotIn(bump.PIN_FILE, self.run_of(workflow.text().replace("PINNED", "PIN")), "the guard did not notice the rename")
 
 
+class PublishNamesTest(unittest.TestCase):
+    """The branch and the tag: two names that cross the workflow-script seam.
+
+    Both were spelled once in the workflow and once in the script it calls, and
+    nothing held the two together. The branch was the worse half: the seed's
+    copy had no test at all (SeedTest fetches its own `main`), and its
+    `no branch yet` path turns a rename into "first publish" with an empty
+    保留窗口 while the run stays green. They are declarations now -- the branch
+    in the job env, the tag handed over by release-state.sh -- and this holds
+    the consumers to them.
+    """
+
+    def run_of(self, prefix: str) -> str:
+        """A step's run block, comments dropped: a note about it is not it."""
+        for step in workflow.steps():
+            if step.name.startswith(prefix):
+                return "\n".join(line.split("#", 1)[0] for line in step.run.splitlines())
+        raise AssertionError(f"no step named {prefix}*")
+
+    def test_the_branch_is_declared_once(self):
+        branch = workflow.env()["PAGES_BRANCH"]
+        self.assertTrue(branch)
+        live = [
+            line.strip()
+            for line in workflow.text().splitlines()
+            if branch in line and not line.lstrip().startswith("#")
+        ]
+        self.assertEqual(live, [f"PAGES_BRANCH: {branch}"])
+
+    def test_the_seed_fetches_that_branch(self):
+        run = self.run_of("Build the packages")
+        self.assertIn('--heads origin "$PAGES_BRANCH"', run)
+        self.assertIn('--depth 1 origin "$PAGES_BRANCH"', run)
+
+    def test_the_publish_step_hands_it_over(self):
+        self.assertIn('"$PAGES_BRANCH"', self.run_of("Publish the pacman repository"))
+
+    def test_the_tag_is_the_one_the_lookup_asked_about(self):
+        self.assertIn("TAG: ${{ steps.release_state.outputs.tag }}", workflow.text())
+        run = self.run_of("Publish the GitHub release")
+        self.assertNotIn("v$VER", run)
+        self.assertIn('"$TAG"', run)
+
+    def test_a_literal_branch_in_the_seed_is_caught(self):
+        # The mutation: the seed naming `gh-pages` directly, which is the copy
+        # that had no reader.
+        branch = workflow.env()["PAGES_BRANCH"]
+        moved = workflow.text().replace(
+            '--heads origin "$PAGES_BRANCH"', f"--heads origin {branch}"
+        )
+        self.assertNotEqual(moved, workflow.text(), "the seed moved; reword this test")
+        live = [line for line in moved.splitlines() if f"--heads origin {branch}" in line]
+        self.assertEqual(len(live), 1)
+
+
 class WorkflowShellTest(unittest.TestCase):
     """The workflow's `run:` blocks are shell, and two shapes in them bite.
 

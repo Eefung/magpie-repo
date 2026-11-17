@@ -58,6 +58,12 @@ class GitIdentity:
 
 GIT = GitIdentity.declared()
 
+# The branch the job env declares. The seed in publish.yml fetches the same
+# name, and this fixture reads the declaration rather than spelling `gh-pages`:
+# a literal here would keep feeding the old branch after the env moved -- and
+# the script would look right while the seed read somewhere else.
+BRANCH = workflow.env()["PAGES_BRANCH"]
+
 # The tree this publishes is served as uploaded, so the name is only a name --
 # but it is still a 包文件's name, and the test tree spells those one way.
 CURRENT = fixtures.pkgfile_name("magpie-bin", "0.1.9")
@@ -90,28 +96,31 @@ class PublishPagesTest(unittest.TestCase):
             (path / "x86_64" / file).touch()
         return path
 
-    def publish(self, tree: Path, version: str,
-                env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    def publish(self, tree: Path, version: str, env: dict[str, str] | None = None,
+                *, branch: str | None = BRANCH) -> subprocess.CompletedProcess:
         full = dict(os.environ)
         for key in GIT.env():
             full.pop(key, None)
         full.update(GIT.env())
         full.update(env or {})
+        argv = [str(tree), version, str(self.remote)]
+        if branch is not None:
+            argv.append(branch)
         return subprocess.run(
-            ["bash", str(SCRIPT), str(tree), version, str(self.remote)],
+            ["bash", str(SCRIPT), *argv],
             cwd=self.root,
             text=True,
             capture_output=True,
             env=full,
         )
 
-    def branch_files(self) -> list[str]:
-        listing = git("ls-tree", "-r", "--name-only", "gh-pages", cwd=self.remote)
+    def branch_files(self, branch: str = BRANCH) -> list[str]:
+        listing = git("ls-tree", "-r", "--name-only", branch, cwd=self.remote)
         self.assertEqual(listing.returncode, 0, listing.stderr)
         return listing.stdout.splitlines()
 
-    def commits(self) -> int:
-        counted = git("rev-list", "--count", "gh-pages", cwd=self.remote)
+    def commits(self, branch: str = BRANCH) -> int:
+        counted = git("rev-list", "--count", branch, cwd=self.remote)
         self.assertEqual(counted.returncode, 0, counted.stderr)
         return int(counted.stdout.strip())
 
@@ -141,14 +150,14 @@ class PublishPagesTest(unittest.TestCase):
     def test_the_commit_names_the_version_it_publishes(self):
         self.publish(self.tree("one", CURRENT), "0.1.9")
 
-        message = git("log", "-1", "--format=%s", "gh-pages", cwd=self.remote)
-        self.assertEqual(message.stdout.strip(), "build(gh-pages): magpie 0.1.9")
+        message = git("log", "-1", "--format=%s", BRANCH, cwd=self.remote)
+        self.assertEqual(message.stdout.strip(), f"build({BRANCH}): magpie 0.1.9")
 
     def test_the_commit_is_signed_by_the_given_identity(self):
         self.publish(self.tree("one", CURRENT), "0.1.9")
 
         author = git(
-            "log", "-1", "--format=%an <%ae>", "gh-pages", cwd=self.remote
+            "log", "-1", "--format=%an <%ae>", BRANCH, cwd=self.remote
         )
         self.assertEqual(
             author.stdout.strip(), f"{GIT.name} <{GIT.email}>"
@@ -170,7 +179,30 @@ class PublishPagesTest(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no such tree", result.stderr)
-        self.assertNotEqual(git("rev-parse", "--verify", "gh-pages", cwd=self.remote).returncode, 0)
+        self.assertNotEqual(git("rev-parse", "--verify", BRANCH, cwd=self.remote).returncode, 0)
+
+    def test_the_branch_it_writes_is_the_one_it_was_given(self):
+        # The name travels from the job env, through the step's argv, into the
+        # ref and the commit message. A script that named the served branch
+        # itself would push there whatever it was handed -- and the seed, which
+        # reads the same variable, would be looking somewhere else.
+        result = self.publish(self.tree("one", CURRENT), "0.1.9", branch="nightly")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"x86_64/{CURRENT}", self.branch_files("nightly"))
+        self.assertNotEqual(
+            git("rev-parse", "--verify", BRANCH, cwd=self.remote).returncode, 0
+        )
+        message = git("log", "-1", "--format=%s", "nightly", cwd=self.remote)
+        self.assertEqual(message.stdout.strip(), "build(nightly): magpie 0.1.9")
+
+    def test_the_branch_is_required(self):
+        # A hand run that forgot it would publish to whatever a default said,
+        # while the seed kept fetching the declared branch.
+        result = self.publish(self.tree("one", CURRENT), "0.1.9", branch=None)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("branch", result.stderr)
 
     def test_a_version_that_is_not_dotted_digits_is_refused(self):
         # `v0.1.9` was the shape both doors refused, so on its own it proved
@@ -184,7 +216,7 @@ class PublishPagesTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("not a 版本", result.stderr)
                 self.assertNotEqual(
-                    git("rev-parse", "--verify", "gh-pages", cwd=self.remote).returncode, 0
+                    git("rev-parse", "--verify", BRANCH, cwd=self.remote).returncode, 0
                 )
 
 

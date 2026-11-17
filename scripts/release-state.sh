@@ -3,6 +3,12 @@
 #
 #   ./scripts/release-state.sh <版本> <owner/repo>
 #   → release=present | release=absent
+#   → tag=v<版本>
+#
+# The tag travels with the answer because it is the question this script
+# asked: the step that creates, uploads and edits a Release spelled `v$版本`
+# four times over -- a second place for a name the lookup already holds, and
+# the one that would have drifted in silence, since nothing read it.
 #
 # The Release step used to branch on `gh release view "v$VER" >/dev/null 2>&1`:
 # "this tag has no Release yet" and "the query itself failed" were the same
@@ -35,8 +41,8 @@ response="$("$GH" api -i "repos/$repo/releases/tags/v$version" 2>/dev/null || tr
 code="$(printf '%s\n' "$response" | sed -n '1s|^HTTP/[0-9.]* \([0-9]\{3\}\).*|\1|p')"
 
 case "$code" in
-    200) printf 'release=present\n' ;;
-    404) printf 'release=absent\n' ;;
+    200) printf 'release=present\ntag=v%s\n' "$version" ;;
+    404) printf 'release=absent\ntag=v%s\n' "$version" ;;
     "")
         echo "the release lookup for v$version answered nothing; is gh authenticated?" >&2
         exit 1

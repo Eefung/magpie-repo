@@ -79,6 +79,14 @@ class ReleaseStateTest(unittest.TestCase):
             "api -i repos/Eefung/magpie-repo/releases/tags/v0.1.9",
         )
 
+    def test_it_hands_over_the_tag_it_asked_about(self):
+        # The step that creates, uploads and edits a Release reads this instead
+        # of spelling `v$版本` again: one place decides what the tag is called,
+        # and the reader that would have drifted silently is gone.
+        result = self.ask("404", version="0.1.9")
+        self.handed(result)
+        self.assertEqual(frozen.field("tag", result.stdout + "\n"), "v0.1.9")
+
     def test_a_failed_lookup_is_not_an_absent_release(self):
         # The whole card: reading a 500 (or a rate limit) as "no Release" is how
         # a transient failure took the create path and reported already_exists.
