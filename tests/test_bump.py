@@ -1766,6 +1766,37 @@ class EntryDecisionTest(unittest.TestCase):
         self.assertEqual(handed["target"], "0.1.10")
 
 
+class HandoverKeysTest(unittest.TestCase):
+    """入口检查交出的键，表里说它交出的就是那几个。
+
+    The step reads them through the gates now, so a key the table credits the
+    entry check with and this module stopped printing fails a publish run at the
+    read -- after the upstream comparison and a network round trip -- with "no
+    such frozen key". The table is asked through the test-side reader; this
+    module's side is a real `--check` run, because a hand-written list of the
+    four keys would be a third spelling of them (and a fifth key printed here,
+    declared nowhere, is a log line until somebody reads it).
+    """
+
+    def tabled(self) -> list[str]:
+        rows = [row["key"] for row in frozen.table() if row["producer"] == "entry-check"]
+        self.assertTrue(rows, "the table gives the entry check no keys; reword this test")
+        return rows
+
+    def test_a_real_run_emits_every_key_the_table_gives_the_entry_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = staged_checkout(Path(tmp), {pkg: "0.1.10" for pkg in bump.PACKAGES})
+            fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
+            code, out = run_main("--check", fetch=fetch, root=root)
+
+        self.assertEqual(code, 0, out)
+        lines = out.splitlines()
+        missing = [
+            key for key in self.tabled() if not any(line.startswith(f"{key}=") for line in lines)
+        ]
+        self.assertEqual(missing, [])
+
+
 class BehindTest(unittest.TestCase):
     """The five directions, judged where they are decided.
 

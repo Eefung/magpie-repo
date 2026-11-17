@@ -92,18 +92,21 @@ line_field_or() {
 # 域 is a word `frozen_domain_allows` interprets (version / flag /
 # present-or-absent / v<version> / package-name / integer / gates), `-` where
 # the shape is what matters. 形状 is value / path / list / pkglist. 缺行 is
-# required / optional. 生产者 is the exit that writes it -- read by the guard
-# that lands with the last of the moves, not by a gate.
+# required / optional. 生产者 is what writes it: a script's name (release,
+# release-state, build-check, probe, check) or one of bump.py's modes (entries
+# `entry-check`, `render`, `packages`). It is read by the guard that lands with
+# the last of the moves, not by a gate -- and the entry check is `entry-check`
+# rather than `check`, because `check` is check.sh's own `tests=`/`gates=`.
 #
 # The table is data: no branch lives here, and `frozen_var` / `frozen_list` /
 # `frozen_write` are the only code that reads it. A key it does not name cannot
 # be written or read.
 frozen_table() {
     cat <<'TABLE'
-upstream|version|value|required|check
-target|version|value|required|check
-bump|flag|value|required|check
-pin|flag|value|required|check
+upstream|version|value|required|entry-check
+target|version|value|required|entry-check
+bump|flag|value|required|entry-check
+pin|flag|value|required|entry-check
 ver|version|value|required|render
 release|present-or-absent|value|required|release-state
 tag|v<version>|value|required|release-state

@@ -25,7 +25,7 @@ _Avoid_: 包列表、packages 变量
 _Avoid_: 输出格式、stdout
 
 **入口检查**：
-每次运行的第一步：问上游最新、核对这棵树，并决定这次要不要发布、发哪个版本。核对有两个门，都在 `scripts/bump.py`：`read_template` 判模板本身合不合法（`pkgname=`、`arch=()` 对 arch 表、`source`/`sha256sums` 数组、`package()` 的 case 臂），`values_of` 判已提交的 PKGBUILD 还是不是它的渲染——两个门都在 `--check` 里，不等渲染，所以一份改坏的模板当次就红，而不是等到上游真动了版本。三件事都在 `--check` 一处回答，它交出的冻结行就是这个答案——`bump=` 是结论，`target=` 是渲染要拿的版本，`pin=` 是这一趟要不要记下**钉住**。workflow 的 step 只中继这四条行，并让 `--packages` 把包清单写进 job env 声明的那个路径；判断不在 YAML 里：判断写在 YAML 里时，唯一能守它的是对 YAML 文本的 grep。
+每次运行的第一步：问上游最新、核对这棵树，并决定这次要不要发布、发哪个版本。核对有两个门，都在 `scripts/bump.py`：`read_template` 判模板本身合不合法（`pkgname=`、`arch=()` 对 arch 表、`source`/`sha256sums` 数组、`package()` 的 case 臂），`values_of` 判已提交的 PKGBUILD 还是不是它的渲染——两个门都在 `--check` 里，不等渲染，所以一份改坏的模板当次就红，而不是等到上游真动了版本。三件事都在 `--check` 一处回答，它交出的冻结行就是这个答案——`bump=` 是结论，`target=` 是渲染要拿的版本，`pin=` 是这一趟要不要记下**钉住**。workflow 的 step 只中继这四条行（域不对就当场退），并让 `--packages` 把包清单写进 job env 声明的那个路径；判断不在 YAML 里：判断写在 YAML 里时，唯一能守它的是对 YAML 文本的 grep。
 _Avoid_: 检查步骤、pre-check
 
 **arch 表**：

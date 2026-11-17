@@ -25,6 +25,25 @@ LIB = Path(__file__).resolve().parent.parent / "scripts" / "lib" / "pkg.sh"
 # A frozen line's name: the key a program writes once and reads back.
 LINE_NAME_RE = re.compile(r"^([a-z][a-z0-9_]*)=", re.M)
 
+# The kinds table's columns, in the order pkg.sh writes them.
+COLUMNS = ("key", "domain", "shape", "required", "producer")
+
+
+def table() -> list[dict[str, str]]:
+    """The kinds table, one dict per row.
+
+    The test-side reader of the one place a key's 域, shape and producer are
+    written. A guard that re-spells the columns here reads the same fact twice.
+    """
+    result = subprocess.run(
+        ["bash", "-c", f"set -euo pipefail; source {shlex.quote(str(LIB))}; frozen_table"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"frozen_table: {result.stderr.strip()}")
+    return [dict(zip(COLUMNS, line.split("|"))) for line in result.stdout.strip().splitlines()]
+
 # A default no producer could write, so "absent" stays distinguishable from "".
 ABSENT = "__absent__"
 

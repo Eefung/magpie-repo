@@ -28,6 +28,7 @@ sys.path.insert(0, str(REPO / "tests"))
 
 import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
 import fixtures  # noqa: E402  (the one spelling of a 包文件's name in the test tree)
+import frozen  # noqa: E402  (the test-side reader of the frozen lines and their table)
 import install_block  # noqa: E402  (the one reader of the block a user pastes)
 import workflow  # noqa: E402  (the reader of .github/workflows/publish.yml)
 
@@ -86,8 +87,27 @@ class UpstreamHandoverTest(unittest.TestCase):
         self.assertFalse((REPO / "scripts" / "upstream.sh").exists())
 
     def test_the_step_reads_the_four_lines_it_was_handed(self):
+        # Through the table's gates: `bump=` and `pin=` are `0` or `1` there, so
+        # the `if:` below can no longer read a third value as "not 1".
         for key in ("upstream", "target", "bump", "pin"):
-            self.assertIn(f'line_field {key} "$UP.txt"', self.code())
+            self.assertIn(f'frozen_var {key} "$UP.txt" {key}', self.code())
+
+    def step_keys(self) -> set[str]:
+        """The keys the step takes out of the check's log."""
+        return set(re.findall(r'frozen_var (\w+) "\$UP\.txt"', self.code()))
+
+    def tabled_keys(self) -> set[str]:
+        return {row["key"] for row in frozen.table() if row["producer"] == "entry-check"}
+
+    def test_the_step_reads_exactly_the_keys_the_table_credits_it_with(self):
+        # Both directions, each naming its own difference: a key the table
+        # promises and the step stopped reading is a fact nothing checks, and a
+        # key the step reads without a row fails at run time with "no such
+        # frozen key" -- after the comparison, not here.
+        read, tabled = self.step_keys(), self.tabled_keys()
+        self.assertTrue(tabled, "the table credits the entry check with no keys")
+        self.assertEqual(sorted(read - tabled), [], "read by the step, absent from the table")
+        self.assertEqual(sorted(tabled - read), [], "in the table, unread by the step")
 
     def test_the_handover_path_is_declared_once(self):
         # Declared in the job's env, where every step sees it -- a step-level
@@ -194,6 +214,40 @@ class EntryStepTest(unittest.TestCase):
         self.assertIn("behind magpie-bin=upstream", result.stderr)
         self.assertIn("the entry check failed", result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_a_bump_outside_its_domain_fails_the_step(self):
+        # The gate is the only thing between a producer's typo and a `if:` that
+        # reads it as "not 1" and skips the publish in silence.
+        self.check(lines=[
+            "upstream=0.1.10", "target=0.1.10", "pin=0", "bump=2",
+        ])
+
+        result = self.run_step()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("bump=2 is not 0 or 1", result.stderr)
+        self.assertFalse((self.root / "outputs.txt").exists())
+
+    def test_a_pin_outside_its_domain_fails_the_step(self):
+        self.check(lines=[
+            "upstream=0.1.10", "target=0.1.10", "pin=yes", "bump=1",
+        ])
+
+        result = self.run_step()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("pin=yes is not 0 or 1", result.stderr)
+        self.assertFalse((self.root / "outputs.txt").exists())
+
+    def test_a_missing_key_fails_the_step(self):
+        # Required in the table, so an absent line is the reader's complaint --
+        # `line_field`'s wording, which the gate hands on rather than replaces.
+        self.check(lines=["upstream=0.1.10", "pin=0", "bump=0"])
+
+        result = self.run_step()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no target= in", result.stderr)
 
     def test_the_four_lines_and_the_package_list_are_what_it_hands_on(self):
         self.check()

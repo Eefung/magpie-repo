@@ -118,13 +118,20 @@ jobs:
             exit 1
           fi
           cat "$UP.txt"
-          # Assigned first, then written: `echo "x=$(reader)" >> "$GITHUB_OUTPUT"`
+          # Declared first, then written: `echo "x=$(reader)" >> "$GITHUB_OUTPUT"`
           # writes an empty value and exits 0 when the reader fails, which would
-          # hand an empty 版本 to a step whose gate already opened.
-          upstream="$(line_field upstream "$UP.txt")"
-          target="$(line_field target "$UP.txt")"
-          bump="$(line_field bump "$UP.txt")"
-          pin="$(line_field pin "$UP.txt")"
+          # hand an empty 版本 to a step whose gate already opened. Reading
+          # through the gates is what makes `bump=` and `pin=` 0 or 1 here: the
+          # `if:` below cannot read a third value as "not 1" and skip the publish
+          # in silence.
+          upstream=""
+          target=""
+          bump=""
+          pin=""
+          frozen_var upstream "$UP.txt" upstream || exit 1
+          frozen_var target "$UP.txt" target || exit 1
+          frozen_var bump "$UP.txt" bump || exit 1
+          frozen_var pin "$UP.txt" pin || exit 1
           printf 'upstream=%s\ntarget=%s\nbump=%s\npin=%s\n' \
             "$upstream" "$target" "$bump" "$pin" >> "$GITHUB_OUTPUT"
           # The 包清单 the build and release steps read: the path is declared
