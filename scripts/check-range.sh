@@ -68,9 +68,10 @@ for commit in "${commits[@]}"; do
     ( cd "$wt" && ./scripts/check.sh ) >"$log" 2>&1 || code=$?
     # The count is the gate's own frozen line; `tests=?` used to stand in for it
     # on the ok line. Ask the gate *in this tree* whether it carries the
-    # contract: a tree from before the line existed has no count to give and
-    # says so, while a gate that has it and printed nothing is a failure.
-    if grep -q 'line_field tests' "$wt/scripts/check.sh"; then
+    # contract, matched as a code line -- a comment about the reader is not a
+    # contract -- and say `none` when it does not, rather than a number the gate
+    # never had.
+    if grep -Eq '^[^#]*line_field tests' "$wt/scripts/check.sh"; then
         if ! tests="$(line_field tests "$log")"; then
             printf '%s FAIL no tests= line\n' "${commit:0:7}" >&2
             tail -3 "$log" >&2
@@ -78,7 +79,8 @@ for commit in "${commits[@]}"; do
             continue
         fi
     else
-        tests="n/a"
+        tests="none"
+        printf '%s: its gate prints no tests= line, so there is no count\n' "${commit:0:7}" >&2
     fi
     if [ "$code" -eq 0 ]; then
         printf '%s ok   tests=%s\n' "${commit:0:7}" "$tests"
