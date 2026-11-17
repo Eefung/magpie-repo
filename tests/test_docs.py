@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -77,12 +78,19 @@ def note_of(gate: str) -> str:
 def code_facts(repo: Path = REPO) -> str:
     """The production tree, for a name the docs point at to exist in.
 
-    `scripts/` only. A doc names what *decides* something -- a module in the
-    pipeline -- and including `tests/` would let this file's own fixtures
-    satisfy the claim they exist to falsify.
+    `scripts/` only, and comment lines dropped: a doc names what *decides*
+    something -- a module in the pipeline -- so a name kept alive in a comment
+    about a deleted function is exactly the case that must not pass. Including
+    `tests/` would let this file's own fixtures satisfy the claim they exist to
+    falsify.
     """
     sources = [*repo.glob("scripts/**/*.sh"), *repo.glob("scripts/**/*.py")]
-    return "\n".join(path.read_text() for path in sources)
+    return "\n".join(
+        line
+        for path in sources
+        for line in path.read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
 
 
 def gone_names(document: str, facts: str) -> list[str]:
@@ -254,6 +262,13 @@ class NamedThingsTest(unittest.TestCase):
     allowed to quote the code it deleted -- ADR-0001 names `scripts/publish.sh`
     to say it was removed -- and scanning them would make a history its own
     failure.
+
+    The identifiers are the ones this repository *owns*: lowercase snake_case
+    module names, which is what a shell function and a python function are. Env
+    names and tables (`ARCHES`, `PAGES_URL`) are left out rather than
+    allowlisted one by one, because some of the uppercase names a glossary needs
+    are somebody else's (`SHA256SUMS`, `PKGBUILD`) and an exception list would
+    be a second document to drift.
     """
 
     def glossary(self) -> str:
@@ -265,7 +280,15 @@ class NamedThingsTest(unittest.TestCase):
     def test_every_module_glossary_names_is_in_the_tree(self):
         self.assertEqual(gone_names(self.glossary(), code_facts()), [])
 
-    def test_every_path_the_documents_name_is_there_and_runs(self):
+    def test_every_name_the_gates_note_points_at_is_in_the_tree(self):
+        # The note is the document that says what a green run does not prove,
+        # and it names the module behind each gap (`served_evr`, `bump.py`).
+        self.assertEqual(gone_names(self.note(), code_facts()), [])
+
+    def test_every_path_the_documents_name_is_there(self):
+        # Existence, not executability: `scripts/lib/pkg.sh` is sourced, not
+        # run, and executability of what a *step* runs is the workflow's own
+        # guard (`test_inventory.WorkflowShellTest`).
         for label, document in (("GLOSSARY.md", self.glossary()), ("check.sh", self.note())):
             with self.subTest(document=label):
                 self.assertEqual(gone_paths(document), [])
@@ -282,6 +305,22 @@ class NamedThingsTest(unittest.TestCase):
         drifted = self.glossary().replace("tests/test_templates.py", "tests/test_template.py")
         self.assertNotEqual(drifted, self.glossary(), "the entry moved; reword this test")
         self.assertEqual(gone_paths(drifted), ["tests/test_template.py"])
+
+    def test_a_comment_does_not_keep_a_name_alive(self):
+        # The tree's text includes the comments, so a function deleted from the
+        # code but still named in a comment about it would pass a whole-text
+        # search. Comment lines are dropped before the search, the same rule the
+        # frozen-line reader applies to its call sites.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "scripts").mkdir()
+            (root / "scripts" / "a.sh").write_text(
+                "real_fn() { :; }\n# ghost_fn used to live here\n"
+            )
+            facts = code_facts(root)
+        self.assertIn("real_fn", facts)
+        self.assertNotIn("ghost_fn", facts)
+        self.assertEqual(gone_names("`ghost_fn`", facts), ["ghost_fn"])
 
     def test_a_test_class_that_was_renamed_is_caught(self):
         drifted = self.note().replace("RootAdapterTest", "RootAdapterReaderTest")
