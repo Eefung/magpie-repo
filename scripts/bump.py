@@ -106,8 +106,9 @@ class Served:
     The entry check compares the tree against the database pacman reads, so it
     needs the URL, the section (which is the database's file name) and the
     served arch directory. They travel together -- the block a user pastes is
-    the same three -- and a layout without them (a hand run that declares
-    nothing) simply compares against 上游 alone.
+    the same three. This is a value for the comparison, not a field of the tree
+    it compares: the check asks for it, and a run that declares nothing gets
+    the 上游-only comparison.
     """
 
     url: str
@@ -132,9 +133,9 @@ class Layout:
     read from the environment in main(), when the layout is built -- not when
     this file is imported.
 
-    `served` is Optional because it is not a fact about the tree: a hand run
-    that declares no address still answers "is this tree 落后", it just cannot
-    answer "does what is served match it".
+    There is no 软件源 address here, on purpose: where this run publishes is a
+    fact about the run, not about the tree, and the check asks for it at the
+    question that needs it.
     """
 
     templates: Path
@@ -143,7 +144,6 @@ class Layout:
     arches: Mapping[str, str]
     maintainer: str
     root: Path
-    served: Served | None = None
     pinned: str | None = None
 
 
@@ -168,7 +168,6 @@ def layout_for(
     maintainer: str = DEFAULT_MAINTAINER,
     inventory: Mapping[str, str] | None = None,
     arches: Mapping[str, str] | None = None,
-    served: Served | None = None,
     pinned: str | None | _Unset = _UNSET,
 ) -> Layout:
     """The one way a Layout is built, for production and for tests alike.
@@ -192,7 +191,6 @@ def layout_for(
         arches=dict(ARCHES if arches is None else arches),
         maintainer=maintainer,
         root=root,
-        served=served,
         pinned=pinned,
     )
 
@@ -871,22 +869,15 @@ def pkgrel_of(evr: str) -> int:
     return int(rel)
 
 
-def served_evr(layout: Layout, *, fetch: Fetch = http_fetch) -> dict[str, str] | None:
+def served_evr(served: Served, *, fetch: Fetch = http_fetch) -> dict[str, str] | None:
     """The version each package is served at, read from the database pacman reads.
 
-    None means "cannot be compared" -- either this layout declares no address
-    (a hand run), or the 软件源 could not be read. The caller logs both, and
-    neither may read as "nothing is published": a failed read that looked like
-    an empty repository would rebuild and republish on a day Pages had a bad
+    The address is an argument, not a field of the tree: it says where this run
+    publishes. None means "asked, could not read" -- the caller logs it, and it
+    may not read as "nothing is published": a failed read that looked like an
+    empty repository would rebuild and republish on a day Pages had a bad
     minute. A 404 is different, and is an empty map -- nothing published yet.
     """
-    served = layout.served
-    if served is None:
-        # The 上游-only comparison is a documented fallback (GLOSSARY: 落后),
-        # and it was the silent half of it: a run that declared no address said
-        # nothing, while the run whose read failed said why.
-        log("no 软件源 address declared (PAGES_URL, REPO_NAME, ARCH); comparing against 上游 alone")
-        return None
     try:
         body = fetch(served.database, missing_ok=True)
     except (urllib.error.URLError, OSError) as exc:
@@ -1287,6 +1278,15 @@ def behind(
 
 
 def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
+    """Is this tree sound, and is it 落后? The run's answers, as frozen lines.
+
+    The tree is handed in; the 软件源 address is read from the environment,
+    because where this run publishes is not a fact about the tree. Reading it
+    first also means a configuration error is reported before anything is
+    fetched -- though after `main()` has read the pin, so a tree that is both
+    badly pinned and half-addressed reports the pin first.
+    """
+    address = served_from_env()
     # This repository's own problem first, before anything is fetched: the
     # render does the same, so a tree whose templates and PKGBUILDs disagree
     # fails here rather than being reported as "upstream has no such asset".
@@ -1326,7 +1326,14 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     carried = {pkgver_of(packaged.get(pkg)) for pkg in layout.inventory}
     if len(carried) == 1 and "" not in carried:
         log(f"carried={carried.pop()}")
-    served = served_evr(layout, fetch=fetch)
+    if address is None:
+        # The 上游-only comparison is a documented fallback (GLOSSARY: 落后),
+        # and it was the silent half of it: a run that declared no address said
+        # nothing, while the run whose read failed said why.
+        log("no 软件源 address declared (PAGES_URL, REPO_NAME, ARCH); comparing against 上游 alone")
+        served = None
+    else:
+        served = served_evr(address, fetch=fetch)
     if served is not None:
         for pkg, evr in sorted(served.items()):
             log(f"served {pkg}={evr}")
@@ -1410,10 +1417,11 @@ def main(
     tests went in through check() and render() directly, and the two things CI
     actually reads -- the frozen lines and the exit code -- were never run.
 
-    Only the comparison asks the pin and the 软件源 address. `--packages`
-    prints directory names and `--render` takes a 版本; neither reads either
-    fact, so neither may fail on one -- a refusal belongs to the module that
-    asked the question. `root` points the production constructor at a staged
+    Only the comparison asks the pin, and the 软件源 address never reaches the
+    tree at all: the check reads it at the question that needs it.
+    `--packages` prints directory names and `--render` takes a 版本; neither
+    asks either question, so neither may fail on one -- a refusal belongs to
+    the module that asked. `root` points the production constructor at a staged
     tree; `layout` stays for a caller bringing a whole value of its own (a
     different 包清单 or arch 表).
     """
@@ -1431,15 +1439,12 @@ def main(
 
     try:
         if layout is None:
-            # One branch, both facts: the two questions the comparison asks,
-            # answered only for the mode that asks them. A malformed PINNED or
-            # half a declaration used to take down an exit that had asked
-            # nothing, and the run reported a failure belonging to another
-            # module.
+            # The pin is read only for the mode that asks it. It used to share
+            # this construction with the 软件源 address, which took down exits
+            # that had asked nothing -- the address is not here at all now.
             layout = layout_for(
                 root,
                 maintainer=os.environ.get("MAINTAINER", DEFAULT_MAINTAINER),
-                served=served_from_env() if args.check else None,
                 pinned=pinned_of(root) if args.check else None,
             )
         if args.packages:

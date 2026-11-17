@@ -178,7 +178,6 @@ def layout_at(
     templates: Path | None = None,
     inventory: dict[str, str] | None = None,
     arches: dict[str, str] | None = None,
-    served: bump.Served | None = None,
     pinned: str | None = None,
 ) -> bump.Layout:
     """A layout pointing the renderer at a temporary tree.
@@ -194,9 +193,9 @@ def layout_at(
     template's render", which is the drift message.
 
     This goes through the production constructor, so the defaults under test
-    are the ones that ship. `served` is None unless a test is about the
-    comparison against what the 软件源 carries, which is also what a hand run
-    without the three names gets.
+    are the ones that ship. The 软件源 address is not one of them: it is a fact
+    about the run, declared in the environment and read by the check, so a test
+    that is about the comparison declares it the way the workflow does.
     """
     if templates is None:
         staged = root / "templates"
@@ -208,7 +207,6 @@ def layout_at(
         inventory=inventory,
         arches=arches,
         maintainer="Test Maintainer <test@example.invalid>",
-        served=served,
         # Handed in, never inherited from `REPO`: a fixture that read the
         # repository's own pin would change meaning on the day one is committed,
         # and every test here would then be asserting about a pinned tree.
@@ -219,6 +217,28 @@ def layout_at(
 def served_at(url: str = "https://example.invalid/repo") -> bump.Served:
     """The address a test's fake 软件源 is served at."""
     return bump.Served(url=url, section="magpie", arch="x86_64")
+
+
+# The three names a run declares for a 软件源, as the workflow exports them.
+ADDRESS_NAMES = ("PAGES_URL", "REPO_NAME", "ARCH")
+
+
+def address_env() -> dict[str, str]:
+    """The three names a run declares for the test's fake 软件源."""
+    served = served_at()
+    return {"PAGES_URL": served.url, "REPO_NAME": served.section, "ARCH": served.arch}
+
+
+def no_address():
+    """The run a fixture describes: no 软件源 declared, so 上游 alone.
+
+    The check reads the address out of the environment now, which is
+    production's shape -- and means a shell that exports the three names would
+    decide a test that never said anything about them. Only those three are
+    cleared: the rest of the environment is not this fixture's business.
+    """
+    kept = {name: value for name, value in os.environ.items() if name not in ADDRESS_NAMES}
+    return mock.patch.dict(os.environ, kept, clear=True)
 
 
 def database_body(entries: dict[str, str]) -> bytes:
@@ -267,7 +287,8 @@ def run_main(
     buffer = io.StringIO()
     code: object = 0
     extra = {} if root is None else {"root": root}
-    with mock.patch.dict(os.environ, env or {}, clear=env is not None):
+    declared = no_address() if env is None else mock.patch.dict(os.environ, env, clear=True)
+    with declared:
         with contextlib.redirect_stdout(buffer):
             try:
                 code = bump.main(list(argv), fetch=fetch, layout=layout, **extra)
@@ -294,6 +315,14 @@ class LayoutForTest(unittest.TestCase):
             layout = bump.layout_for(Path(tmp), packages_dir=Path(tmp) / "out")
             self.assertEqual(layout.templates, Path(tmp) / "templates")
             self.assertEqual(layout.packages_dir, Path(tmp) / "out")
+
+    def test_the_tree_takes_no_address(self):
+        # Where this run publishes is not a fact about the tree: the constructor
+        # takes no address, so no exit can inherit a failure it never asked
+        # about. The value itself needs no test -- a field nothing can set is a
+        # field nothing may read.
+        with self.assertRaises(TypeError):
+            bump.layout_for(REPO, served=served_at())
 
 
 class LayoutAtTest(unittest.TestCase):
@@ -759,7 +788,7 @@ class CheckTest(unittest.TestCase):
 
     def lines(self, fetch, out_root) -> list[str]:
         buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
+        with no_address(), contextlib.redirect_stdout(buffer):
             bump.check(layout=layout_at(out_root), fetch=fetch)
         return buffer.getvalue().splitlines()
 
@@ -888,7 +917,7 @@ class CheckTest(unittest.TestCase):
             )
             path = root / "packages" / "magpie-cli-bin" / "PKGBUILD"
             path.write_text(path.read_text().replace("pkgrel=1", "pkgrel=2"))
-            with self.assertRaises(bump.BumpError) as caught:
+            with no_address(), self.assertRaises(bump.BumpError) as caught:
                 bump.check(layout=layout_at(root), fetch=fetch)
         self.assertIn("magpie-cli-bin", str(caught.exception))
         self.assertIn("re-render", str(caught.exception))
@@ -925,7 +954,7 @@ class CheckTest(unittest.TestCase):
                         self.assertIn(old, text)
                         path.write_text(text.replace(old, new))
 
-                    with self.assertRaises(bump.BumpError) as caught:
+                    with no_address(), self.assertRaises(bump.BumpError) as caught:
                         bump.check(layout=layout_at(root, templates=templates), fetch=fetch)
 
                 self.assertIn("magpie-bin", str(caught.exception))
@@ -942,7 +971,7 @@ class CheckTest(unittest.TestCase):
             shutil.copytree(REPO / "templates", templates)
             path = templates / "magpie-cli-bin.PKGBUILD.in"
             path.write_text(path.read_text().replace("arch=('x86_64')", "arch=('aarch64')"))
-            with self.assertRaises(bump.BumpError) as caught:
+            with no_address(), self.assertRaises(bump.BumpError) as caught:
                 bump.check(layout=layout_at(Path(tmp), templates=templates), fetch=fetch)
         self.assertIn("magpie-cli-bin", str(caught.exception))
         self.assertEqual(fetch.urls, [])
@@ -968,15 +997,10 @@ class PinnedTreeTest(unittest.TestCase):
         if served is not None:
             fetch.table[served_at().database] = database_body(served)
         buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            bump.check(
-                layout=layout_at(
-                    tree,
-                    served=served_at() if served is not None else None,
-                    pinned=pinned,
-                ),
-                fetch=fetch,
-            )
+        declared = address_env() if served is not None else {}
+        with mock.patch.dict(os.environ, declared, clear=True):
+            with contextlib.redirect_stdout(buffer):
+                bump.check(layout=layout_at(tree, pinned=pinned), fetch=fetch)
         lines = buffer.getvalue().splitlines()
         text = "\n".join(lines) + "\n"
         log = {"bump": frozen.field("bump", text), "pinned": frozen.field("pinned", text), "behind": {}}
@@ -1096,7 +1120,7 @@ class SyntaxDoorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = staged_root(Path(tmp), {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
             templates = self.broken(root)
-            with self.assertRaises(bump.BumpError) as caught:
+            with no_address(), self.assertRaises(bump.BumpError) as caught:
                 bump.check(layout=layout_at(root, templates=templates), fetch=fetch)
         self.assertIn("bash cannot parse", str(caught.exception))
         self.assertIn("magpie-bin", str(caught.exception))
@@ -1157,11 +1181,9 @@ class ServedTest(unittest.TestCase):
 
     def log_of(self, fetch, root: Path, *, templates: Path | None = None) -> dict:
         buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            bump.check(
-                layout=layout_at(root, templates=templates, served=served_at()),
-                fetch=fetch,
-            )
+        with mock.patch.dict(os.environ, address_env(), clear=True):
+            with contextlib.redirect_stdout(buffer):
+                bump.check(layout=layout_at(root, templates=templates), fetch=fetch)
         lines = buffer.getvalue().splitlines()
         served = {}
         behind = {}
@@ -1323,12 +1345,13 @@ class ServedTest(unittest.TestCase):
         self.assertEqual(log["bump"], "0")
         self.assertTrue(any("is not a database" in line for line in log["lines"]), log["lines"])
 
-    def test_a_layout_without_an_address_never_asks_for_the_database(self):
+    def test_a_run_that_declares_no_address_never_asks_for_the_database(self):
         root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
         fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
         buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            bump.check(layout=layout_at(root), fetch=fetch)
+        with no_address():
+            with contextlib.redirect_stdout(buffer):
+                bump.check(layout=layout_at(root), fetch=fetch)
         self.assertIn(f"{bump.RELEASES}/download/v0.1.10/SHA256SUMS", fetch.urls)
         self.assertEqual([url for url in fetch.urls if url.endswith(".db.tar.gz")], [])
         # And it says so: the 上游-only comparison used to be the silent half of
@@ -1336,6 +1359,23 @@ class ServedTest(unittest.TestCase):
         lines = buffer.getvalue().splitlines()
         self.assertTrue(any("no 软件源 address declared" in line for line in lines), lines)
         self.assertIn("compared=upstream", lines)
+
+    def test_half_a_declaration_is_refused_by_the_check(self):
+        # A name typed into the job env with its neighbour forgotten answered
+        # the same None as "nothing declared", which silently turned off the
+        # two directions that read the 软件源 -- and the pkgrel refusal with
+        # them. The refusal belongs to the question, and it names the gap.
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+        fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
+        env = address_env()
+        env.pop("ARCH")
+        with mock.patch.dict(os.environ, env, clear=True):
+            with self.assertRaises(bump.BumpError) as caught:
+                bump.check(layout=layout_at(root), fetch=fetch)
+        # The wording is ServedFromEnvTest's to hold; what this adds is that the
+        # refusal is the check's -- asked before anything is fetched.
+        self.assertIn("ARCH", str(caught.exception))
+        self.assertEqual(fetch.urls, [])
 
     def test_a_run_that_read_the_repository_says_it_compared_both_halves(self):
         root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
@@ -1710,7 +1750,7 @@ class TemplatePkgrelTest(unittest.TestCase):
                 ("render", lambda: bump.render("0.1.2", layout=layout, fetch=FetchSpy({}))),
             ):
                 with self.subTest(door=name):
-                    with self.assertRaises(bump.BumpError) as caught:
+                    with no_address(), self.assertRaises(bump.BumpError) as caught:
                         call()
                     self.assertIn("pkgrel=2.1", str(caught.exception))
 
