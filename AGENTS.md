@@ -41,7 +41,7 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 | `test_upstream.py` | `upstream.sh`：这次要不要发布、发哪个版本 |
 | `test_frozen.py` | 测试侧的冻结行读者与 `line_field` 同规则 |
 | `test_inventory.py` | 包清单 ↔ 目录 ↔ workflow ↔ README 的对账；step 顺序/门/outputs、`run:` 块形状、arch 表、发布树、保留窗口的数字；seed 那一行跑真分支 |
-| `test_docs.py` | README 里由程序决定的那两句（运行时间、provides/conflicts）各有 reader；这张测试地图的完整性 |
+| `test_docs.py` | README 里由程序决定的那两句（运行时间、provides/conflicts）各有 reader；测试地图与脚本地图的完整性；文档点名的模块与测试类 |
 | `install_block.py` | 不是测试：用户要粘的安装段的唯一读者——README 的块与 Release 说明都过它 |
 | `fixtures.py` | 不是测试：包文件名的唯一拼法，`test_pkg_sh.py` 用 `pkgfile_pkgname`/`pkgfile_version` 反向钉住 |
 | `frozen.py` | 不是测试：冻结行的测试侧读者——直接跑生产的 `line_field`，其余测试都经它 |
@@ -62,4 +62,4 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 | `ci` | workflow 与发布流水线本身 |
 | `chore` | 配置、工具、依赖 |
 
-一次提交只做一件事：`build` 的渲染结果与流程改动分开提交，否则回滚时会把版本号一起带走。
+一次提交只做一件事：`build` 的渲染结果与流程改动分开提交，否则回滚时会把版本号一起带走。提交前读一遍 `git diff --cached`，`git add` 指名文件而不是 `-A`：一次提交只装一件事的 hunk，包括那些你没打算改的行。
