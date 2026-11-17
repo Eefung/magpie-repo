@@ -229,6 +229,11 @@ pkgfile_evr() {
 # <arch>, and pkgname itself carries dashes (magpie-bin), so the three fields
 # makepkg appends are peeled off the right and whatever is left is the package.
 # A name that does not parse is a change to the rule, not a package to guess at.
+#
+# The whole-number pkgrel here is the model GLOSSARY states, and it is decided
+# where pkgrel enters (bump.py's check_pkgrel): Arch's `<int>.<int>` form would
+# pass bump.py's comparison as 未发布 instead of refusing it, so widening this
+# reader alone would be half a change -- say so in the glossary first.
 pkgfile_pkgname() {
     local name="${1##*/}" suffix base arch rel version
     suffix="$(pkgfile_suffix)"

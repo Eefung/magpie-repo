@@ -459,6 +459,31 @@ def check_pkgname(pkg: str, template: str) -> None:
         )
 
 
+def check_pkgrel(pkg: str, template: str) -> None:
+    """The template's pkgrel= is a whole number: the shape this repository models.
+
+    Arch allows `<int>.<int>` -- the dependency-bump form -- and this repository
+    does not use it. The shell side already refuses such a 包文件's name
+    (pkg.sh's `pkgfile_pkgname`), while the entry check's contradiction refusal
+    used to read it as "unreadable" and skip the branch it exists for: `-1`
+    against a 软件源 serving `-2.1` came back as 未发布, and every run then
+    published the same bytes while the database named the newer build -- the
+    exact loop that refusal prevents, disarmed by one Arch-legal character.
+
+    One width, decided where pkgrel enters this repository: a template carrying
+    the other shape is refused here, by name, before anything is fetched --
+    instead of a container build dying later on a file name nobody can read.
+    """
+    value = pkg_field(template, "pkgrel")
+    if not value:
+        raise BumpError(f"{pkg}: the template declares no pkgrel=")
+    if not value.isdigit():
+        raise BumpError(
+            f"{pkg}: pkgrel={value} is not a whole number; "
+            "this repository models `<int>` only, not Arch's `<int>.<int>` form"
+        )
+
+
 def check_sums(pkg: str, template: str) -> None:
     """The package's own `source=` and `sha256sums=` arrays are the same length.
 
@@ -606,6 +631,7 @@ def read_template(
     CI never builds, never landed anywhere at all.
     """
     check_pkgname(pkg, text)
+    check_pkgrel(pkg, text)
     check_sums(pkg, text)
 
     markers = placeholders(text)
@@ -759,13 +785,20 @@ def pkgver_of(evr: str | None) -> str:
     return "" if evr is None else evr.split("-", 1)[0]
 
 
-def pkgrel_of(evr: str | None) -> int | None:
-    """The pkgrel half of `<pkgver>-<pkgrel>`, as a number; None when unreadable."""
-    if evr is None:
-        return None
+def pkgrel_of(evr: str) -> int:
+    """The pkgrel half of `<pkgver>-<pkgrel>`, as a whole number.
+
+    The same width three readers hold: the template's (`check_pkgrel`, where
+    pkgrel enters), the shell's (`pkgfile_pkgname`, which refuses a 包文件 name
+    that carries any other shape), and this one. It used to answer None for a
+    value it could not parse, and the contradiction refusal below skipped its
+    own branch on that None -- so Arch's `<int>.<int>` form read as 未发布 and
+    the loop the refusal exists to stop came back. A value this cannot read is
+    a contradiction to report, not an absent one.
+    """
     _, separator, rel = evr.partition("-")
     if not separator or not rel.isdigit():
-        return None
+        raise BumpError(f"{evr} carries no whole-number pkgrel")
     return int(rel)
 
 
@@ -1136,19 +1169,23 @@ def behind(
             reasons[pkg] = UPSTREAM_MOVED
         elif served is not None and served.get(pkg) != evr:
             published = served.get(pkg)
-            held, published_rel = pkgrel_of(evr), pkgrel_of(published)
             # pkgrel only ever goes up within a 版本 (Arch's own rule), so a tree
             # that renders an *older* build of the 版本 the 软件源 serves is not
             # 落后 -- it contradicts itself. Publishing it would leave the newer
             # build on disk (one 版本, so the 保留窗口 keeps both) while the
             # database and the Release named the older one, and every later run
             # would read that as 未发布 and publish again, forever.
+            #
+            # Only the same 版本 asks this question: a 软件源 still serving
+            # 0.1.10 while the tree renders 0.1.11 is 落后 for the other reason,
+            # and refusing that pair would block the move 上游 just made. Both
+            # halves are read through one width -- a pkgrel this cannot read is
+            # refused there, not skipped here.
             if (
-                published is not None
+                evr is not None
+                and published is not None
                 and pkgver_of(published) == pkgver_of(evr)
-                and held is not None
-                and published_rel is not None
-                and held < published_rel
+                and pkgrel_of(evr) < pkgrel_of(published)
             ):
                 raise BumpError(
                     f"{pkg}: the 软件源 serves {published}, and this tree renders {evr}; "

@@ -1088,6 +1088,38 @@ class ServedTest(unittest.TestCase):
         self.log_of(fetch, root)
         self.assertEqual(fetch.urls.count(sums_url("0.1.10")), 1)
 
+    def test_a_served_pkgrel_this_repository_cannot_read_is_refused(self):
+        # Arch's `<int>.<int>` shape. `pkgrel_of` used to answer None for it and
+        # the contradiction branch above then skipped itself, so the same pair
+        # read as 未发布: the run would publish forever while the database named
+        # the newer build. A value nobody can read is a contradiction to report.
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+        fetch = self.fetch_with(
+            database_body({"magpie-bin": "0.1.10-2.1", "magpie-cli-bin": "0.1.10-2.1"})
+        )
+
+        with self.assertRaises(bump.BumpError) as caught:
+            self.log_of(fetch, root)
+
+        self.assertIn("0.1.10-2.1", str(caught.exception))
+        self.assertIn("whole-number", str(caught.exception))
+
+    def test_a_served_pkgrel_of_another_version_is_not_this_runs_question(self):
+        # 上游 moved on and the 软件源 still serves the old build. That is 落后
+        # for the upstream reason, and the tree is publishing the new 版本
+        # anyway: refusing the pair would block the move 上游 just made. The
+        # pkgrel comparison is only ever about two builds of one 版本.
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+        fetch = self.fetch_with(
+            database_body({"magpie-bin": "0.1.10-2.1", "magpie-cli-bin": "0.1.10-2.1"}),
+            versions=("0.1.11",),
+        )
+        log = self.log_of(fetch, root)
+        self.assertEqual(log["bump"], "1")
+        self.assertEqual(
+            log["behind"], {"magpie-bin": "upstream", "magpie-cli-bin": "upstream"}
+        )
+
     def test_a_tree_the_repository_already_serves_is_not_behind(self):
         root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
         fetch = self.fetch_with(
@@ -1275,6 +1307,64 @@ class TemplatePkgnameTest(unittest.TestCase):
         bump.check_pkgname("magpie-bin", "pkgname='magpie-bin'\n")
 
 
+class TemplatePkgrelTest(unittest.TestCase):
+    """A template's pkgrel= is a whole number, and that is where it is decided.
+
+    Arch also allows `<int>.<int>`, and this repository does not use it: the
+    shell's 包文件 reader refuses that name, so a template carrying it used to
+    render clean, pass the entry check, and die in the container on a file name
+    -- while the check's own contradiction refusal skipped its branch on the
+    value it could not parse.
+    """
+
+    def template(self, pkg: str = "magpie-bin") -> str:
+        return (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
+
+    def test_our_own_templates_carry_one(self):
+        for pkg in bump.PACKAGES:
+            with self.subTest(pkg=pkg):
+                bump.check_pkgrel(pkg, self.template(pkg))
+
+    def test_the_dotted_form_arch_allows_is_refused_by_name(self):
+        drifted = self.template().replace("pkgrel=1", "pkgrel=1.1")
+        self.assertIn("pkgrel=1.1", drifted, "the pkgrel line moved; reword this test")
+        with self.assertRaises(bump.BumpError) as caught:
+            bump.check_pkgrel("magpie-bin", drifted)
+        self.assertIn("pkgrel=1.1", str(caught.exception))
+        self.assertIn("whole number", str(caught.exception))
+
+    def test_a_template_with_no_pkgrel_is_named(self):
+        with self.assertRaises(bump.BumpError) as caught:
+            bump.check_pkgrel("magpie-bin", "pkgname=magpie-bin\n")
+        self.assertIn("no pkgrel=", str(caught.exception))
+
+    def test_a_quoted_value_reads_the_way_the_renderer_writes_it(self):
+        bump.check_pkgrel("magpie-bin", "pkgrel='2'\n")
+
+    def test_both_doors_read_it(self):
+        # The entry check and the render both go through read_template, so one
+        # call there is what makes the refusal reach the mode the pipeline runs.
+        text = self.template().replace("pkgrel=1", "pkgrel=2.1")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            templates = root / "templates"
+            templates.mkdir()
+            for pkg in bump.PACKAGES:
+                (templates / f"{pkg}.PKGBUILD.in").write_text(
+                    self.template(pkg).replace("pkgrel=1", "pkgrel=2.1")
+                )
+            layout = layout_at(root, templates=templates)
+            for name, call in (
+                ("check", lambda: bump.check(layout=layout, fetch=FetchSpy({}))),
+                ("render", lambda: bump.render("0.1.2", layout=layout, fetch=FetchSpy({}))),
+            ):
+                with self.subTest(door=name):
+                    with self.assertRaises(bump.BumpError) as caught:
+                        call()
+                    self.assertIn("pkgrel=2.1", str(caught.exception))
+        self.assertIn("pkgrel=2.1", text)
+
+
 class TemplateArchesTest(unittest.TestCase):
     """A template's arches are held to the table before anything is fetched.
 
@@ -1289,6 +1379,7 @@ class TemplateArchesTest(unittest.TestCase):
 
     TEMPLATE = (
         "pkgname=magpie-bin\n"
+        "pkgrel=1\n"
         "arch=('x86_64' 'aarch64')\n"
         "source_x86_64=('magpie-${pkgver}-amd64::https://example.invalid/magpie-linux-amd64')\n"
         "source_aarch64=('magpie-${pkgver}-arm64::https://example.invalid/magpie-linux-arm64')\n"
