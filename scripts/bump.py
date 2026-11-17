@@ -289,18 +289,69 @@ def release_sums(version: str, *, fetch: Fetch = http_fetch) -> dict[str, str]:
     return sums
 
 
-def latest_version(fetch: Fetch = http_fetch) -> str:
-    """Upstream's newest 版本 this run can 打包: its release is uploaded.
+@dataclass(frozen=True)
+class Release:
+    """One upstream release this run can 打包: its 版本 and the table it published.
 
-    The tag and the assets do not arrive together, so the newest 版本 that 上游
-    advertises can be one whose SHA256SUMS is still a 404. Taking the maximum of
-    the two sources and hoping was how a run holding a complete release
-    published nothing: `--check` said bump, `--render` asked a second time, and
-    the second reading landed on a tag with no assets yet.
+    The two travel together because they come from the same answer. The entry
+    check needs the 版本 (to compare against) and the table (to notice a
+    re-upload under a tag that did not move), and asked for them separately --
+    the version walk read the table to pick a 版本, then `check` read the same
+    URL again to compare checksums -- so one run could decide on one reading and
+    compare against another.
     """
+
+    version: str
+    sums: Mapping[str, str]
+
+
+def required_assets(plans: Sequence[tuple[str, Template]]) -> list[str]:
+    """Every asset this run's templates will ask a release's table for.
+
+    The render's question is "is every asset I need in this table", and the
+    plans already know the answer -- they are read from the templates, before
+    the network is asked anything. Asking it where the 版本 is decided is what
+    keeps a table carrying a subset from becoming the run's answer.
+    """
+    return sorted({asset.asset for _, template in plans for asset in template.assets})
+
+
+def latest_release(*, assets: Sequence[str], fetch: Fetch = http_fetch) -> Release:
+    """上游's newest 版本 whose release carries every asset this run packages.
+
+    Two shapes of "not yet", and only one of them used to be handled:
+
+    - the tag exists before the assets do, so SHA256SUMS is still a 404;
+    - the table landed but lists a subset -- an upload half done, or an asset
+      upstream renamed.
+
+    The first is why this walk exists. The second is the cheap door: presence
+    passed it, the 版本 was handed over, `bump=1` followed, and the render died
+    on `the release has no magpie-cli-linux-amd64` while the older complete
+    release was in hand. Both mean this run cannot 打包 that 版本, so the walk
+    continues.
+
+    "No candidate carries every asset" is different from "no candidate uploaded
+    anything": the first is a release to report, and it names what is missing;
+    the second is a tag that arrived ahead of its uploads.
+    """
+    incomplete: list[tuple[str, list[str]]] = []
     for version in offered_versions(fetch=fetch):
-        if uploaded_sums(version, fetch=fetch) is not None:
-            return version
+        sums = uploaded_sums(version, fetch=fetch)
+        if sums is None:
+            continue
+        missing = [asset for asset in assets if asset not in sums]
+        if not missing:
+            return Release(version=version, sums=sums)
+        incomplete.append((version, missing))
+        log(f"skipping v{version}: its SHA256SUMS lists no {', '.join(missing)}")
+    if incomplete:
+        raise BumpError(
+            "no upstream release carries every asset this repository packages: "
+            + "; ".join(
+                f"v{version} lacks {', '.join(missing)}" for version, missing in incomplete
+            )
+        )
     raise BumpError(
         "upstream has tagged versions, but none has its SHA256SUMS uploaded yet"
     )
@@ -818,26 +869,40 @@ def template_text(layout: Layout, pkg: str) -> str:
         raise BumpError(f"no template for {pkg}: {path} ({exc.strerror})") from exc
 
 
+def plan(layout: Layout) -> list[tuple[str, Template]]:
+    """Every package's template, read once and held to the arch 表 and the 包清单.
+
+    The render and the entry check both need this, and both wrote the same loop:
+    a template that lags the table, or is filed under another name, is this
+    repository's problem, and it has to be found before the network is asked
+    anything. The version decision needs it too now -- which assets a release
+    must carry is not knowable without the plans.
+    """
+    plans = []
+    for pkg, prefix in layout.inventory.items():
+        text = template_text(layout, pkg)
+        plans.append(
+            (pkg, read_template(pkg=pkg, prefix=prefix, text=text, arches=layout.arches))
+        )
+    return plans
+
+
 def render(
     version: str,
     *,
     layout: Layout,
     fetch: Fetch = http_fetch,
+    plans: Sequence[tuple[str, Template]] | None = None,
 ) -> None:
     # The version lands verbatim in pkgver= (and in the source URLs); a tag with
     # a dash or shell metacharacter would break makepkg or inject into it.
     if not VERSION_RE.fullmatch(version):
         raise BumpError(f"refusing to render pkgver={version!r}: expected digits separated by dots")
 
-    # Read every template once, and hold it to the arch table, its own pkgname
-    # and the assets the 包清单 publishes, before the network is asked anything:
-    # a template that lags the table, or is filed under another name, is this
-    # repository's problem, and it should not be reported as "the release has no
-    # such asset" or found after the gh-pages push.
-    plans = []
-    for pkg, prefix in layout.inventory.items():
-        text = template_text(layout, pkg)
-        plans.append((pkg, read_template(pkg=pkg, prefix=prefix, text=text, arches=layout.arches)))
+    # Read every template once -- unless the caller already did, which is the
+    # case when it decided the 版本 from the same plans.
+    if plans is None:
+        plans = plan(layout)
 
     sums = release_sums(version, fetch=fetch)
 
@@ -1103,7 +1168,14 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     # render does the same, so a tree whose templates and PKGBUILDs disagree
     # fails here rather than being reported as "upstream has no such asset".
     rendered = check_templates(layout)
-    upstream = latest_version(fetch=fetch)
+    # The plans the check just read are also what the version decision needs:
+    # a release is not a candidate for this run unless its table carries every
+    # asset these templates will ask it for.
+    release = latest_release(
+        assets=required_assets([(pkg, one.template) for pkg, one in rendered.items()]),
+        fetch=fetch,
+    )
+    upstream = release.version
     packaged = packaged_evr(layout)
     log(f"upstream={upstream}")
     for pkg, evr in sorted(packaged.items()):
@@ -1118,18 +1190,21 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     # 落后: 上游 re-uploaded an asset under a tag that did not move. Nothing
     # else would ever notice -- the version matches, the render matches, and
     # `makepkg` would refuse the download the day something re-rendered.
-    sums = uploaded_sums(upstream, fetch=fetch) or {}
+    # The same reading the 版本 was decided on: this used to fetch the table a
+    # second time, so the run could pick a 版本 from one answer and compare
+    # against another.
+    sums = release.sums
     stale = set()
-    for pkg, plan in rendered.items():
+    for pkg, one in rendered.items():
         # An unrendered package has no values to compare, and pkgver_of answers
         # "" for a build that is not there -- one guard, two real shapes (no
         # PKGBUILD at all; a PKGBUILD that yields no pkgver). Both mean the
         # render will take the new sums, so neither is a stale checksum.
-        if plan.values is None or pkgver_of(packaged.get(pkg)) != upstream:
+        if one.values is None or pkgver_of(packaged.get(pkg)) != upstream:
             continue
-        for planned in plan.template.assets:
+        for planned in one.template.assets:
             upstream_sum = sums.get(planned.asset)
-            if upstream_sum is not None and plan.values.get(planned.placeholder) != upstream_sum:
+            if upstream_sum is not None and one.values.get(planned.placeholder) != upstream_sum:
                 stale.add(pkg)
     if stale:
         log("checksums differ from 上游's: " + " ".join(sorted(stale)))
@@ -1196,7 +1271,16 @@ def main(
             return 0
         if args.check:
             return check(layout=layout, fetch=fetch)
-        render(args.version or latest_version(fetch=fetch), layout=layout, fetch=fetch)
+        # The plans come first even for a version a human pinned: the render
+        # needs them, and when nobody pinned one they are what decides which
+        # 版本 is a candidate at all.
+        plans = plan(layout)
+        version = args.version
+        if version is None:
+            version = latest_release(
+                assets=required_assets(plans), fetch=fetch
+            ).version
+        render(version, layout=layout, fetch=fetch, plans=plans)
         return 0
     except BumpError as exc:
         sys.exit(str(exc))

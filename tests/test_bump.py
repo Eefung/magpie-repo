@@ -94,6 +94,17 @@ def license_url(version: str) -> str:
 ICON_URL = "https://usemagpie.ai/img/icon-256.png"
 
 
+def planned_assets() -> list[str]:
+    """Every asset this repository's templates plan, read from them.
+
+    The 版本 decision asks a release's table for exactly these, so a fixture
+    table that published only some of them would be describing a release this
+    run cannot 打包 -- and every test using such a table would then be asserting
+    against a state the pipeline treats as "skip this one".
+    """
+    return bump.required_assets(bump.plan(bump.layout_for(REPO)))
+
+
 def version_sources(
     github: str | Sequence[str] | None, site: str | None
 ) -> dict[str, bytes | None]:
@@ -109,7 +120,10 @@ def version_sources(
     table: dict[str, bytes | None] = {}
     for version in [*tags, site]:
         if version is not None:
-            table.setdefault(sums_url(version), sums_body({"magpie-linux-amd64": ASSET_SUM}))
+            table.setdefault(
+                sums_url(version),
+                sums_body({asset: ASSET_SUM for asset in planned_assets()}),
+            )
     if github is not None:
         table[bump.GITHUB_RELEASES] = json.dumps(
             [{"tag_name": f"v{tag}", "draft": False} for tag in tags]
@@ -121,7 +135,8 @@ def version_sources(
 
 def uploaded(*versions: str) -> dict[str, bytes]:
     """The SHA256SUMS of these 版本, and of nothing else."""
-    return {sums_url(version): sums_body({"magpie-linux-amd64": ASSET_SUM}) for version in versions}
+    assets = {asset: ASSET_SUM for asset in planned_assets()}
+    return {sums_url(version): sums_body(assets) for version in versions}
 
 
 def sums_body(entries: dict[str, str]) -> bytes:
@@ -290,18 +305,32 @@ class HighestTest(unittest.TestCase):
         self.assertIn("0.1.4-beta", str(caught.exception))
 
 
-class LatestVersionTest(unittest.TestCase):
+class LatestReleaseTest(unittest.TestCase):
+    """Which 版本 this run can 打包, and the table it decided on.
+
+    Two widths of "not yet": the tag before its assets (a 404) and the table
+    before the uploads are done (a subset). Only the first was handled, so the
+    second passed the decision and died in the render -- while an older complete
+    release was in hand. `assets` is the plans' answer, so the walk asks the
+    question the render will ask.
+    """
+
+    def latest(self, fetch, assets=None) -> str:
+        """The 版本 this table yields, with the repository's own planned assets."""
+        chosen = planned_assets() if assets is None else assets
+        return bump.latest_release(assets=chosen, fetch=fetch).version
+
     def test_site_ahead_of_github_wins(self):
         fetch = FetchSpy(version_sources(github="0.1.9", site="0.1.10"))
-        self.assertEqual(bump.latest_version(fetch=fetch), "0.1.10")
+        self.assertEqual(self.latest(fetch), "0.1.10")
 
     def test_github_ahead_of_site_wins(self):
         fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.9"))
-        self.assertEqual(bump.latest_version(fetch=fetch), "0.1.10")
+        self.assertEqual(self.latest(fetch), "0.1.10")
 
     def test_github_agrees_with_site(self):
         fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
-        self.assertEqual(bump.latest_version(fetch=fetch), "0.1.10")
+        self.assertEqual(self.latest(fetch), "0.1.10")
 
     def test_github_rate_limit_falls_back_to_the_site(self):
         fetch = FetchSpy(
@@ -312,7 +341,7 @@ class LatestVersionTest(unittest.TestCase):
             }
         )
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(bump.latest_version(fetch=fetch), "0.1.9")
+            self.assertEqual(self.latest(fetch), "0.1.9")
 
     def test_connection_error_falls_back_to_the_site(self):
         fetch = FetchSpy(
@@ -323,7 +352,17 @@ class LatestVersionTest(unittest.TestCase):
             }
         )
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(bump.latest_version(fetch=fetch), "0.1.9")
+            self.assertEqual(self.latest(fetch), "0.1.9")
+
+    def test_the_table_it_decided_on_comes_back_with_the_version(self):
+        # The entry check compares the committed render against this table. It
+        # used to fetch the same URL a second time, so the 版本 and the
+        # comparison came from two readings.
+        fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
+        release = bump.latest_release(assets=planned_assets(), fetch=fetch)
+        self.assertEqual(release.version, "0.1.10")
+        self.assertEqual(fetch.urls.count(sums_url("0.1.10")), 1)
+        self.assertEqual(release.sums["magpie-linux-amd64"], ASSET_SUM)
 
     def test_a_tag_without_its_assets_falls_back_to_the_uploaded_release(self):
         # 上游的 tag 与资产不一起到：先有 release 页面，上传在后面几秒到几分钟。
@@ -336,7 +375,43 @@ class LatestVersionTest(unittest.TestCase):
             }
         )
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(bump.latest_version(fetch=fetch), "0.1.10")
+            self.assertEqual(self.latest(fetch), "0.1.10")
+
+    def test_a_table_carrying_a_subset_is_not_a_candidate(self):
+        # The cheap door: a SHA256SUMS that landed before every upload did, or
+        # one upstream regenerated after renaming an asset. Presence answered
+        # 200, so the run decided on a 版本 the render then refused -- with the
+        # complete 0.1.10 in hand the whole time.
+        assets = planned_assets()
+        self.assertGreater(len(assets), 1, "one asset cannot show a subset; reword this test")
+        partial = {asset: ASSET_SUM for asset in assets[1:]}
+        fetch = FetchSpy(
+            {
+                **version_sources(github=["0.1.11", "0.1.10"], site="0.1.11"),
+                sums_url("0.1.11"): sums_body(partial),
+            }
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.latest(fetch), "0.1.10")
+
+    def test_no_complete_candidate_names_what_each_one_lacks(self):
+        # A release to report, not a reason to wait: every candidate uploaded a
+        # table and every table lists a different subset.
+        assets = planned_assets()
+        self.assertGreater(len(assets), 1, "one asset cannot show a subset; reword this test")
+        fetch = FetchSpy(
+            {
+                **version_sources(github=["0.1.11", "0.1.10"], site="0.1.11"),
+                sums_url("0.1.11"): sums_body({asset: ASSET_SUM for asset in assets[1:]}),
+                sums_url("0.1.10"): sums_body({assets[0]: ASSET_SUM}),
+            }
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(bump.BumpError) as caught:
+                self.latest(fetch)
+        self.assertIn("every asset this repository packages", str(caught.exception))
+        self.assertIn(f"v0.1.11 lacks {assets[0]}", str(caught.exception))
+        self.assertIn(f"v0.1.10 lacks {assets[1]}", str(caught.exception))
 
     def test_nothing_uploaded_is_one_line(self):
         fetch = FetchSpy(
@@ -347,14 +422,14 @@ class LatestVersionTest(unittest.TestCase):
         )
         with contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(bump.BumpError) as caught:
-                bump.latest_version(fetch=fetch)
+                self.latest(fetch)
         self.assertIn("none has its SHA256SUMS", str(caught.exception))
 
     def test_no_answer_from_anywhere_is_one_line(self):
         fetch = FetchSpy({bump.GITHUB_RELEASES: None, bump.SITE_API: None})
         with contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(bump.BumpError) as caught:
-                bump.latest_version(fetch=fetch)
+                self.latest(fetch)
         self.assertIn("could not learn upstream's version", str(caught.exception))
 
 
@@ -1001,6 +1076,17 @@ class ServedTest(unittest.TestCase):
 
         self.assertIn("pkgrel", str(caught.exception))
         self.assertIn("0.1.10-2", str(caught.exception))
+
+    def test_a_run_reads_the_release_table_once(self):
+        # The 版本 decision and the third direction (checksums) are the same
+        # reading now. They used to be two fetches of one URL, so the run could
+        # pick a 版本 from one answer and compare the tree against another.
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+        fetch = self.fetch_with(
+            database_body({"magpie-bin": "0.1.10-1", "magpie-cli-bin": "0.1.10-1"})
+        )
+        self.log_of(fetch, root)
+        self.assertEqual(fetch.urls.count(sums_url("0.1.10")), 1)
 
     def test_a_tree_the_repository_already_serves_is_not_behind(self):
         root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})

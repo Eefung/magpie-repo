@@ -9,7 +9,7 @@ Actions 每天 04:17 UTC 跑一次，有新版本才发布：
 ```text
 scripts/upstream.sh       入口检查：跑 --check，决定这次要不要发布、发哪个版本
                           上游 = GitHub releases 与 usemagpie.ai/api/latest 里最高的、
-                          SHA256SUMS 已经传好的那个版本
+                          SHA256SUMS 已经传齐（本仓库要打的资产一个不缺）的那个版本
                           交出 upstream= / target= / bump= / packages= 四条冻结行
   └ bump=1 时 → scripts/bump.py --render --version <target>
       target 就是 --check 比对过的上游版本（或人手动指定并 pin 住的那个），渲染不再问上游第二遍
