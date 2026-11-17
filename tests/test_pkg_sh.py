@@ -886,6 +886,68 @@ class PkgverReadersTest(unittest.TestCase):
                 )
 
 
+class PkgrelShapeTest(unittest.TestCase):
+    """One table of pkgrel shapes, and the two readers that must agree on it.
+
+    `bump.check_pkgrel` is where pkgrel *enters* this repository (a template's
+    `pkgrel=`), and `pkgfile_pkgname` is where it comes back out of a 包文件's
+    name after makepkg decided it. Nothing compared their accept sets, and they
+    had drifted: `str.isdigit` answered yes to `²` and to the fullwidth `１`
+    while this reader refuses both, so the entry check blessed a value the
+    container then died on -- `not a 包文件 name` -- after the render, inside a
+    module nobody had asked about.
+
+    The table is literals a template may write. What the door accepts must be
+    what a name can carry, because the name is written from the same value.
+    """
+
+    SHAPES = (
+        "1",
+        "2",
+        "'3'",      # quoted: both sides read the first token and drop the quotes
+        "1 ",       # a trailing space is the token rule again
+        "1 2",      # ... and so is this
+        "1.1",      # Arch's dependency-bump form: this repository refuses it
+        "２",       # fullwidth
+        "²",        # superscript
+        "",         # no value at all
+    )
+
+    def door_accepts(self, literal: str) -> bool:
+        """Does the template door take this value?"""
+        try:
+            bump.check_pkgrel("magpie-bin", f"pkgname=magpie-bin\npkgrel={literal}\n")
+        except bump.BumpError:
+            return False
+        return True
+
+    def name_accepts(self, literal: str) -> bool:
+        """Does a 包文件 name carrying the value this literal reads as parse?"""
+        value = bump.pkg_field(f"pkgrel={literal}\n", "pkgrel")
+        with tempfile.TemporaryDirectory() as tmp:
+            name = fixtures.pkgfile_name("magpie-bin", "0.1.10", rel=value)
+            result = call(f"pkgfile_pkgname {shlex.quote(str(Path(tmp) / name))}")
+        return result.returncode == 0 and result.stdout == "magpie-bin\n"
+
+    def test_the_two_readers_accept_the_same_shapes(self):
+        for literal in self.SHAPES:
+            with self.subTest(pkgrel=literal):
+                self.assertEqual(
+                    self.door_accepts(literal),
+                    self.name_accepts(literal),
+                    f"pkgrel={literal!r}: the template door and the name reader disagree",
+                )
+
+    def test_the_table_holds_both_verdicts(self):
+        # A table everything accepted would pass with either reader deleted.
+        verdicts = {self.door_accepts(literal) for literal in self.SHAPES}
+        self.assertEqual(verdicts, {True, False})
+        # The premise the table rests on: python's own `str.isdigit` calls these
+        # two digits, which is why the ASCII rule has to be what decides.
+        self.assertTrue("１".isdigit() and "²".isdigit())
+        self.assertFalse(self.door_accepts("１"))
+        self.assertFalse(self.name_accepts("１"))
+
 
 if __name__ == "__main__":
     unittest.main()
