@@ -269,7 +269,7 @@ class UpstreamTest(unittest.TestCase):
         self.assertEqual(handed["bump"], "1")
         self.assertIsNone(self.asked())
 
-    def test_a_duplicated_line_is_a_protocol_break(self):
+    def test_a_duplicated_frozen_line_is_a_protocol_break(self):
         # Two `bump=` lines is the producer having written twice, which
         # line_field reports instead of picking one. The workflow would die on
         # the same line; the test job must see it too -- and see it as the
