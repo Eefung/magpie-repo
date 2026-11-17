@@ -16,6 +16,7 @@
 #   upstream=<the 版本 --check compared against>
 #   target=<the 版本 this run would render>
 #   bump=0|1
+#   pin=0|1  -- this run holds the tree back from 上游, so it records PINNED
 #   packages=<the 包清单 file it wrote>
 #
 # `packages=` is the 包清单's only name: the build and release steps read this
@@ -147,6 +148,22 @@ if [ "$bump" = 0 ] && [ "$answered" = 1 ]; then
     fi
 fi
 
+# Whether this run records a pin. A human naming a version is not by itself a
+# rollback: re-running the version the tree already carries is how a Release
+# that failed after the branch push is retried (the fifth direction), and
+# writing that down as a pin would stop every later scheduled run -- behind()
+# suppresses the upstream direction while the pin holds, so the run prints
+# bump=0 forever, and the step that removes the file only runs on bump=1.
+#
+# The sign is the comparison, not the presence of an input: a target that
+# differs from 上游's is a tree told to stay where it is, and a target equal to
+# it is the tree moving to where 上游 already points.
+if [ -n "$wanted" ] && [ "$wanted" != "$upstream" ]; then
+    pin=1
+else
+    pin=0
+fi
+
 # The gate downstream is `if: bump == '1'`, so anything else would silently
 # skip a publish. Say so instead of letting a typo read as "nothing to do".
 case "$bump" in
@@ -157,4 +174,5 @@ esac
 printf 'upstream=%s\n' "$upstream"
 printf 'target=%s\n' "$target"
 printf 'bump=%s\n' "$bump"
+printf 'pin=%s\n' "$pin"
 printf 'packages=%s\n' "$packages"

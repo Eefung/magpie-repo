@@ -148,6 +148,7 @@ class UpstreamTest(unittest.TestCase):
             "upstream": "0.1.10",
             "target": "0.1.10",
             "bump": "0",
+            "pin": "0",
             "packages": str(self.work / "packages.txt"),
         })
 
@@ -169,6 +170,25 @@ class UpstreamTest(unittest.TestCase):
         self.assertEqual(handed["bump"], "1")
         # What 上游 looks like is still reported; it is no longer what decides.
         self.assertEqual(handed["upstream"], "0.1.10")
+
+    def test_a_scheduled_run_records_no_pin(self):
+        self.assertEqual(self.handover(self.run_script())["pin"], "0")
+
+    def test_asking_for_the_version_the_tree_carries_is_not_a_rollback(self):
+        # The retry the fifth direction needs: a Release that failed after the
+        # branch push is re-run at the 版本 the tree already carries. Writing
+        # that down as a pin would suppress the upstream direction on every
+        # later run, and the pin outlives the run that made it.
+        handed = self.handover(self.run_script(wanted="0.1.10"))
+
+        self.assertEqual(handed["pin"], "0")
+        self.assertEqual(handed["target"], "0.1.10")
+
+    def test_asking_for_another_version_is_a_rollback(self):
+        handed = self.handover(self.run_script(wanted="0.1.5"))
+
+        self.assertEqual(handed["pin"], "1")
+        self.assertEqual(handed["target"], "0.1.5")
 
     def test_an_absent_bump_line_does_not_mean_publish(self):
         # A check that exited 0 without its frozen line is a check that never
@@ -204,7 +224,7 @@ class UpstreamTest(unittest.TestCase):
         # stdout here would have gone unnoticed.
         self.assertEqual(
             [line.split("=", 1)[0] for line in result.stdout.splitlines()],
-            ["upstream", "target", "bump", "packages"],
+            ["upstream", "target", "bump", "pin", "packages"],
         )
 
     def test_a_release_that_exists_really_is_nothing_to_do(self):
@@ -313,7 +333,7 @@ class UpstreamTest(unittest.TestCase):
         self.assertIn("packaged magpie-bin=0.1.10", result.stderr)
         self.assertEqual(
             [line.split("=", 1)[0] for line in result.stdout.splitlines()],
-            ["upstream", "target", "bump", "packages"],
+            ["upstream", "target", "bump", "pin", "packages"],
         )
 
 

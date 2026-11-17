@@ -288,12 +288,10 @@ jobs:
         if: steps.upstream.outputs.bump == '1'
         env:
           VER: ${{ steps.render.outputs.ver }}
-          # What this run was asked for, empty for a scheduled one. The sign is
-          # the same sign the entry check reads: `upstream.sh` gets it as WANTED
-          # and answers with the version to render.
-          PIN: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          # shellcheck source=scripts/lib/pkg.sh
+          source scripts/lib/pkg.sh
           # The step's own copy of the identity would be a second source for a
           # fact the job env already holds; both commits sign as it instead.
           git config user.name "$GIT_NAME"
@@ -304,9 +302,17 @@ jobs:
           # a rollback used to last until the next 04:17, with no run saying it
           # had been undone. It lands in the same commit as the PKGBUILDs it
           # describes, which is what makes a forgotten pin a line in `git log`;
-          # an empty input removes it, and so does deleting the file.
-          if [ -n "$PIN" ]; then
-            printf '%s\n' "$PIN" > PINNED
+          # a run that is not holding back removes it, and so does deleting the
+          # file.
+          #
+          # Which run is a rollback is `pin=`, from the module that does the
+          # comparing: inferring it from "the dispatch input was non-empty" made
+          # every re-run of the version the tree already carries -- the retry a
+          # failed Release needs -- a pin nobody asked for, and a pin outlives
+          # that run.
+          pin="$(line_field pin "$UP.txt")"
+          if [ "$pin" = 1 ]; then
+            printf '%s\n' "$VER" > PINNED
             git add PINNED
           elif git ls-files --error-unmatch PINNED >/dev/null 2>&1; then
             git rm --quiet PINNED

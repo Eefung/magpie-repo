@@ -874,9 +874,20 @@ class PinnedRollbackTest(unittest.TestCase):
     def test_the_step_writes_the_file_the_check_reads(self):
         self.assertIn(bump.PIN_FILE, self.run_of())
 
-    def test_the_pin_is_the_version_this_run_was_asked_for(self):
-        self.assertIn("PIN: ${{ inputs.version }}", workflow.text())
-        self.assertIn('"$PIN"', self.run_of())
+    def test_the_pin_is_the_version_this_run_rendered(self):
+        # What lands in the file is the 版本 the renderer produced, which is the
+        # one this run's build and Release describe -- not a string relayed
+        # straight from the dispatch input.
+        self.assertIn('"$VER" > PINNED', self.run_of())
+
+    def test_which_runs_pin_is_the_checks_answer(self):
+        # `pin=` comes from the module that compares target with 上游. Reading
+        # it off "the dispatch input was non-empty" made a retry of the current
+        # 版本 a pin nobody asked for, and a pin suppresses the upstream
+        # direction on every later run.
+        self.assertIn('line_field pin "$UP.txt"', self.run_of())
+        self.assertIn('[ "$pin" = 1 ]', self.run_of())
+        self.assertNotIn("inputs.version", self.run_of())
 
     def test_a_renamed_file_is_caught(self):
         code = self.run_of()
