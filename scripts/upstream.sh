@@ -27,6 +27,13 @@
 #
 # BUMP is the one seam: tests point it at a stub so the decision runs offline,
 # the way BUILD_CHECK lets build-repo.sh run without a container.
+#
+# One reason to publish is outside the check's reach, so it is asked here: when
+# the check says bump=0, this asks release-state.sh whether v<target> has a
+# Release. A rebuild whose Release step failed after the branch push leaves
+# every direction the check can see quiet, and the 软件源 serving a build with
+# no Release; absent is the reason to publish it again. GITHUB_REPOSITORY
+# (Actions sets it) names the repo, and RELEASE_STATE is that script's seam.
 set -euo pipefail
 
 # shellcheck source=lib/pkg.sh
@@ -35,6 +42,10 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 work="${1:?usage: upstream.sh <work dir>}"
 BUMP="${BUMP:-$here/bump.py}"
+# The Release question is the fifth direction's, and it belongs to the script
+# that already answers it (release-state.sh: present/absent as a value, with gh
+# behind its own seam). Substituted here so this module can be driven offline.
+RELEASE_STATE="${RELEASE_STATE:-$here/release-state.sh}"
 mkdir -p "$work"
 work="$(cd "$work" && pwd)"
 check="$work/check.txt"
@@ -75,6 +86,44 @@ else
     # "publish". The defaulting is the caller's call -- here, where it is
     # visible -- and a duplicated line is still a protocol break.
     bump="$(line_field_or bump "$check" 0)"
+fi
+
+# The fifth direction, and the only one the check cannot see. A rebuild's 版本
+# is committed by the person who re-rendered it, so once the branch push lands
+# every direction above is quiet -- and a Release that failed after that push
+# is never asked for again, while the 软件源 serves a build whose Release does
+# not exist. When the others are quiet, ask the question the release step
+# already owns: absent is a reason to publish, present really is nothing to do.
+if [ "$bump" = 0 ]; then
+    if [ -z "${GITHUB_REPOSITORY:-}" ]; then
+        echo "GITHUB_REPOSITORY is not set: cannot ask whether v$target has a Release" >&2
+    else
+        state_log="$(mktemp)"
+        state_code=0
+        "$RELEASE_STATE" "$target" "$GITHUB_REPOSITORY" >"$state_log" 2>&1 || state_code=$?
+        if [ "$state_code" -ne 0 ]; then
+            # A lookup that failed is not "no Release" -- that is the bug
+            # release-state.sh exists to keep out of the release step. This run
+            # publishes nothing it cannot justify, and the next one asks again.
+            cat "$state_log" >&2
+            echo "cannot ask whether v$target has a Release; publishing only what the check found" >&2
+        else
+            release="$(line_field release "$state_log")"
+            case "$release" in
+                present) ;;
+                absent)
+                    echo "v$target has no Release: publishing it again" >&2
+                    bump=1
+                    ;;
+                *)
+                    echo "the Release lookup answered '$release', not present or absent" >&2
+                    rm -f "$state_log"
+                    exit 1
+                    ;;
+            esac
+        fi
+        rm -f "$state_log"
+    fi
 fi
 
 # The gate downstream is `if: bump == '1'`, so anything else would silently

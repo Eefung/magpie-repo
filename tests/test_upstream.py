@@ -7,6 +7,10 @@ finished now meaning "publish") did not. `scripts/upstream.sh` holds the
 decision instead, with a stub 上游 in place of the network, and this drives it
 through the door the workflow uses.
 
+One reason to publish is not the check's to see -- a Release that failed after
+a rebuild's branch push -- so the script asks release-state.sh about it, with a
+stub standing in for that script's own `gh`.
+
     python3 -m unittest discover -s tests
 """
 
@@ -58,6 +62,28 @@ sys.exit("stub: unknown mode " + sys.argv[1])
 """
 
 
+def state_stub(*, verdict: str | None = "present", code: int = 0, raw: str | None = None) -> str:
+    """A stand-in for release-state.sh: one answer, and a note that it was asked.
+
+    `ASKED` is where it writes its argv, so a test can prove the question was
+    *not* asked (a check that already says publish has nothing to ask about)
+    as well as that it was.
+    """
+    body = raw if raw is not None else f"release={verdict}"
+    return f"""\
+#! /usr/bin/env python3
+import os
+import pathlib
+import sys
+
+asked = os.environ.get("ASKED")
+if asked:
+    pathlib.Path(asked).write_text(" ".join(sys.argv[1:]))
+print({body!r})
+sys.exit({code})
+"""
+
+
 class UpstreamTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -70,12 +96,34 @@ class UpstreamTest(unittest.TestCase):
         path.write_text(source)
         return path
 
-    def run_script(self, source: str | None = None, *, wanted: str | None = None):
+    def state(self, source: str) -> Path:
+        # Executable: upstream.sh runs it the way it runs the real script, so a
+        # stub without the bit fails as "权限不够" -- which is what this test
+        # tree hit first.
+        path = self.root / "release-state-stub"
+        path.write_text(source)
+        path.chmod(0o755)
+        return path
+
+    def asked(self) -> str | None:
+        """What the Release lookup was asked, or None when it was not asked."""
+        marker = self.root / "asked.txt"
+        return marker.read_text() if marker.exists() else None
+
+    def run_script(self, source: str | None = None, *, wanted: str | None = None,
+                   state: str | None = None, repo: str | None = "owner/repo"):
         env = dict(os.environ)
+        # Both are read from the environment, and this machine's must not leak
+        # into a test: a real GITHUB_REPOSITORY would reach the real `gh`.
         env.pop("WANTED", None)
+        env.pop("GITHUB_REPOSITORY", None)
         env["BUMP"] = str(self.bump(source or stub()))
+        env["RELEASE_STATE"] = str(self.state(state or state_stub()))
+        env["ASKED"] = str(self.root / "asked.txt")
         if wanted is not None:
             env["WANTED"] = wanted
+        if repo is not None:
+            env["GITHUB_REPOSITORY"] = repo
         return subprocess.run(
             ["bash", str(SCRIPT), str(self.work)],
             cwd=str(REPO),
@@ -135,7 +183,70 @@ class UpstreamTest(unittest.TestCase):
         self.assertIn("the entry check failed", result.stderr)
         self.assertEqual(result.stdout, "")
 
-    def test_a_duplicated_frozen_line_is_a_protocol_break(self):
+    def test_a_release_that_does_not_exist_is_a_reason_to_publish(self):
+        # The fifth direction. A rebuild's 版本 is already committed, so after
+        # the branch push every direction the check can see is quiet -- and a
+        # Release that failed there would never be retried while the 软件源
+        # served a build without one.
+        handed = self.handover(
+            self.run_script(stub(), state=state_stub(verdict="absent"))
+        )
+
+        self.assertEqual(handed["bump"], "1")
+        self.assertEqual(handed["target"], "0.1.10")
+        # Asked about the 版本 this tree carries, in this repository.
+        self.assertEqual(self.asked(), "0.1.10 owner/repo")
+
+    def test_a_release_that_exists_really_is_nothing_to_do(self):
+        result = self.run_script(stub(), state=state_stub(verdict="present"))
+
+        self.assertEqual(self.handover(result)["bump"], "0")
+        self.assertEqual(self.asked(), "0.1.10 owner/repo")
+
+    def test_a_lookup_that_failed_is_not_a_missing_release(self):
+        # A 500 or a rate limit is not "no Release": it says so and publishes
+        # only what the check found, and the next run asks again.
+        result = self.run_script(
+            stub(), state=state_stub(code=1, raw="the release lookup for v0.1.10 answered HTTP 500")
+        )
+
+        self.assertEqual(self.handover(result)["bump"], "0")
+        self.assertIn("HTTP 500", result.stderr)
+        self.assertIn("cannot ask whether v0.1.10 has a Release", result.stderr)
+
+    def test_without_a_repository_the_question_is_skipped_out_loud(self):
+        # A hand run has no GITHUB_REPOSITORY. Guessing one would ask about
+        # somebody else's releases.
+        result = self.run_script(stub(), repo=None)
+
+        self.assertEqual(self.handover(result)["bump"], "0")
+        self.assertIn("GITHUB_REPOSITORY is not set", result.stderr)
+        self.assertIsNone(self.asked())
+
+    def test_an_answer_that_is_neither_present_nor_absent_is_refused(self):
+        result = self.run_script(stub(), state=state_stub(raw="release=maybe"))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("'maybe', not present or absent", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_a_check_that_already_says_publish_does_not_ask(self):
+        # The fifth direction is for the quiet runs; an absent Release is about
+        # to be created by this one anyway.
+        handed = self.handover(
+            self.run_script(stub(upstream="0.1.11", bump="1"), state=state_stub(verdict="absent"))
+        )
+
+        self.assertEqual(handed["bump"], "1")
+        self.assertIsNone(self.asked())
+
+    def test_a_pinned_version_does_not_ask(self):
+        handed = self.handover(self.run_script(wanted="0.1.5", state=state_stub(verdict="absent")))
+
+        self.assertEqual(handed["bump"], "1")
+        self.assertIsNone(self.asked())
+
+    def test_a_duplicated_line_is_a_protocol_break(self):
         # Two `bump=` lines is the producer having written twice, which
         # line_field reports instead of picking one. The workflow would die on
         # the same line; the test job must see it too -- and see it as the
