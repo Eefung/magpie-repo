@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "scripts" / "release.sh"
+LIB = REPO / "scripts" / "lib" / "pkg.sh"
 
 sys.path.insert(0, str(REPO / "tests"))
 
@@ -208,6 +210,37 @@ class ReleaseTest(unittest.TestCase):
             self.assertTrue(
                 (self.root / path).is_file() or Path(path).is_file(), line
             )
+
+    def test_the_three_lines_are_written_through_the_gate(self):
+        # A handover spelled by hand would pass the read-back below while
+        # skipping the gate that refuses a path naming no file.
+        source = SCRIPT.read_text()
+        for key in ("assets", "sums", "notes"):
+            self.assertIn(f'frozen_write {key} "$out/', source)
+
+    def test_the_handover_reads_back_through_the_gates_that_consume_it(self):
+        # The vertical path of the slice: what this script writes, the module
+        # that reads it accepts -- one list of paths that exist, two paths that
+        # are files. A handover that only looks right fails here.
+        result = self.release()
+        log = self.root / "release.txt"
+        log.write_text(result.stdout)
+
+        probe = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f"set -euo pipefail; source {shlex.quote(str(LIB))}; "
+                f'assets=(); frozen_list assets {shlex.quote(str(log))} assets; '
+                f'sums_path=""; frozen_var sums {shlex.quote(str(log))} sums_path; '
+                f'notes_path=""; frozen_var notes {shlex.quote(str(log))} notes_path; '
+                '[ "${#assets[@]}" -eq 2 ] && [ -f "$sums_path" ] && [ -f "$notes_path" ]',
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(probe.returncode, 0, probe.stderr)
 
     def test_a_version_that_was_never_built_is_named(self):
         result = self.run_script(

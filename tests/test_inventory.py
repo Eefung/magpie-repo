@@ -1128,6 +1128,17 @@ class PublishNamesTest(unittest.TestCase):
     def test_the_publish_step_hands_it_over(self):
         self.assertIn('"$PAGES_BRANCH"', self.run_of("Publish the pacman repository"))
 
+    def test_the_release_step_reads_its_three_keys_through_the_gates(self):
+        # The step used to consume `assets` through a redirect on a command
+        # substitution: the key's value was a file name, and what that file held
+        # was never checked -- an empty one handed `gh release` the checksums
+        # alone and the run went green.
+        run = self.run_of("Publish the GitHub release")
+        self.assertIn("frozen_list assets /tmp/release.txt assets", run)
+        self.assertIn("frozen_var sums /tmp/release.txt sums", run)
+        self.assertIn("frozen_var notes /tmp/release.txt notes", run)
+        self.assertNotIn("mapfile", run)
+
     def test_the_tag_is_the_one_the_lookup_asked_about(self):
         self.assertIn("TAG: ${{ steps.release_state.outputs.tag }}", workflow.text())
         run = self.run_of("Publish the GitHub release")

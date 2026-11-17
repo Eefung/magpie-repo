@@ -695,6 +695,271 @@ class PkglistTest(unittest.TestCase):
         self.assertIn("no such file", result.stderr)
 
 
+class FrozenKindTest(unittest.TestCase):
+    """冻结行是有种类的东西，一张表说清每一行的规矩。
+
+    What a key may say, whether a missing line is a failure, and whether the
+    value names a file were each decided by whoever happened to read the key:
+    the workflow carried its own `case` for `release=`, and an `assets=` naming
+    a file that lists nothing handed `gh release` the checksums alone -- a green
+    Release with no packages in it.
+
+    The table is data, and `frozen_var` / `frozen_list` / `frozen_write` are the
+    only readers and writers that consult it.
+    """
+
+    COLUMNS = 5
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.log = self.root / "out.txt"
+
+    def table(self) -> list[list[str]]:
+        result = call("frozen_table")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [line.split("|") for line in result.stdout.strip().splitlines()]
+
+    def column(self, key: str, index: int) -> subprocess.CompletedProcess:
+        return call(f"frozen_field {shlex.quote(key)} {index}")
+
+    def test_every_row_answers_all_five_columns(self):
+        rows = self.table()
+
+        self.assertTrue(rows, "the table is empty")
+        for row in rows:
+            self.assertEqual(len(row), self.COLUMNS, row)
+            self.assertTrue(all(cell.strip() for cell in row), row)
+        keys = [row[0] for row in rows]
+        self.assertEqual(len(keys), len(set(keys)), keys)
+
+    def test_the_release_keys_say_what_shape_they_are(self):
+        # The three this slice moves: one list of paths, two paths of their own.
+        for key, shape in (("assets", "list"), ("sums", "path"), ("notes", "path")):
+            with self.subTest(key=key):
+                result = self.column(key, 3)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, shape + "\n")
+
+    def test_a_key_the_table_does_not_name_is_refused(self):
+        result = call("frozen_var ghost /tmp/nothing.txt ghost_value")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no such frozen key: ghost", result.stderr)
+
+    def test_a_value_key_is_assigned_into_the_callers_variable(self):
+        self.log.write_text("upstream=0.1.9\n")
+        result = call(
+            f'upstream_value=""; frozen_var upstream {shlex.quote(str(self.log))} upstream_value; '
+            '[ "$upstream_value" = 0.1.9 ]'
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_path_key_that_names_no_file_is_refused(self):
+        # The read the workflow used to do with `mapfile` on the way to `gh`:
+        # what the key names has to be a file, and the refusal has to say so.
+        self.log.write_text("sums=/tmp/nothing-sums\n")
+        result = call(f'frozen_var sums {shlex.quote(str(self.log))} sums_value')
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("sums=/tmp/nothing-sums", result.stderr)
+        self.assertIn("not a file", result.stderr)
+
+    def test_a_missing_line_is_still_the_readers_complaint(self):
+        self.log.write_text("assets=/tmp/nothing\n")
+        result = call(f'frozen_var sums {shlex.quote(str(self.log))} sums_value')
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no sums=", result.stderr)
+
+    def test_a_value_outside_its_domain_is_refused_by_the_read(self):
+        # `release=` had a `case` in the workflow and another in the script that
+        # wrote it; the domain is the table's now, and the read enforces it.
+        self.log.write_text("release=maybe\n")
+        result = call(f'frozen_var release {shlex.quote(str(self.log))} state')
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("release=maybe is not present or absent", result.stderr)
+
+    def test_each_domain_the_table_uses_accepts_and_refuses(self):
+        cases = [
+            ("bump", "1", True),
+            ("bump", "2", False),
+            ("upstream", "0.1.9", True),
+            ("upstream", "nope", False),
+            ("release", "absent", True),
+            ("release", "maybe", False),
+            ("tag", "v0.1.9", True),
+            ("tag", "0.1.9", False),
+            ("pkgname", "magpie-bin", True),
+            ("pkgname", "a/b", False),
+            ("tests", "399", True),
+            ("tests", "399.5", False),
+            ("gates", "5/5", True),
+            ("gates", "5", False),
+        ]
+        for key, value, accepted in cases:
+            with self.subTest(key=key, value=value):
+                result = call(f"frozen_write {shlex.quote(key)} {shlex.quote(value)}")
+                if accepted:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, f"{key}={value}\n")
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(f"{key}={value}", result.stderr)
+
+    def test_the_table_domain_vocabulary_is_the_one_the_gate_interprets(self):
+        tokens = {row[1] for row in self.table()}
+        self.assertEqual(
+            tokens,
+            {"version", "flag", "present-or-absent", "v<version>", "package-name",
+             "integer", "gates", "-"},
+        )
+
+    def test_the_write_gate_refuses_a_key_the_table_does_not_name(self):
+        result = call("frozen_write ghost /tmp/whatever")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no such frozen key: ghost", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_a_duplicated_line_is_still_the_readers_complaint(self):
+        # The gates wrap `line_field`; they must not grow their own rules for
+        # the two breaks it already names.
+        self.log.write_text("ver=0.1.9\nver=0.1.10\n")
+        result = call(f'ver_value=""; frozen_var ver {shlex.quote(str(self.log))} ver_value')
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("2 ver= lines", result.stderr)
+
+    def test_an_empty_line_is_still_the_readers_complaint(self):
+        self.log.write_text("ver=\n")
+        result = call(f'ver_value=""; frozen_var ver {shlex.quote(str(self.log))} ver_value')
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("empty ver=", result.stderr)
+
+    def test_a_required_key_cannot_be_given_a_default(self):
+        # The default is for the keys the table calls optional; on a required
+        # key it would hide exactly the absence the table exists to report.
+        self.log.write_text("upstream=0.1.9\n")
+        result = call(
+            f'v=""; frozen_var upstream {shlex.quote(str(self.log))} v 0.1.0'
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("upstream= is required", result.stderr)
+
+    def test_an_optional_key_without_a_default_is_refused(self):
+        # `gates=` may be absent, and then only the caller knows what that
+        # means; reading it without saying so leaves a caller with no answer.
+        self.log.write_text("tests=399\n")
+        result = call(f'g=""; frozen_var gates {shlex.quote(str(self.log))} g')
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("gates= may be absent", result.stderr)
+
+    def test_an_absent_optional_key_is_the_callers_default(self):
+        self.log.write_text("tests=399\n")
+        result = call(
+            f'g=""; frozen_var gates {shlex.quote(str(self.log))} g pre-contract; '
+            '[ "$g" = pre-contract ]'
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_present_optional_key_is_still_checked_by_its_domain(self):
+        self.log.write_text("gates=5\n")
+        result = call(
+            f'g=""; frozen_var gates {shlex.quote(str(self.log))} g pre-contract'
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("gates=5 is not <整数>/<整数>", result.stderr)
+
+    def test_the_write_gate_refuses_a_list_naming_a_path_that_is_not_there(self):
+        # The write half of the same rule the read enforces: this file is about
+        # to become a Release's asset list, and one name in it is not a file.
+        (self.root / "assets.txt").write_text(f"{self.root / 'gone.pkg.tar.zst'}\n")
+        result = call(f"frozen_write assets {shlex.quote(str(self.root / 'assets.txt'))}")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("assets=", result.stderr)
+        self.assertIn("gone.pkg.tar.zst", result.stderr)
+
+    def test_the_table_shape_vocabulary_is_the_one_the_gates_interpret(self):
+        # The twin of the 域 guard above: without it a row could name a shape no
+        # gate implements, and the refusal would only show up at run time.
+        shapes = {row[2] for row in self.table()}
+        self.assertEqual(shapes, {"value", "path", "list", "pkglist"})
+
+    def test_the_package_list_row_is_read_through_its_own_door(self):
+        # The 包清单 is a row with a shape of its own. Each gate says so by name
+        # instead of reporting a missing `package=` line -- a diagnostic about a
+        # key nothing writes, for the one row whose reader is elsewhere.
+        self.log.write_text("package packages/magpie-bin magpie-bin\n")
+        quoted = shlex.quote(str(self.log))
+        cases = (
+            (f'v=""; frozen_var package {quoted} v', "package= is a pkglist, not a value"),
+            (f'files=(); frozen_list package {quoted} files', "package= is a pkglist, not a list"),
+            (f"frozen_write package {quoted}", "the table gives package the shape pkglist"),
+        )
+        for invocation, message in cases:
+            with self.subTest(call=invocation):
+                result = call(invocation)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertNotIn("no package=", result.stderr)
+
+    def test_frozen_list_reads_the_paths_the_file_names(self):
+        first, second = self.root / "a.pkg.tar.zst", self.root / "b.pkg.tar.zst"
+        first.write_text("a")
+        second.write_text("b")
+        (self.root / "assets.txt").write_text(f"{first}\n{second}\n")
+        self.log.write_text(f"assets={self.root / 'assets.txt'}\n")
+        result = call(
+            f'files=(); frozen_list assets {shlex.quote(str(self.log))} files; '
+            '[ "${#files[@]}" -eq 2 ] && [ "${files[1]}" = ' + shlex.quote(str(second)) + " ]"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_list_naming_a_path_that_is_not_there_is_refused(self):
+        (self.root / "assets.txt").write_text(f"{self.root / 'missing.pkg.tar.zst'}\n")
+        self.log.write_text(f"assets={self.root / 'assets.txt'}\n")
+        result = call(f'frozen_list assets {shlex.quote(str(self.log))} files')
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("assets=", result.stderr)
+        self.assertIn("missing.pkg.tar.zst", result.stderr)
+
+    def test_a_list_that_names_nothing_is_refused(self):
+        # The defect this slice exists for: an empty assets file handed `gh
+        # release` the checksums alone, and the run went green.
+        (self.root / "assets.txt").write_text("")
+        self.log.write_text(f"assets={self.root / 'assets.txt'}\n")
+        result = call(f'frozen_list assets {shlex.quote(str(self.log))} files')
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("assets=", result.stderr)
+        self.assertIn("assets.txt", result.stderr)
+        self.assertIn("lists nothing", result.stderr)
+
+    def test_a_path_key_is_written_only_when_the_file_is_there(self):
+        present = self.root / "notes.md"
+        present.write_text("body")
+        written = call(f"frozen_write notes {shlex.quote(str(present))}")
+        self.assertEqual(written.returncode, 0, written.stderr)
+        self.assertEqual(written.stdout, f"notes={present}\n")
+
+        refused = call(f"frozen_write notes {shlex.quote(str(self.root / 'gone.md'))}")
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("notes=", refused.stderr)
+        self.assertIn("gone.md", refused.stderr)
+
+
 class FrozenLineJoinTest(unittest.TestCase):
     """One test per frozen line, with the producer's real output in the reader.
 

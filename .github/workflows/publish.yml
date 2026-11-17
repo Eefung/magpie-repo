@@ -268,7 +268,17 @@ jobs:
           ./scripts/release.sh "$TREE/$ARCH" "$VER" "$PKGS" /tmp/rel \
             > /tmp/release.txt
           cat /tmp/release.txt
-          mapfile -t assets < "$(line_field assets /tmp/release.txt)"
+          # Read through the table's gates, which answer for the shape: a list
+          # naming no paths, or a path naming no file, fails here. The redirect
+          # this used to be -- `mapfile < "$(reader)"` -- turned an empty list
+          # into "no assets to upload" and let `gh release` finish green with
+          # the checksums alone.
+          assets=()
+          sums=""
+          notes=""
+          frozen_list assets /tmp/release.txt assets || exit 1
+          frozen_var sums /tmp/release.txt sums || exit 1
+          frozen_var notes /tmp/release.txt notes || exit 1
           if [ "$STATE" = present ]; then
             # The tag exists -- but a rebuild of the same 版本 lands here with
             # different bytes, and the 软件源 now carries them (the entry check
@@ -276,16 +286,15 @@ jobs:
             # build in the Release and another to pacman, so the assets and the
             # notes are replaced instead. `gh release upload` is the command
             # that makes this idempotent; nothing here is a new Release.
-            gh release upload "$TAG" --clobber \
-              "${assets[@]}" "$(line_field sums /tmp/release.txt)"
-            gh release edit "$TAG" --notes-file "$(line_field notes /tmp/release.txt)"
+            gh release upload "$TAG" --clobber "${assets[@]}" "$sums"
+            gh release edit "$TAG" --notes-file "$notes"
             echo "release $TAG updated: $(gh release view "$TAG" --json url -q .url)"
             exit 0
           fi
           gh release create "$TAG" \
             --title "magpie $VER" \
-            --notes-file "$(line_field notes /tmp/release.txt)" \
-            "${assets[@]}" "$(line_field sums /tmp/release.txt)"
+            --notes-file "$notes" \
+            "${assets[@]}" "$sums"
           echo "release created: $(gh release view "$TAG" --json url -q .url)"
 
       # Last, so that every failure above is retried by the next run: main

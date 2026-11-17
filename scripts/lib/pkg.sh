@@ -16,12 +16,24 @@
 # PKGBUILD field belongs there, not here.
 #
 # The same goes for the frozen `name=value` lines: bump.py and build-check.sh
-# write them, and every reader goes through line_field rather than its own sed.
+# write them, and the gates below -- frozen_var / frozen_list / frozen_write --
+# consult the kinds table, so a key's 域, shape and "may it be absent" are
+# stated once. `line_field` is their inner read. Not every call site is a gate
+# yet: the steps and scripts still holding a direct `line_field` move over one
+# producer at a time, and the guard that names the leftovers lands with the
+# last of them.
 #
 # bump.py also writes the 包清单 as one `package <dir> <pkgname>` line per
 # package. That shape has one reader here (pkglist_field) for the same reason:
 # three steps used to split the same line and one of them read the pkgname back
 # out of the PKGBUILD.
+
+# frozen_count <键> <文件> -- how many lines of that key the file holds.
+#
+# The one place the counting rule lives: the reader, the reader-with-default and
+# the gates' absent-or-broken split all ask this question, and each used to spell
+# the grep itself.
+frozen_count() { grep -c "^$1=" "$2" || true; }
 
 # line_field <name> <file> -- the one `name=value` line a frozen producer wrote.
 #
@@ -34,8 +46,7 @@
 line_field() {
     local name="$1" file="$2" count value
     [ -r "$file" ] || { echo "no such file: $file" >&2; return 1; }
-    count="$(grep -c "^${name}=" "$file" || true)"
-    count="${count:-0}"
+    count="$(frozen_count "$name" "$file")"
     if [ "$count" -eq 0 ]; then
         echo "no ${name}= in ${file}" >&2
         return 1
@@ -60,12 +71,291 @@ line_field() {
 line_field_or() {
     local name="$1" file="$2" default="$3" count
     [ -r "$file" ] || { echo "no such file: $file" >&2; return 1; }
-    count="$(grep -c "^${name}=" "$file" || true)"
+    count="$(frozen_count "$name" "$file")"
     if [ "${count:-0}" -eq 0 ]; then
         printf '%s\n' "$default"
         return 0
     fi
     line_field "$name" "$file"
+}
+
+# ---- the kinds table -------------------------------------------------------
+#
+# A frozen line is a kind of thing, not a bare name: what a key may say, whether
+# a missing line is a failure, whether the value names a file, and who produces
+# it. Those answers used to belong to whoever happened to read the key -- the
+# workflow carried its own `case` for `release=`, and an `assets=` naming a file
+# that lists nothing uploaded the checksums alone and exited 0.
+#
+#   <键>|<域>|<形状>|<缺行>|<生产者>
+#
+# 域 is a word `frozen_domain_allows` interprets (version / flag /
+# present-or-absent / v<version> / package-name / integer / gates), `-` where
+# the shape is what matters. 形状 is value / path / list / pkglist. 缺行 is
+# required / optional. 生产者 is the exit that writes it -- read by the guard
+# that lands with the last of the moves, not by a gate.
+#
+# The table is data: no branch lives here, and `frozen_var` / `frozen_list` /
+# `frozen_write` are the only code that reads it. A key it does not name cannot
+# be written or read.
+frozen_table() {
+    cat <<'TABLE'
+upstream|version|value|required|check
+target|version|value|required|check
+bump|flag|value|required|check
+pin|flag|value|required|check
+ver|version|value|required|render
+release|present-or-absent|value|required|release-state
+tag|v<version>|value|required|release-state
+pkgname|package-name|value|required|build-check
+artifact|-|path|required|build-check
+assets|-|list|required|release
+sums|-|path|required|release
+notes|-|path|required|release
+assertions|integer|value|required|probe
+tests|integer|value|required|check
+gates|gates|value|optional|check
+package|-|pkglist|required|packages
+TABLE
+}
+
+# frozen_field <键> <列> -- one cell of that key's row.
+#
+# The one lookup every reading of the table goes through, so "is this key in the
+# table" is answered once. An unnamed key is refused by name, not treated as a
+# bare name that happens to have no rules.
+frozen_field() {
+    local _key="$1" _column="$2" _row
+    case "$_column" in
+        1 | 2 | 3 | 4 | 5) ;;
+        *) echo "frozen_field: the table has no column ${_column}" >&2; return 1 ;;
+    esac
+    _row="$(frozen_table | awk -F'|' -v key="$_key" '$1 == key { print; found = 1; exit } END { exit !found }')" || {
+        echo "no such frozen key: ${_key}" >&2
+        return 1
+    }
+    printf '%s\n' "$_row" | cut -d'|' -f "$_column"
+}
+
+# The cells a gate reads, so no caller spells a column number.
+frozen_domain() { frozen_field "$1" 2; }
+frozen_shape() { frozen_field "$1" 3; }
+frozen_required() { frozen_field "$1" 4; }
+
+# frozen_var <键> <文件> <调用方的变量名> [缺省] -- the key's value, assigned.
+#
+# The answer goes into the caller's variable rather than onto stdout, so the
+# shape that swallows a reader's failure -- `mapfile -t x < <(reader)`, which
+# exits 0 after the reader refused -- cannot be written at all.
+#
+# The caller declares that variable first (`local x=''`). An undeclared name is
+# created at the top level instead, which is right for a step or a script and
+# silently wrong inside a function that meant a local -- the answer lands in a
+# global and the local it declared stays empty.
+#
+# The default is the caller's judgement (an absent `gates=` means a tree older
+# than the contract), so it is only accepted for a key the table calls optional:
+# a default on a required key would hide the absence it exists to report, and an
+# optional key read without one leaves a caller with no answer at all.
+frozen_var() {
+    local _key="$1" _file="$2" _target="$3" _value _shape _required
+    _shape="$(frozen_shape "$_key")" || return 1
+    case "$_shape" in
+        value | path) ;;
+        *) frozen_wrong_door "$_key" value
+           return 1 ;;
+    esac
+    _required="$(frozen_required "$_key")" || return 1
+    if [ -n "${4+set}" ] && [ "$_required" != optional ]; then
+        echo "${_key}= is required; a default would hide its absence" >&2
+        return 1
+    fi
+    if [ -z "${4+set}" ] && [ "$_required" = optional ]; then
+        echo "${_key}= may be absent; name the default to use when it is" >&2
+        return 1
+    fi
+    _value="$(frozen_read "$_key" "$_file")" || return 1
+    if [ "$_value" = "$FROZEN_ABSENT" ]; then
+        # An absent optional key's default is the caller's judgement, so it is
+        # handed on as it came -- `pre-contract` is not a 版本, and judging it as
+        # one would refuse the sentence the caller meant.
+        _value="$4"
+    else
+        case "$_shape" in
+            value) frozen_domain_allows "$_key" "$_value" || return 1 ;;
+            path) frozen_must_be_file "$_key" "$_value" || return 1 ;;
+        esac
+    fi
+    local -n _out="$_target"
+    _out="$_value"
+}
+
+# A value no producer writes, so "the line is absent" stays a fact here.
+FROZEN_ABSENT="__absent__"
+
+# frozen_read <键> <文件> -- the line's value, or FROZEN_ABSENT.
+#
+# The one place the two readings are told apart: a line that is not there is a
+# fact the table interprets, while a line written twice or written empty is a
+# protocol break and stays `line_field`'s complaint.
+frozen_read() {
+    local _key="$1" _file="$2" _count
+    [ -r "$_file" ] || { echo "no such file: ${_file}" >&2; return 1; }
+    _count="$(grep -c "^${_key}=" "$_file" || true)"
+    if [ "${_count:-0}" -eq 0 ]; then
+        if [ "$(frozen_required "$_key")" = optional ]; then
+            printf '%s\n' "$FROZEN_ABSENT"
+            return 0
+        fi
+        echo "no ${_key}= in ${_file}" >&2
+        return 1
+    fi
+    line_field "$_key" "$_file"
+}
+
+# frozen_list <键> <文件> <调用方的数组名> -- the paths a list-shaped line names.
+#
+# Two refusals belong to the shape and not to the caller: a key whose value file
+# lists nothing, and one that lists a path that is not there. Both used to be
+# silent -- `mapfile` made an empty array of the first, and `gh release` took the
+# empty `"${assets[@]}"` as "no assets to upload" and exited 0, so a Release with
+# the checksums and none of the packages was a green run.
+frozen_list() {
+    local _key="$1" _file="$2" _target="$3" _value
+    [ "$(frozen_shape "$_key")" = list ] || {
+        frozen_wrong_door "$_key" list
+        return 1
+    }
+    _value="$(line_field "$_key" "$_file")" || return 1
+    frozen_must_be_file "$_key" "$_value" || return 1
+    local -a _entries=()
+    frozen_entries "$_key" "$_value" _entries || return 1
+    local -n _out="$_target"
+    _out=("${_entries[@]}")
+}
+
+# frozen_entries <键> <文件> <调用方的数组名> -- the paths a list file names.
+#
+# One rule, two callers -- the read that hands the list on and the write that
+# refuses to hand over a list naming nothing. They disagreed once: the write gate
+# took any non-empty file, and the read then refused its entries.
+frozen_entries() {
+    local _key="$1" _file="$2" _target="$3" _entry
+    local -a _found=()
+    while IFS= read -r _entry; do
+        [ -n "$_entry" ] || continue
+        [ -f "$_entry" ] || {
+            echo "${_key}=${_file} lists ${_entry}, and that is not a file" >&2
+            return 1
+        }
+        _found+=("$_entry")
+    done <"$_file"
+    [ "${#_found[@]}" -gt 0 ] || {
+        echo "${_key}=${_file} lists nothing" >&2
+        return 1
+    }
+    # The nameref is a name on one line and an array on the next: that is what
+    # handing an array back through a name looks like, and the alternative --
+    # printing it for the caller's `mapfile` -- is the swallow this gate exists
+    # to make unwritable.
+    # shellcheck disable=SC2178
+    local -n _out="$_target"
+    _out=("${_found[@]}")
+}
+
+# frozen_wrong_door <键> <这个门读的形状> -- the refusal a gate gives a key whose
+# shape belongs to another door (the 包清单's rows have `pkglist_field`).
+frozen_wrong_door() {
+    echo "${1}= is a $(frozen_shape "$1"), not a ${2}; read it through its own door" >&2
+    return 1
+}
+
+# frozen_must_be_file <键> <值> -- a path-shaped value is only read if it is one.
+frozen_must_be_file() {
+    [ -f "$2" ] || {
+        echo "${1}=${2} is not a file" >&2
+        return 1
+    }
+}
+
+# frozen_write <键> <值> -- one frozen line, or the reason it cannot be written.
+#
+# The producer's half of the same table: a value outside its 域, a path naming no
+# file, and a list naming no paths are refused where they are produced rather
+# than where a consumer trips over them.
+frozen_write() {
+    local _key="$1" _value="$2" _shape
+    _shape="$(frozen_shape "$_key")" || return 1
+    [ -n "$_value" ] || {
+        echo "${_key}= needs a value; it would write an empty line" >&2
+        return 1
+    }
+    case "$_shape" in
+        value) frozen_domain_allows "$_key" "$_value" || return 1 ;;
+        path) frozen_must_be_file "$_key" "$_value" || return 1 ;;
+        list)
+            frozen_must_be_file "$_key" "$_value" || return 1
+            local -a _unused=()
+            frozen_entries "$_key" "$_value" _unused || return 1 ;;
+        *) echo "the table gives ${_key} the shape ${_shape}, which no gate writes" >&2
+           return 1 ;;
+    esac
+    printf '%s=%s\n' "$_key" "$_value"
+}
+
+# frozen_domain_allows <键> <值> -- does the value fit the 域 the table gives it.
+#
+# One interpreter for the table's vocabulary, so the tokens stay data: a token
+# nobody interprets is a refusal here, not a value that slips through.
+frozen_domain_allows() {
+    local _key="$1" _value="$2" _domain
+    _domain="$(frozen_domain "$_key")" || return 1
+    case "$_domain" in
+        -) return 0 ;;
+        version)
+            version_shape_ok "$_value" || {
+                echo "${_key}=${_value} is not a 版本" >&2
+                return 1
+            } ;;
+        flag)
+            case "$_value" in 0 | 1) return 0 ;; esac
+            echo "${_key}=${_value} is not 0 or 1" >&2
+            return 1 ;;
+        present-or-absent)
+            case "$_value" in present | absent) return 0 ;; esac
+            echo "${_key}=${_value} is not present or absent" >&2
+            return 1 ;;
+        'v<version>')
+            case "$_value" in
+                v?*) version_shape_ok "${_value#v}" && return 0 ;;
+            esac
+            echo "${_key}=${_value} is not v<版本>" >&2
+            return 1 ;;
+        package-name)
+            case "$_value" in
+                "" | */* | *[[:space:]]*) ;;
+                *) return 0 ;;
+            esac
+            echo "${_key}=${_value} is not a 包名" >&2
+            return 1 ;;
+        integer)
+            case "$_value" in
+                "" | *[!0-9]*) ;;
+                *) return 0 ;;
+            esac
+            echo "${_key}=${_value} is not an integer" >&2
+            return 1 ;;
+        gates)
+            case "$_value" in
+                "" | *[!0-9/]* | /* | */ | */*/*) ;;
+                */*) return 0 ;;
+            esac
+            echo "${_key}=${_value} is not <整数>/<整数>" >&2
+            return 1 ;;
+        *)
+            echo "the table gives ${_key} the 域 '${_domain}', which no gate interprets" >&2
+            return 1 ;;
+    esac
 }
 
 # pkglist_field <file> <index> -- one column of the 包清单, in its order.

@@ -30,10 +30,15 @@ import frozen  # noqa: E402  (the reader the other tests use)
 REPO = Path(__file__).resolve().parent.parent
 GLOSSARY = REPO / "GLOSSARY.md"
 
-# A frozen line's name, where a program reads it: `line_field bump ...`. The
-# shell's own two definitions take `"$1"` there, which is why the pattern wants
-# a literal name.
-READ = re.compile(r"line_field(?:_or)?\s+([a-z][a-z0-9_]*)")
+# A frozen line's name, where a program reads it: `line_field bump ...` or
+# `frozen_var bump ...`. The shell's own definitions take `"$1"` there, which is
+# why the pattern wants a literal name.
+READ = re.compile(r"(?:line_field(?:_or)?|frozen_(?:var|list))\s+([a-z][a-z0-9_]*)")
+
+# The same name where a program writes it. A producer is not a reader: counting
+# `frozen_write notes` here would let the list promise a reader for a key whose
+# only call site produces it.
+WRITE = re.compile(r"frozen_write\s+([a-z][a-z0-9_]*)")
 
 # The same names as the list writes them: a backticked `bump=`, closing right
 # after the `=`. The entry's opening phrase writes the shape itself as
@@ -52,6 +57,14 @@ def keys_in(text: str) -> set[str]:
     names: set[str] = set()
     for line in text.splitlines():
         names.update(READ.findall(line.split("#", 1)[0]))
+    return names
+
+
+def writes_in(text: str) -> set[str]:
+    """The frozen-line names a file writes, from its code lines only."""
+    names: set[str] = set()
+    for line in text.splitlines():
+        names.update(WRITE.findall(line.split("#", 1)[0]))
     return names
 
 
@@ -76,11 +89,25 @@ def list_part(glossary: str) -> str:
     return entry_of(glossary).split(LIST_END, 1)[0]
 
 
+def sources(repo: Path = REPO) -> list[Path]:
+    """Every file whose frozen-line calls count: the scripts and the workflow."""
+    return [*repo.glob("scripts/**/*.sh"), *repo.glob("scripts/**/*.py"),
+            *repo.glob(".github/workflows/*.yml")]
+
+
 def readers(repo: Path = REPO) -> set[str]:
-    """Every name a program reads through line_field, outside tests/."""
-    sources = [*repo.glob("scripts/**/*.sh"), *repo.glob("scripts/**/*.py"),
-               *repo.glob(".github/workflows/*.yml")]
-    return {name for path in sources for name in keys_in(path.read_text())}
+    """Every name a program reads -- through a gate or through `line_field`."""
+    return {name for path in sources(repo) for name in keys_in(path.read_text())}
+
+
+def writers(repo: Path = REPO) -> set[str]:
+    """Every name a program writes through the write gate.
+
+    The list promises a reader; a producer is a different promise, and the two
+    directions are asked separately so `release.sh`'s three lines cannot stand
+    in for a reader that moved away.
+    """
+    return {name for path in sources(repo) for name in writes_in(path.read_text())}
 
 
 def listed(glossary: str) -> set[str]:
@@ -94,7 +121,7 @@ def unlisted(glossary: str, names: set[str]) -> list[str]:
 
 
 def unread(glossary: str, names: set[str]) -> list[str]:
-    """The names the list names that nothing reads through line_field."""
+    """The names the list names that nothing reads."""
     return sorted(listed(glossary) - set(names))
 
 
@@ -118,6 +145,20 @@ class FrozenFieldTest(unittest.TestCase):
         # What a producer that may leave a line out looks like: None here, the
         # caller's default where it uses `line_field_or`.
         self.assertIsNone(frozen.field("bump", "upstream=0.1.9\n"))
+
+    def test_a_gate_call_is_a_reader(self):
+        # The gates are the readers now: without this, a key read through
+        # `frozen_var` would count as unread and the list's reverse direction
+        # would demand the key be dropped instead of moved.
+        self.assertEqual(keys_in('frozen_var bump "$f" bump\n'), {"bump"})
+        self.assertEqual(keys_in('frozen_list assets "$f" files\n'), {"assets"})
+
+    def test_a_producer_is_not_a_reader(self):
+        # `release.sh` writes `notes=`; counting that as a read would let the
+        # list keep a key whose reader moved away, which is the direction this
+        # guard exists for.
+        self.assertEqual(keys_in('frozen_write notes "$path"\n'), set())
+        self.assertEqual(writes_in('frozen_write notes "$path"\n'), {"notes"})
 
     def test_a_duplicated_line_is_the_readers_complaint(self):
         with self.assertRaises(AssertionError) as caught:
@@ -156,6 +197,16 @@ class GlossaryListTest(unittest.TestCase):
         # a key kept in the list after its reader went is a promise about a
         # contract nothing keeps.
         self.assertEqual(unread(GLOSSARY.read_text(), readers()), [])
+
+    def test_every_key_a_program_writes_is_in_the_list_too(self):
+        # The list is about lines a caller may not reword, so a key written
+        # through the gate belongs in it as much as one that is read.
+        self.assertEqual(unlisted(GLOSSARY.read_text(), writers()), [])
+
+    def test_an_unlisted_writer_is_caught(self):
+        drifted = GLOSSARY.read_text().replace("`assets=` / ", "")
+        self.assertNotEqual(drifted, GLOSSARY.read_text(), "the entry moved; reword this test")
+        self.assertEqual(unlisted(drifted, writers()), ["assets"])
 
     def test_a_key_missing_from_the_list_is_caught(self):
         drifted = GLOSSARY.read_text().replace("`release=` / ", "")

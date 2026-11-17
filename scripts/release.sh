@@ -17,8 +17,8 @@
 #   - the notes, whose install lines are generated from the 包清单 rather than
 #     spelled out, so a third package appears without an edit here.
 #
-# The last three lines are frozen, read through line_field like every other
-# handover:
+# The last three lines are frozen, read through the table's gates like every
+# other handover (one list of paths, two paths):
 #
 #   assets=<file listing the asset paths, one per line>
 #   sums=<file with the sha256 of exactly those>
@@ -125,6 +125,9 @@ Server = $PAGES_URL/$ARCH
 https://github.com/yetone/magpie-releases/releases/tag/v$version
 EOF
 
-echo "assets=$out/assets.txt"
-echo "sums=$out/SHA256SUMS"
-echo "notes=$out/notes.md"
+# Through the table's write gate: a 路径 line is written only when the file is
+# there, so a handover naming a path this script never produced is refused here
+# rather than at whichever step reads it.
+frozen_write assets "$out/assets.txt"
+frozen_write sums "$out/SHA256SUMS"
+frozen_write notes "$out/notes.md"
