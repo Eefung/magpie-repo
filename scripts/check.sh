@@ -8,6 +8,21 @@
 # over .github/workflows, and the probe -- the real makepkg + repo-add chain,
 # run when this machine has those tools.
 #
+# The list is a table, and the loop below runs one row per gate: the summary
+# counts the rows that reported, and `all gates passed` is printed only when
+# every declared gate reported and none failed. Before this, that sentence was
+# a claim with nothing behind it -- `failures` counts failures, never gates --
+# so deleting a gate's twenty lines left the run green and the summary saying
+# everything had passed, with 333 offline tests green because none of them read
+# which gates this script runs.
+#
+# The count leaves as `gates=<ran>/<declared>`, a frozen line read through
+# pkg.sh's reader. scripts/check-range.sh reads it to answer "does this tree's
+# gate carry a count at all" -- it used to answer that by grepping this file's
+# source for `line_field tests`, so a behaviour-identical rewrite of the call
+# (`line_field "$COUNT_KEY"`) reported `tests=none` while the log carried the
+# number.
+#
 # The shell scripts are enumerated, not listed: a hand-written glob silently
 # skips a new directory, which is how scripts/lib/ went un-linted when it was
 # added.
@@ -45,13 +60,27 @@ PINNED_TOOLS=(
     "actionlint|1.7.12|8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8|https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz|actionlint|0"
 )
 
+# One row per gate: slug|the heading a reader sees. The slug names the function
+# below (`gate_tests`), so a row without a body -- or a body no row runs -- is
+# a mistake this file can be read for, and tests/test_check_range.py holds the
+# count the loop prints. `not covered here` is not a row: it is a note, not a
+# gate, and nothing counts it.
+GATE_ROWS=(
+    "tests|offline tests"
+    "shellcheck|shellcheck"
+    "ruff|ruff"
+    "actionlint|actionlint"
+    "probe|probe (real makepkg + repo-add)"
+)
+
 failures=0
+ran=0
 
 heading() { printf '\n== %s\n' "$1"; }
-failed() {
-    failures=$((failures + 1))
-    printf 'FAILED: %s\n' "$1" >&2
-}
+# A gate says its own failure, in one line, and returns non-zero: the loop
+# counts, it does not describe. Counting inside each gate is what let a gate
+# disappear without the summary noticing.
+failing() { printf 'FAILED: %s\n' "$1" >&2; }
 
 # fetch <url> <sha256> <path> -- download once, then hold the file to its digest.
 fetch() {
@@ -93,16 +122,20 @@ pinned_tool() {
     printf '%s\n' "$dir/$member"
 }
 
-cd "$root" || exit 1
+# --- the gates, one function each -------------------------------------------
+# A gate owns its verdict: it prints its own detail, says FAILED itself when it
+# failed, and returns non-zero. Everything shared -- the heading, the count, the
+# summary -- belongs to the loop below.
 
-heading "offline tests"
-# The count is this gate's own frozen line. It used to be unittest's "Ran N
-# tests" prose, sed-ed out of this log by scripts/check-range.sh: a reworded
-# line printed `tests=?` and the commit still read ok. `TextTestRunner.testsRun`
-# is the number the program itself knows, printed once here and read through
-# line_field like every other handover.
-tests_log="$(mktemp)"
-python3 - "$root/tests" >"$tests_log" 2>&1 <<'PY'
+gate_tests() {
+    local tests_log tests_code tests
+    # The count is this gate's own frozen line. It used to be unittest's "Ran N
+    # tests" prose, sed-ed out of this log by scripts/check-range.sh: a reworded
+    # line printed `tests=?` and the commit still read ok. `TextTestRunner.testsRun`
+    # is the number the program itself knows, printed once here and read through
+    # line_field like every other handover.
+    tests_log="$(mktemp)"
+    python3 - "$root/tests" >"$tests_log" 2>&1 <<'PY'
 import sys
 import unittest
 
@@ -112,90 +145,140 @@ result = unittest.TextTestRunner(verbosity=2).run(
 print(f"tests={result.testsRun}")
 sys.exit(0 if result.wasSuccessful() else 1)
 PY
-tests_code=$?
-# One gate, one verdict. A python that crashed prints no count, so the exit code
-# and the missing line are the same failure -- reporting both printed two FAILED
-# lines for one gate and the log twice.
-if tests="$(line_field tests "$tests_log")"; then
+    tests_code=$?
+    # One gate, one verdict. A python that crashed prints no count, so the exit
+    # code and the missing line are the same failure -- reporting both printed
+    # two FAILED lines for one gate and the log twice.
+    if ! tests="$(line_field tests "$tests_log")"; then
+        cat "$tests_log" >&2
+        rm -f "$tests_log"
+        failing "the offline tests (no tests= line)"
+        return 1
+    fi
     printf 'tests=%s\n' "$tests"
     if [ "$tests_code" -ne 0 ]; then
         cat "$tests_log" >&2
-        failed "the offline tests"
+        rm -f "$tests_log"
+        failing "the offline tests"
+        return 1
     fi
-else
-    cat "$tests_log" >&2
-    failed "the offline tests (no tests= line)"
-fi
-rm -f "$tests_log"
+    rm -f "$tests_log"
+}
 
-heading "shellcheck"
-shells=()
-while IFS= read -r file; do
-    shells+=("$file")
-done < <(find "$here" -name '*.sh' -type f | sort)
-if [ "${#shells[@]}" -eq 0 ]; then
-    failed "shellcheck (no shell scripts found under $here)"
-elif sc="$(pinned_tool shellcheck)"; then
+gate_shellcheck() {
+    local shells=() file sc
+    while IFS= read -r file; do
+        shells+=("$file")
+    done < <(find "$here" -name '*.sh' -type f | sort)
+    if [ "${#shells[@]}" -eq 0 ]; then
+        failing "shellcheck (no shell scripts found under $here)"
+        return 1
+    fi
+    if ! sc="$(pinned_tool shellcheck)"; then
+        failing "shellcheck (could not obtain the pinned copy)"
+        return 1
+    fi
     # -x follows `source`, -P resolves the `lib/pkg.sh` paths against scripts/.
-    "$sc" -x -P "$here" "${shells[@]}" || failed "shellcheck"
-else
-    failed "shellcheck (could not obtain the pinned copy)"
-fi
+    if ! "$sc" -x -P "$here" "${shells[@]}"; then
+        failing "shellcheck"
+        return 1
+    fi
+}
 
-heading "ruff"
-if rf="$(pinned_tool ruff)"; then
+gate_ruff() {
+    local rf
+    if ! rf="$(pinned_tool ruff)"; then
+        failing "ruff (could not obtain the pinned copy)"
+        return 1
+    fi
     # F is pyflakes (undefined names, unused imports), E9 is syntax, EXE001 is a
     # shebang without the executable bit. The rule set starts where the tree is
     # already clean and grows from there: bump.py decides what gets published,
     # and until this gate existed nothing linted it. --no-cache so a run leaves
     # no .ruff_cache behind.
-    "$rf" check --no-cache --select F,E9,EXE001 "$here" "$root/tests" || failed "ruff"
-else
-    failed "ruff (could not obtain the pinned copy)"
-fi
-
-heading "actionlint"
-if al="$(pinned_tool actionlint)"; then
-    # Put the pinned shellcheck on PATH first: actionlint lints the workflows'
-    # run: blocks with whatever shellcheck it finds, and that should be the
-    # same one the gate above used. Resolved once, not a second time.
-    [ -n "${sc:-}" ] && PATH="$(dirname "$sc"):$PATH"
-    "$al" || failed "actionlint"
-else
-    failed "actionlint (could not obtain the pinned copy)"
-fi
-
-heading "probe (real makepkg + repo-add)"
-# The probe was a paragraph of prose in the block below, and nothing ran it: a
-# green gate said "the build chain is only proved by a publish run" while the
-# chain's real tooling sat unexercised on the machine that has it. It runs when
-# the tools exist and says so when they do not -- the CI runner has no makepkg.
-missing=()
-for tool in makepkg repo-add bsdtar; do
-    command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
-done
-if [ "${#missing[@]}" -eq 0 ]; then
-    log="$(mktemp)"
-    if "$here/probe-repo-build.sh" >"$log" 2>&1; then
-        # The count is the probe's own frozen line. It used to be
-        # `grep -c '^  ok:'` over this log, which made the alignment of an echo
-        # the report's whole evidence: re-indenting two of them printed "ok: 3
-        # assertions" and the gate stayed green. Absent, empty or duplicated is
-        # now a failed gate, by line_field's rule.
-        if assertions="$(line_field assertions "$log")"; then
-            printf 'ok: %s assertions, real makepkg and repo-add\n' "$assertions"
-        else
-            cat "$log" >&2
-            failed "probe-repo-build.sh (no assertions= line)"
-        fi
-    else
-        cat "$log" >&2
-        failed "probe-repo-build.sh"
+    if ! "$rf" check --no-cache --select F,E9,EXE001 "$here" "$root/tests"; then
+        failing ruff
+        return 1
     fi
+}
+
+gate_actionlint() {
+    local al sc
+    if ! al="$(pinned_tool actionlint)"; then
+        failing "actionlint (could not obtain the pinned copy)"
+        return 1
+    fi
+    # actionlint lints the workflows' run: blocks with whatever shellcheck it
+    # finds on PATH, and that should be the same one the shellcheck gate used.
+    # Asked for here rather than carried over from that gate: it is a cache hit,
+    # and a gate that reads a variable another gate set fails when its neighbour
+    # is reordered -- which is exactly the coupling the table exists to remove.
+    if sc="$(pinned_tool shellcheck)"; then
+        PATH="$(dirname "$sc"):$PATH"
+    fi
+    if ! "$al"; then
+        failing actionlint
+        return 1
+    fi
+}
+
+gate_probe() {
+    local missing=() tool log assertions
+    # The probe runs when the tools exist and says so when they do not -- the CI
+    # runner has no makepkg. A skip still reports, so it counts as a gate that
+    # ran: what `gates=` counts is gates that reached a verdict, not gates that
+    # passed.
+    for tool in makepkg repo-add bsdtar; do
+        command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+    done
+    if [ "${#missing[@]}" -ne 0 ]; then
+        printf 'skipped: no %s on PATH -- the real 打包 chain needs those\n' "${missing[*]}"
+        return 0
+    fi
+    log="$(mktemp)"
+    if ! "$here/probe-repo-build.sh" >"$log" 2>&1; then
+        cat "$log" >&2
+        rm -f "$log"
+        failing probe-repo-build.sh
+        return 1
+    fi
+    # The count is the probe's own frozen line. It used to be
+    # `grep -c '^  ok:'` over this log, which made the alignment of an echo
+    # the report's whole evidence: re-indenting two of them printed "ok: 3
+    # assertions" and the gate stayed green. Absent, empty or duplicated is
+    # now a failed gate, by line_field's rule.
+    if ! assertions="$(line_field assertions "$log")"; then
+        cat "$log" >&2
+        rm -f "$log"
+        failing "probe-repo-build.sh (no assertions= line)"
+        return 1
+    fi
+    printf 'ok: %s assertions, real makepkg and repo-add\n' "$assertions"
     rm -f "$log"
-else
-    printf 'skipped: no %s on PATH -- the real 打包 chain needs those\n' "${missing[*]}"
-fi
+}
+
+# --- the loop ---------------------------------------------------------------
+# One walk over the table. `ran` is what the summary and the frozen line below
+# count: it is incremented for every row that was reached, so a table that lost
+# a row, or a run killed between two gates, is a number and not a silence.
+gate() {
+    local row="$1" slug title
+    IFS='|' read -r slug title <<<"$row"
+    heading "$title"
+    ran=$((ran + 1))
+    if ! "gate_$slug"; then
+        failures=$((failures + 1))
+    fi
+}
+
+cd "$root" || exit 1
+
+for row in "${GATE_ROWS[@]}"; do
+    gate "$row"
+done
+
+declared="${#GATE_ROWS[@]}"
+printf 'gates=%s/%s\n' "$ran" "$declared"
 
 heading "not covered here"
 cat <<'EOF'
@@ -229,8 +312,11 @@ cat <<'EOF'
   the real gh answers the status line this script reads.
 EOF
 
-if [ "$failures" -ne 0 ]; then
-    printf '\n%d gate(s) failed\n' "$failures" >&2
+# The verdict is a count, not an adjective: every declared gate reported, and
+# none of them failed. Without the first half a gate that never ran was
+# indistinguishable from one that passed.
+if [ "$ran" -ne "$declared" ] || [ "$failures" -ne 0 ]; then
+    printf '\n%s of %s gate(s) reported, %s failed\n' "$ran" "$declared" "$failures" >&2
     exit 1
 fi
 printf '\nall gates passed\n'

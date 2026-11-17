@@ -56,6 +56,7 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 | `test_release.py` | `release.sh`：这一版的资产、校验和、发布说明 |
 | `test_release_state.py` | `release-state.sh`：Release 有没有、唯一的那条 gh 查询、查失败不等于没有 |
 | `test_publish_pages.py` | `publish-pages.sh`：一棵树变成 gh-pages 上的一个 squash 提交（裸库当 remote） |
+| `test_check_range.py` | `check-range.sh`：每个 commit 三种判定（有 `gates=` 与数、契约在但没数、比契约还老），失败怎么汇总；`check.sh` 的门表两向对账 |
 | `test_upstream.py` | `upstream.sh`：这次要不要发布、发哪个版本 |
 | `test_frozen.py` | 测试侧的冻结行读者与 `line_field` 同规则 |
 | `test_inventory.py` | 包清单 ↔ 目录 ↔ workflow ↔ README 的对账；step 顺序/门/outputs、`run:` 块形状、arch 表、发布树、保留窗口的数字；seed 那一行跑真分支 |

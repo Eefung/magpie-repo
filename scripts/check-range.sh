@@ -66,26 +66,37 @@ for commit in "${commits[@]}"; do
     log="$workroot/$commit.log"
     code=0
     ( cd "$wt" && ./scripts/check.sh ) >"$log" 2>&1 || code=$?
-    # The count is the gate's own frozen line; `tests=?` used to stand in for it
-    # on the ok line. Ask the gate *in this tree* whether it carries the
-    # contract, matched as a code line -- a comment about the reader is not a
-    # contract -- and say `none` when it does not, rather than a number the gate
-    # never had.
-    if grep -Eq '^[^#]*line_field tests' "$wt/scripts/check.sh"; then
-        if ! tests="$(line_field tests "$log")"; then
-            printf '%s FAIL no tests= line\n' "${commit:0:7}" >&2
-            tail -3 "$log" >&2
-            failures=$((failures + 1))
-            continue
-        fi
-    else
-        tests="none"
-        printf '%s: its gate prints no tests= line, so there is no count\n' "${commit:0:7}" >&2
+    # The gate's own contract line, read out of the log it just wrote: `gates=`
+    # says this tree's gate declares its gates and how many it reached, so a
+    # missing `tests=` after it is a broken gate, not an old one. Absent is the
+    # other thing -- a tree older than the line -- and says `none` out loud.
+    #
+    # It used to grep the tree's source for `line_field tests`, and a
+    # behaviour-identical rewrite of that call (`line_field "$COUNT_KEY"`)
+    # turned it into `none` while the log carried the count. A duplicate or an
+    # empty `gates=` is the reader's own complaint, which is a broken gate too.
+    contract=0
+    gates="$(line_field_or gates "$log" pre-contract)" || contract=$?
+    if [ "$contract" -ne 0 ]; then
+        printf '%s FAIL a broken gates= line\n' "${commit:0:7}" >&2
+        tail -3 "$log" >&2
+        failures=$((failures + 1))
+        continue
+    fi
+    if [ "$gates" = pre-contract ]; then
+        gates=none
+        tests=none
+        printf '%s: its gate prints no gates= line, so there is no count\n' "${commit:0:7}" >&2
+    elif ! tests="$(line_field tests "$log")"; then
+        printf '%s FAIL no tests= line\n' "${commit:0:7}" >&2
+        tail -3 "$log" >&2
+        failures=$((failures + 1))
+        continue
     fi
     if [ "$code" -eq 0 ]; then
-        printf '%s ok   tests=%s\n' "${commit:0:7}" "$tests"
+        printf '%s ok   tests=%s gates=%s\n' "${commit:0:7}" "$tests" "$gates"
     else
-        printf '%s FAIL tests=%s\n' "${commit:0:7}" "$tests" >&2
+        printf '%s FAIL tests=%s gates=%s\n' "${commit:0:7}" "$tests" "$gates" >&2
         sed -n '/^FAILED/p' "$log" >&2 || true
         tail -3 "$log" >&2
         failures=$((failures + 1))
