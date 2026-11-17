@@ -113,8 +113,11 @@ class UpstreamTest(unittest.TestCase):
     def run_script(self, source: str | None = None, *, wanted: str | None = None,
                    state: str | None = None, repo: str | None = "owner/repo"):
         env = dict(os.environ)
-        # Both are read from the environment, and this machine's must not leak
-        # into a test: a real GITHUB_REPOSITORY would reach the real `gh`.
+        # Both name the run's context, and this machine's must not leak into a
+        # test: a real GITHUB_REPOSITORY would reach the real `gh`. The script
+        # reads the repository from argv, so the variable is popped even on the
+        # paths that pass one -- a version that read the env again would be a
+        # second door, and this keeps it shut.
         env.pop("WANTED", None)
         env.pop("GITHUB_REPOSITORY", None)
         env["BUMP"] = str(self.bump(source or stub()))
@@ -122,10 +125,11 @@ class UpstreamTest(unittest.TestCase):
         env["ASKED"] = str(self.root / "asked.txt")
         if wanted is not None:
             env["WANTED"] = wanted
+        argv = ["bash", str(SCRIPT), str(self.work)]
         if repo is not None:
-            env["GITHUB_REPOSITORY"] = repo
+            argv.append(repo)
         return subprocess.run(
-            ["bash", str(SCRIPT), str(self.work)],
+            argv,
             cwd=str(REPO),
             text=True,
             capture_output=True,
@@ -188,14 +192,20 @@ class UpstreamTest(unittest.TestCase):
         # the branch push every direction the check can see is quiet -- and a
         # Release that failed there would never be retried while the 软件源
         # served a build without one.
-        handed = self.handover(
-            self.run_script(stub(), state=state_stub(verdict="absent"))
-        )
+        result = self.run_script(stub(), state=state_stub(verdict="absent"))
+        handed = self.handover(result)
 
         self.assertEqual(handed["bump"], "1")
         self.assertEqual(handed["target"], "0.1.10")
         # Asked about the 版本 this tree carries, in this repository.
         self.assertEqual(self.asked(), "0.1.10 owner/repo")
+        # This branch is new, and stdout is the interface: the other branches
+        # are read through frozen.fields, which drops prose, so a leak onto
+        # stdout here would have gone unnoticed.
+        self.assertEqual(
+            [line.split("=", 1)[0] for line in result.stdout.splitlines()],
+            ["upstream", "target", "bump", "packages"],
+        )
 
     def test_a_release_that_exists_really_is_nothing_to_do(self):
         result = self.run_script(stub(), state=state_stub(verdict="present"))
@@ -215,12 +225,25 @@ class UpstreamTest(unittest.TestCase):
         self.assertIn("cannot ask whether v0.1.10 has a Release", result.stderr)
 
     def test_without_a_repository_the_question_is_skipped_out_loud(self):
-        # A hand run has no GITHUB_REPOSITORY. Guessing one would ask about
-        # somebody else's releases.
+        # A hand run names no repository, and this script does not read one out
+        # of the environment: guessing would ask about somebody else's releases,
+        # and reading Actions' context would make a hand run unable to work.
         result = self.run_script(stub(), repo=None)
 
         self.assertEqual(self.handover(result)["bump"], "0")
-        self.assertIn("GITHUB_REPOSITORY is not set", result.stderr)
+        self.assertIn("no repository named", result.stderr)
+        self.assertIsNone(self.asked())
+
+    def test_a_check_that_printed_no_conclusion_does_not_ask(self):
+        # The default for an absent `bump=` is 0, and 0 is also what a check
+        # that compared everything prints. Treating the two as one would let a
+        # truncated check plus a missing Release publish a version nobody
+        # compared: `bump=` never arrived, so there are no quiet directions to
+        # be starting from.
+        result = self.run_script(stub(bump=None), state=state_stub(verdict="absent"))
+
+        self.assertEqual(self.handover(result)["bump"], "0")
+        self.assertIn("nothing was compared", result.stderr)
         self.assertIsNone(self.asked())
 
     def test_an_answer_that_is_neither_present_nor_absent_is_refused(self):

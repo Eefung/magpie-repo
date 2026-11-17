@@ -97,7 +97,7 @@ jobs:
           # right here, where only a grep over this file could hold it: a
           # reformat turned the test job red, and flipping the default that
           # decides "publish" did not.
-          ./scripts/upstream.sh "$UP" > "$UP.txt"
+          ./scripts/upstream.sh "$UP" "$GITHUB_REPOSITORY" > "$UP.txt"
           cat "$UP.txt"
           # Assigned first, then written: `echo "x=$(reader)" >> "$GITHUB_OUTPUT"`
           # writes an empty value and exits 0 when the reader fails, which would

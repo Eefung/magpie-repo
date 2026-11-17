@@ -32,15 +32,21 @@
 # the check says bump=0, this asks release-state.sh whether v<target> has a
 # Release. A rebuild whose Release step failed after the branch push leaves
 # every direction the check can see quiet, and the 软件源 serving a build with
-# no Release; absent is the reason to publish it again. GITHUB_REPOSITORY
-# (Actions sets it) names the repo, and RELEASE_STATE is that script's seam.
+# no Release; absent is the reason to publish it again. The repository comes in
+# as the second argument -- the workflow passes its own $GITHUB_REPOSITORY --
+# so nothing here needs Actions to run, and RELEASE_STATE is that script's seam.
 set -euo pipefail
 
 # shellcheck source=lib/pkg.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pkg.sh"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-work="${1:?usage: upstream.sh <work dir>}"
+work="${1:?usage: upstream.sh <work dir> [<owner/repo>]}"
+# The repository this run publishes to, handed in by the caller. Reading
+# GITHUB_REPOSITORY here would make the script need Actions to answer -- the
+# case ADR-0004 rules out for a lifted step body -- and the workflow already
+# passes its context to release-state.sh as argv.
+repo="${2:-}"
 BUMP="${BUMP:-$here/bump.py}"
 # The Release question is the fifth direction's, and it belongs to the script
 # that already answers it (release-state.sh: present/absent as a value, with gh
@@ -80,27 +86,42 @@ if [ -n "$wanted" ]; then
     echo "asked for $wanted, upstream is $upstream" >&2
     target="$wanted"
     bump=1
+    answered=1
 else
     target="$upstream"
     # An absent `bump=` means the check never finished; it does not mean
     # "publish". The defaulting is the caller's call -- here, where it is
     # visible -- and a duplicated line is still a protocol break.
-    bump="$(line_field_or bump "$check" 0)"
+    #
+    # `answered` is the distinction that default would otherwise erase: the
+    # fifth direction below starts from "the four directions were compared and
+    # are quiet", which is not something a check that printed no conclusion
+    # said. Without it, a truncated check plus an absent Release published a
+    # 版本 nobody compared.
+    bump="$(line_field_or bump "$check" pending)"
+    if [ "$bump" = pending ]; then
+        bump=0
+        answered=0
+        echo "the check printed no bump= line: nothing was compared, so nothing is published" >&2
+    else
+        answered=1
+    fi
 fi
 
 # The fifth direction, and the only one the check cannot see. A rebuild's 版本
 # is committed by the person who re-rendered it, so once the branch push lands
 # every direction above is quiet -- and a Release that failed after that push
 # is never asked for again, while the 软件源 serves a build whose Release does
-# not exist. When the others are quiet, ask the question the release step
-# already owns: absent is a reason to publish, present really is nothing to do.
-if [ "$bump" = 0 ]; then
-    if [ -z "${GITHUB_REPOSITORY:-}" ]; then
-        echo "GITHUB_REPOSITORY is not set: cannot ask whether v$target has a Release" >&2
+# not exist. When the others are quiet -- and only when the check actually
+# answered -- ask the question the release step already owns: absent is a
+# reason to publish, present really is nothing to do.
+if [ "$bump" = 0 ] && [ "$answered" = 1 ]; then
+    if [ -z "$repo" ]; then
+        echo "no repository named: cannot ask whether v$target has a Release (pass <owner/repo>)" >&2
     else
         state_log="$(mktemp)"
         state_code=0
-        "$RELEASE_STATE" "$target" "$GITHUB_REPOSITORY" >"$state_log" 2>&1 || state_code=$?
+        "$RELEASE_STATE" "$target" "$repo" >"$state_log" 2>&1 || state_code=$?
         if [ "$state_code" -ne 0 ]; then
             # A lookup that failed is not "no Release" -- that is the bug
             # release-state.sh exists to keep out of the release step. This run
