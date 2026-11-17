@@ -14,7 +14,6 @@ touch went on passing.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
 CHECK = Path(__file__).resolve().parent.parent / "scripts" / "check.sh"
@@ -30,14 +29,6 @@ NOTE = "cat <<'EOF'"
 FIRST_EXECUTABLE = "set -uo pipefail"
 
 
-@dataclass(frozen=True)
-class Row:
-    """One gate, as the table declares it: the slug names its function."""
-
-    slug: str
-    title: str
-
-
 def text() -> str:
     return CHECK.read_text()
 
@@ -50,14 +41,14 @@ def table(source: str | None = None) -> str:
     return match.group(1)
 
 
-def rows(source: str | None = None) -> list[Row]:
-    """Every gate the table declares, in the order the loop runs them."""
-    return [Row(slug, title) for slug, title in ROW.findall(table(source))]
+def rows(source: str | None = None) -> list[str]:
+    """The gates the table declares, in the order the loop runs them.
 
-
-def slugs(source: str | None = None) -> list[str]:
-    """The slugs alone -- the order the summary counts rows in."""
-    return [row.slug for row in rows(source)]
+    The slug alone: it names the `gate_*` body the row dispatches, which is the
+    fact every guard here needs. The row's title is prose for the run's reader,
+    and a field nothing reads is the shape this reader exists to remove.
+    """
+    return [slug for slug, _ in ROW.findall(table(source))]
 
 
 def functions(source: str | None = None) -> list[str]:

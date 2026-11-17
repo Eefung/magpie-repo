@@ -51,13 +51,13 @@ class GateTableTest(unittest.TestCase):
 
     def test_every_row_has_a_body(self):
         source = CHECK.read_text()
-        rows = gate.slugs(source)
+        rows = gate.rows(source)
         self.assertEqual(rows, ["tests", "shellcheck", "ruff", "actionlint", "probe"])
         self.assertEqual([slug for slug in rows if slug not in gate.functions(source)], [])
 
     def test_every_body_is_a_row(self):
         source = CHECK.read_text()
-        self.assertEqual([slug for slug in gate.functions(source) if slug not in gate.slugs(source)], [])
+        self.assertEqual([slug for slug in gate.functions(source) if slug not in gate.rows(source)], [])
 
     def test_a_deleted_gate_is_caught(self):
         # The mutation this file exists for: twenty lines gone, the run green,
@@ -66,7 +66,7 @@ class GateTableTest(unittest.TestCase):
         dropped = re.sub(r"^gate_ruff\(\) \{.*?^\}\n", "", source, flags=re.M | re.S)
         self.assertNotEqual(dropped, source, "the gate moved; reword this test")
         self.assertEqual(
-            [slug for slug in gate.slugs(dropped) if slug not in gate.functions(dropped)],
+            [slug for slug in gate.rows(dropped) if slug not in gate.functions(dropped)],
             ["ruff"],
         )
 
@@ -75,7 +75,7 @@ class GateTableTest(unittest.TestCase):
         moved = source.replace('    "ruff|ruff"\n', "")
         self.assertNotEqual(moved, source, "the row moved; reword this test")
         self.assertEqual(
-            [slug for slug in gate.functions(moved) if slug not in gate.slugs(moved)],
+            [slug for slug in gate.functions(moved) if slug not in gate.rows(moved)],
             ["ruff"],
         )
 

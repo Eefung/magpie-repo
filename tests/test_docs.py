@@ -415,9 +415,9 @@ class GateDocumentsTest(unittest.TestCase):
         """For each document, the gates its sentence does not name."""
         return {
             name: [
-                row.slug
-                for row in gate.rows(source)
-                if self.TRANSLATED.get(row.slug, row.slug) not in line
+                slug
+                for slug in gate.rows(source)
+                if self.TRANSLATED.get(slug, slug) not in line
             ]
             for name, line in self.documents().items()
         }
@@ -495,7 +495,10 @@ class DirectionsVocabularyTest(unittest.TestCase):
     def test_the_fifth_direction_is_the_line_upstream_sh_prints(self):
         # 第五向不在这四个词里：它由 upstream.sh 印，形状取自那一行 echo。
         upstream = (REPO / "scripts" / "upstream.sh").read_text()
-        echo = re.search(r'echo "v\$target([^"]*)"', upstream)
+        # The variable half is upstream.sh's business (it was `$target`, and it
+        # is `$carried` now that the question is about the tree's 版本); the
+        # sentence after it is what GLOSSARY quotes.
+        echo = re.search(r'echo "v\$[a-z]+([^"]*)"', upstream)
         if echo is None:
             raise AssertionError("upstream.sh 不再印第五向；改这句测试")
         self.assertIn(echo.group(1).split(":")[0], self.entry())
