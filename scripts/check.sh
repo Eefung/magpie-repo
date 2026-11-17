@@ -98,10 +98,9 @@ cd "$root" || exit 1
 heading "offline tests"
 # The count is this gate's own frozen line. It used to be unittest's "Ran N
 # tests" prose, sed-ed out of this log by scripts/check-range.sh: a reworded
-# line -- or a run that never happened -- printed `tests=?` while the commit
-# still read ok. `TextTestRunner.testsRun` is the number the program itself
-# knows, printed once here and read through line_field like every other
-# handover.
+# line printed `tests=?` and the commit still read ok. `TextTestRunner.testsRun`
+# is the number the program itself knows, printed once here and read through
+# line_field like every other handover.
 tests_log="$(mktemp)"
 python3 - "$root/tests" >"$tests_log" 2>&1 <<'PY'
 import sys
