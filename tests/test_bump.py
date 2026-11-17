@@ -236,6 +236,46 @@ def database_body(entries: dict[str, str]) -> bytes:
     return buffer.getvalue()
 
 
+def release_table(version: str) -> dict[str, bytes]:
+    """A fetch table carrying one release: its sums, its LICENSE, its icon.
+
+    The assets are the plans' own answer, so a fixture cannot describe a
+    release this run would skip as incomplete -- and an arch the 表 dropped
+    cannot live on in a table nobody notices.
+    """
+    return {
+        sums_url(version): sums_body({asset: ASSET_SUM for asset in planned_assets()}),
+        license_url(version): b"license",
+        ICON_URL: b"icon",
+    }
+
+
+def run_main(
+    *argv: str,
+    fetch,
+    layout: bump.Layout | None = None,
+    root: Path | None = None,
+    env: dict | None = None,
+) -> tuple[object, str]:
+    """Drive the entry point the workflow drives; return its code and output.
+
+    One helper for both doors: a test that hands a whole layout in, and one
+    that points the production constructor at a staged tree. The exit code is
+    returned even when it is the error string `main()` exits with -- a
+    swallowed code is what this seam exists to catch.
+    """
+    buffer = io.StringIO()
+    code: object = 0
+    extra = {} if root is None else {"root": root}
+    with mock.patch.dict(os.environ, env or {}, clear=env is not None):
+        with contextlib.redirect_stdout(buffer):
+            try:
+                code = bump.main(list(argv), fetch=fetch, layout=layout, **extra)
+            except SystemExit as exc:
+                code = exc.code
+    return code, buffer.getvalue()
+
+
 class LayoutForTest(unittest.TestCase):
     """The production constructor's defaults, exercised rather than assumed."""
 
@@ -1362,29 +1402,11 @@ class MainTest(unittest.TestCase):
         self.layout = layout_at(self.root)
 
     def table(self, version: str = VERSION) -> dict:
-        return {
-            sums_url(version): sums_body(
-                {
-                    "magpie-linux-amd64": "1" * 64,
-                    "magpie-linux-arm64": "2" * 64,
-                    "magpie-cli-linux-amd64": "3" * 64,
-                    "magpie-cli-linux-arm64": "4" * 64,
-                }
-            ),
-            license_url(version): b"license",
-            ICON_URL: b"icon",
-        }
+        return release_table(version)
 
     def cli(self, *argv, fetch) -> tuple[object, str]:
         """Run the entry point; return its exit code and what it printed."""
-        buffer = io.StringIO()
-        code: object = 0
-        with contextlib.redirect_stdout(buffer):
-            try:
-                code = bump.main(list(argv), fetch=fetch, layout=self.layout)
-            except SystemExit as exc:
-                code = exc.code
-        return code, buffer.getvalue()
+        return run_main(*argv, fetch=fetch, layout=self.layout)
 
     def test_check_hands_over_both_frozen_lines(self):
         fetch = FetchSpy({**version_sources(github=self.VERSION, site=self.VERSION), **self.table()})
@@ -1466,6 +1488,127 @@ class MainTest(unittest.TestCase):
         # this version" and does nothing of the sort.
         code, _ = self.cli("--check", "--version", self.VERSION, fetch=FetchSpy({}))
         self.assertEqual(code, 2)
+
+
+class ExitFactsTest(unittest.TestCase):
+    """Which exit asks which question: only the comparison needs both facts.
+
+    The tree read `PINNED` and the 软件源 address while it was built, so every
+    exit inherited both refusals -- the 包清单's only exit printed two directory
+    names and could still die because a pin elsewhere in the tree was
+    malformed. These drive `main()` against a staged tree (its own templates,
+    its own packages), because the construction under test is the production
+    one: a handed-in layout would decide the answer for it.
+    """
+
+    VERSION = "0.1.2"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def tree(self, *, pin: str | None = None) -> Path:
+        """A staged checkout: its own templates, its packages, and maybe a pin."""
+        for pkg in bump.PACKAGES:
+            path = self.root / "templates" / f"{pkg}.PKGBUILD.in"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text((REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text())
+        staged_root(
+            self.root,
+            {pkg: self.VERSION for pkg in bump.PACKAGES},
+            templates=self.root / "templates",
+        )
+        if pin is not None:
+            (self.root / bump.PIN_FILE).write_text(pin + "\n")
+        return self.root
+
+    def cli(self, *argv, fetch=None, env: dict | None = None) -> tuple[object, str]:
+        """Run the entry point against the staged tree, with a clean environment."""
+        return run_main(
+            *argv,
+            fetch=fetch or FetchSpy({}),
+            root=self.root,
+            env=env if env is not None else {},
+        )
+
+    def test_the_package_list_does_not_read_the_pin(self):
+        # `--packages` is the 包清单's only exit and every run passes through
+        # it: a line it never reads must not take it down.
+        self.tree(pin="not-a-version")
+        code, out = self.cli("--packages")
+        self.assertEqual(code, 0)
+        # The line's spelling belongs to the class that owns the 包清单 format
+        # (test_inventory's), so this asks only what this ticket is about.
+        self.assertEqual(len(out.splitlines()), len(bump.PACKAGES))
+        for pkg in bump.PACKAGES:
+            self.assertIn(pkg, out)
+
+    def test_the_package_list_does_not_read_the_address(self):
+        # Half an address is a configuration error, and it belongs to the
+        # question that reads the address -- not to this one.
+        self.tree()
+        code, out = self.cli("--packages", env={"PAGES_URL": "https://example.invalid/r"})
+        self.assertEqual(code, 0)
+        self.assertEqual(len(out.splitlines()), len(bump.PACKAGES))
+
+    def test_the_check_still_refuses_a_malformed_pin(self):
+        self.tree(pin="not-a-version")
+        code, _ = self.cli("--check")
+        self.assertIsInstance(code, str)
+        self.assertIn(bump.PIN_FILE, str(code))
+        self.assertIn("not a 版本", str(code))
+
+    def test_the_check_still_refuses_half_an_address(self):
+        # By name: the message says which of the three was not declared.
+        self.tree()
+        code, _ = self.cli("--check", env={"PAGES_URL": "https://example.invalid/r"})
+        self.assertIsInstance(code, str)
+        self.assertIn("REPO_NAME", str(code))
+        self.assertIn("ARCH", str(code))
+        self.assertIn("declare all three or none", str(code))
+
+    def test_the_render_does_not_read_the_pin(self):
+        # Rendering a 版本 does not depend on where the tree was told to stay;
+        # the pin only suppresses one direction of 落后.
+        self.tree(pin="not-a-version")
+        code, out = self.cli(
+            "--render", "--version", self.VERSION, fetch=FetchSpy(release_table(self.VERSION))
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(frozen.field("ver", out), self.VERSION)
+        for pkg in bump.PACKAGES:
+            self.assertIn(
+                f"pkgver={self.VERSION}",
+                (self.root / "packages" / pkg / "PKGBUILD").read_text(),
+            )
+
+    def test_the_render_walk_does_not_read_the_pin(self):
+        # The pipeline's own render: no 版本 on argv, so the walk decides it.
+        self.tree(pin="not-a-version")
+        code, out = self.cli(
+            "--render",
+            fetch=FetchSpy(
+                {
+                    **version_sources(github=self.VERSION, site=self.VERSION),
+                    **release_table(self.VERSION),
+                }
+            ),
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(frozen.field("ver", out), self.VERSION)
+
+    def test_the_render_does_not_read_the_address(self):
+        self.tree()
+        code, out = self.cli(
+            "--render",
+            "--version",
+            self.VERSION,
+            fetch=FetchSpy(release_table(self.VERSION)),
+            env={"PAGES_URL": "https://example.invalid/r"},
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(frozen.field("ver", out), self.VERSION)
 
 
 class TemplatePkgnameTest(unittest.TestCase):

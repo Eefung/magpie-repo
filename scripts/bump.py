@@ -1401,6 +1401,7 @@ def main(
     *,
     fetch: Fetch = http_fetch,
     layout: Layout | None = None,
+    root: Path = ROOT,
 ) -> int:
     """The entry point CI calls: argv in, 冻结行 and an exit code out.
 
@@ -1408,6 +1409,13 @@ def main(
     the workflow drives. Before this, `fetch` stopped one level below: the
     tests went in through check() and render() directly, and the two things CI
     actually reads -- the frozen lines and the exit code -- were never run.
+
+    Only the comparison asks the pin and the 软件源 address. `--packages`
+    prints directory names and `--render` takes a 版本; neither reads either
+    fact, so neither may fail on one -- a refusal belongs to the module that
+    asked the question. `root` points the production constructor at a staged
+    tree; `layout` stays for a caller bringing a whole value of its own (a
+    different 包清单 or arch 表).
     """
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -1423,9 +1431,16 @@ def main(
 
     try:
         if layout is None:
+            # One branch, both facts: the two questions the comparison asks,
+            # answered only for the mode that asks them. A malformed PINNED or
+            # half a declaration used to take down an exit that had asked
+            # nothing, and the run reported a failure belonging to another
+            # module.
             layout = layout_for(
+                root,
                 maintainer=os.environ.get("MAINTAINER", DEFAULT_MAINTAINER),
-                served=served_from_env(),
+                served=served_from_env() if args.check else None,
+                pinned=pinned_of(root) if args.check else None,
             )
         if args.packages:
             for directory, pkg in package_entries(layout):
