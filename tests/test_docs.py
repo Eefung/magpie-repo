@@ -451,6 +451,74 @@ class GateDocumentsTest(unittest.TestCase):
         )
 
 
+class DirectionsVocabularyTest(unittest.TestCase):
+    """落后的方向词：码里印什么，GLOSSARY 与 AGENTS 就说那几个。
+
+    「这趟为什么发」的答案是日志里 `behind <包>=<方向>` 那四个词加第五向的一行。
+    四个词是 `bump.py` 的四个常量，第五向的句子是 `upstream.sh` 的一行 echo，
+    而 GLOSSARY 的落后段与 AGENTS 的脚本地图各抄了一份 -- 两份都没有读者。加一个
+    方向或删一个词，整套测试照旧全绿（这张卡的证据：删掉那四个词以后 355 条 OK），
+    而读者按老词 grep 日志会一无所获。
+
+    `tests/test_frozen.py` 给冻结行清单做了同样的两向对账，这里用的是它的形状：
+    集合相等，两个方向各有一条变异证明守卫真的会响。
+    """
+
+    NUMERALS = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八", 9: "九"}
+
+    def entry(self) -> str:
+        """GLOSSARY 的落后条，只那一段：整份文档里这些词还出现在别处。"""
+        glossary = (REPO / "GLOSSARY.md").read_text()
+        after = glossary.split("\n**落后**：", 1)[1].split("_Avoid_", 1)[0]
+        return after
+
+    def printed(self) -> list[str]:
+        """这次检查能印出来的那些方向词。"""
+        return [bump.UPSTREAM_MOVED, bump.NOT_PUBLISHED, bump.UPSTREAM_REUPLOADED, bump.RETIRED]
+
+    def listed(self, entry: str) -> set[str]:
+        """那条 `behind <包>=<方向>` 后面括号里列的词。"""
+        match = re.search(r"`behind[^`]*`（([^）]*)）", entry)
+        if match is None:
+            raise AssertionError("落后段不再列方向词；改这句测试")
+        return set(re.findall(r"`([a-z][a-z0-9]*)`", match.group(1)))
+
+    def missing(self, entry: str, words: list[str] | None = None) -> list[str]:
+        return [word for word in (words or self.printed()) if f"`{word}`" not in entry]
+
+    def test_the_entry_names_every_word_the_check_prints(self):
+        self.assertEqual(self.missing(self.entry()), [])
+
+    def test_the_entry_names_no_word_the_check_cannot_print(self):
+        self.assertEqual(self.listed(self.entry()), set(self.printed()))
+
+    def test_the_fifth_direction_is_the_line_upstream_sh_prints(self):
+        # 第五向不在这四个词里：它由 upstream.sh 印，形状取自那一行 echo。
+        upstream = (REPO / "scripts" / "upstream.sh").read_text()
+        echo = re.search(r'echo "v\$target([^"]*)"', upstream)
+        if echo is None:
+            raise AssertionError("upstream.sh 不再印第五向；改这句测试")
+        self.assertIn(echo.group(1).split(":")[0], self.entry())
+
+    def test_agents_counts_the_directions_the_check_has(self):
+        # AGENTS 的脚本地图写着「落后（四向）」：那是同一份计数的第三份抄写。
+        counted = f"落后（{self.NUMERALS[len(self.printed())]}向）"
+        self.assertIn(counted, (REPO / "AGENTS.md").read_text())
+
+    def test_a_word_the_check_gained_is_reported(self):
+        self.assertEqual(self.missing(self.entry(), self.printed() + ["downgraded"]), ["downgraded"])
+
+    def test_a_word_the_entry_lost_is_reported(self):
+        dropped = self.entry().replace(" / `retired`", "")
+        self.assertNotEqual(dropped, self.entry(), "落后段换了写法；改这句测试")
+        self.assertEqual(self.missing(dropped), ["retired"])
+
+    def test_a_word_the_check_cannot_print_is_reported(self):
+        drifted = self.entry().replace("`retired`）", "`retired` / `downgraded`）")
+        self.assertNotEqual(drifted, self.entry(), "落后段换了写法；改这句测试")
+        self.assertEqual(self.listed(drifted) - set(self.printed()), {"downgraded"})
+
+
 class ChineseSpacingTest(unittest.TestCase):
     """Two Chinese words in a row take no space between them.
 
