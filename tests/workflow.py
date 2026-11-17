@@ -173,6 +173,36 @@ def schedule(source: str | None = None) -> str:
     return found[0]
 
 
+PUSH_PATHS_RE = re.compile(r"^    paths:\s*(.+?)\s*$", re.M)
+
+
+def paths(source: str | None = None) -> list[str]:
+    """The patterns ``on.push.paths`` watches: which pushes start a run.
+
+    Nothing read this list. Every other declaration in the file had a reader
+    and a guard -- the env, the step order, the cron, the output carrier -- so
+    dropping ``templates/**`` left all 355 tests green while AGENTS.md still
+    told a maintainer that a template edit triggers a publish, and the advice
+    beside that sentence ("这类提交与别的工作分开推") is advice about a list
+    that no longer said what it was about. The consumer here is GitHub itself,
+    which nothing offline can observe, so the guards are about the list's
+    membership: this function is where they read it.
+
+    Exactly one list, and the inline shape this file writes it in: a second
+    ``paths:`` under the same trigger is a second answer to "what starts a
+    run", and a block list is a shape this reader would silently read as empty.
+    """
+    text_ = text() if source is None else source
+    triggers = text_.split("\non:", 1)[-1].split("\njobs:", 1)[0]
+    found = PUSH_PATHS_RE.findall(triggers)
+    if len(found) != 1:
+        raise AssertionError(f"{WORKFLOW} declares {len(found)} push path lists: {found}")
+    raw = found[0]
+    if not (raw.startswith("[") and raw.endswith("]")):
+        raise AssertionError(f"`on.push.paths` is not the inline list this reader knows: {raw}")
+    return [item.strip().strip("'\"") for item in raw[1:-1].split(",") if item.strip()]
+
+
 def env_writes(source: str | None = None) -> list[str]:
     """Live lines that write to ``$GITHUB_ENV`` -- the carrier this file avoids.
 

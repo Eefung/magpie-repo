@@ -752,6 +752,63 @@ class PublishTreeTest(unittest.TestCase):
             self.assertNotIn(shape, text)
 
 
+class PushPathsTest(unittest.TestCase):
+    """Which pushes start a run: one list, and a sentence held to it.
+
+    `on.push.paths` decides whether a push runs the pipeline at all, and it was
+    the one declaration in the file with no reader: `tests/workflow.py` parsed
+    the env, the step order, the cron and the output carrier. Dropping
+    `templates/**` from the list kept all 355 tests green while AGENTS.md still
+    told a maintainer that a template edit triggers a publish -- and the advice
+    beside that sentence ("这类提交与别的工作分开推") is advice about this
+    list, because one push is one run.
+
+    Two memberships, and they are different claims: an input whose change
+    changes what gets published has to be watched, and nothing the publish job
+    commits may be -- a rendered PKGBUILD pushed by a human would otherwise
+    start a second run for the tree it just published.
+    """
+
+    # The trees whose change changes what gets published, and the workflow
+    # itself, which the entry check and every step's shape live in.
+    INPUTS = ("templates/**", "scripts/**", "tests/**", ".github/workflows/publish.yml")
+
+    def test_the_list_is_the_publishing_inputs(self):
+        self.assertEqual(sorted(workflow.paths()), sorted(self.INPUTS))
+
+    def test_the_job_does_not_watch_what_it_commits(self):
+        self.assertEqual(
+            [
+                entry
+                for entry in workflow.paths()
+                if entry.startswith(("packages", bump.PIN_FILE))
+            ],
+            [],
+        )
+
+    def test_a_dropped_input_is_reported(self):
+        dropped = workflow.text().replace('"templates/**", ', "")
+        self.assertNotIn("templates/**", dropped, "the list moved; reword this test")
+        self.assertEqual(sorted(set(self.INPUTS) - set(workflow.paths(source=dropped))), ["templates/**"])
+
+    def test_the_agents_sentence_names_every_entry(self):
+        # The sentence is the only place a maintainer reads this list, and it
+        # said "含", so an entry could go missing from either side unnoticed.
+        sentence = self.agents_sentence()
+        self.assertEqual([entry for entry in workflow.paths() if entry not in sentence], [])
+
+    def agents_sentence(self) -> str:
+        for line in (REPO / "AGENTS.md").read_text().splitlines():
+            if "`paths`" in line:
+                return line
+        raise AssertionError("AGENTS.md no longer says what `paths` watches; reword this test")
+
+    def test_the_sentence_dropping_an_entry_is_reported(self):
+        drifted = self.agents_sentence().replace("、`tests/**`", "")
+        self.assertNotEqual(drifted, self.agents_sentence(), "the sentence moved; reword this test")
+        self.assertEqual([entry for entry in workflow.paths() if entry not in drifted], ["tests/**"])
+
+
 class RetentionWindowTest(unittest.TestCase):
     """The number of 版本 users are promised is the number CI keeps.
 
