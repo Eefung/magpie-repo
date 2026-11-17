@@ -9,11 +9,16 @@ bothered a publish run ten minutes later.
 This holds the test-side reader to the production rules, so the failure lands
 in the test job, in the same words.
 
+It also holds GLOSSARY's list of frozen lines to the code: the paragraph that
+names them said a line is frozen "由 grep 决定", and that grep was the
+maintainer's. `release=` was read by the workflow and had never been listed.
+
     python3 -m unittest discover -s tests
 """
 
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -21,6 +26,49 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import frozen  # noqa: E402  (the reader the other tests use)
+
+REPO = Path(__file__).resolve().parent.parent
+GLOSSARY = REPO / "GLOSSARY.md"
+
+# A frozen line's name, where a program reads it: `line_field bump ...`. The
+# shell's own two definitions take `"$1"` there, which is why the pattern wants
+# a literal name.
+READ = re.compile(r"line_field(?:_or)?\s+([a-z][a-z0-9_]*)")
+
+# The same names as the 冻结行 entry writes them: `bump=`.
+LISTED = re.compile(r"`([a-z][a-z0-9_]*)=")
+
+
+def keys_in(text: str) -> set[str]:
+    """The frozen-line names a file reads, from its code lines only.
+
+    Comment lines are dropped before the search: `line_field` appears in prose
+    about itself in `pkg.sh`, `check.sh` and the workflow, and a list satisfied
+    by prose is a list that cannot go stale -- which is the whole point of
+    reading it.
+    """
+    names: set[str] = set()
+    for line in text.splitlines():
+        names.update(READ.findall(line.split("#", 1)[0]))
+    return names
+
+
+def entry_of(glossary: str) -> str:
+    """GLOSSARY's 冻结行 entry, up to its next heading."""
+    return glossary.split("**冻结行**：", 1)[1].split("\n_Avoid_", 1)[0]
+
+
+def readers(repo: Path = REPO) -> set[str]:
+    """Every name a program reads through line_field, outside tests/."""
+    sources = [*repo.glob("scripts/**/*.sh"), *repo.glob("scripts/**/*.py"),
+               *repo.glob(".github/workflows/*.yml")]
+    return {name for path in sources for name in keys_in(path.read_text())}
+
+
+def unlisted(glossary: str, names: set[str]) -> list[str]:
+    """The names in `names` that the 冻结行 entry does not list."""
+    listed = set(LISTED.findall(entry_of(glossary)))
+    return sorted(set(names) - listed)
 
 
 class FrozenFieldTest(unittest.TestCase):
@@ -55,6 +103,46 @@ class FrozenFieldTest(unittest.TestCase):
             frozen.field("bump", "bump=\n")
 
         self.assertIn("empty bump=", str(caught.exception))
+
+
+class GlossaryListTest(unittest.TestCase):
+    """GLOSSARY lists the frozen lines, and until now nothing read that list.
+
+    The 冻结行 entry answers two questions at once -- which lines a caller may
+    not reword freely, and which of them a program actually reads -- and both
+    answers were maintained by grep by hand. `release=` was read by the workflow
+    through `line_field` and had never been added, so the sentence "冻结行就是
+    这些" was already false; a seventh line could appear the same way.
+
+    One direction only. The entry also names `pkgver=` on purpose -- the line
+    that used to be listed whose only reader is a test -- so "every name in the
+    entry has a call site" would fail on the counterexample that teaches the
+    rule. What is checked is the direction that goes stale in silence: every
+    name a program reads is named in the entry.
+    """
+
+    def test_every_key_a_program_reads_is_in_the_glossary_list(self):
+        self.assertEqual(unlisted(GLOSSARY.read_text(), readers()), [])
+
+    def test_a_key_missing_from_the_list_is_caught(self):
+        drifted = GLOSSARY.read_text().replace("`release=`、", "")
+        self.assertNotEqual(drifted, GLOSSARY.read_text(), "the entry moved; reword this test")
+        self.assertEqual(unlisted(drifted, readers()), ["release"])
+
+    def test_the_list_is_read_from_its_own_entry(self):
+        # Scoped to the 冻结行 entry: another section naming a `name=` is a term
+        # being explained, not a line claiming to be frozen.
+        document = (
+            "**包清单**：\n一句话里有 `ghost=` 但不在冻结行那一节。\n"
+            "**冻结行**：\n只有 `bump=`。\n"
+        )
+        self.assertEqual(unlisted(document, {"ghost", "bump"}), ["ghost"])
+
+    def test_a_comment_naming_a_reader_is_not_a_reader(self):
+        # `pkg.sh` documents both readers, and its own bodies pass "$1"; a list
+        # satisfied by that prose would pass forever.
+        self.assertEqual(keys_in("# line_field ghost ...\nline_field bump \"$log\"\n"), {"bump"})
+        self.assertEqual(keys_in("line_field_or bump \"$check\" 0\n"), {"bump"})
 
 
 if __name__ == "__main__":
