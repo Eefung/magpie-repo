@@ -153,21 +153,13 @@ jobs:
           source scripts/lib/pkg.sh
           mkdir -p "$TREE"
           # Carry the last published 包文件 over, so an upgrade in flight does
-          # not 404 and the retention window has something to keep. Only the
-          # package files: the tree is cumulative, so anything else would be
-          # carried forward forever, frozen at the version that last wrote it
-          # (SHA256SUMS used to be exactly that). The database is rebuilt from
-          # the package files below, so it has nothing to gain from the seed.
-          # The pattern is pkg.sh's, not this file's: what counts as a 包文件 is
-          # one rule, and the seed carrying a different set from the one
-          # build-repo prunes is how a retired package gets served forever.
-          if git ls-remote --exit-code --heads origin "$PAGES_BRANCH" >/dev/null 2>&1; then
-            git fetch --depth 1 origin "$PAGES_BRANCH"
-            git archive FETCH_HEAD | tar -x -C "$TREE" --wildcards "$ARCH/$(pkgfile_pattern)"
-            echo "previous repository:"; ls "$TREE/$ARCH" || true
-          else
-            echo "no $PAGES_BRANCH branch yet, starting a fresh repository"
-          fi
+          # not 404 and the 保留窗口 has something to keep. Which files count,
+          # and which branch they come from, is scripts/seed-tree.sh's answer --
+          # the line that used to decide it here read an exit status, and git
+          # answers 2 for "no such branch" and 128 for "cannot ask": a network
+          # or credential failure seeded an empty tree and the publish emptied
+          # the window on top of it, green.
+          ./scripts/seed-tree.sh "$TREE" "$ARCH" "$PAGES_BRANCH"
           # The dirs come from the 包清单 the check step wrote, not from this
           # file: a package added to the inventory is built without an edit
           # here. Its path is a frozen line too, so the two steps that read it

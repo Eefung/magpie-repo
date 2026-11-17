@@ -38,6 +38,7 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 | `scripts/release.sh` | Release 的资产、SHA256SUMS、说明 |
 | `scripts/release-state.sh` | `v<版本>` 有没有 Release（present/absent 是一个值） |
 | `scripts/publish-pages.sh` | 一棵树 → gh-pages 上的一个 squash 提交 |
+| `scripts/seed-tree.sh` | 上一棵树的包文件过不过来：有分支／没分支／问不到，三种答案 |
 | `scripts/check.sh` | 全部闸门，以及它自己打印的「跑不到什么」 |
 | `scripts/check-range.sh` | range 里每个 commit 各自的树过一遍闸门 |
 | `scripts/probe-repo-build.sh` | 真 `makepkg` + `repo-add` 的离线探针 |
@@ -59,7 +60,7 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 | `test_check_range.py` | `check-range.sh`：每个 commit 三种判定（有 `gates=` 与数、契约在但没数、比契约还老），失败怎么汇总；`check.sh` 的门表两向对账 |
 | `test_upstream.py` | `upstream.sh`：这次要不要发布、发哪个版本 |
 | `test_frozen.py` | 测试侧的冻结行读者与 `line_field` 同规则 |
-| `test_inventory.py` | 包清单 ↔ 目录 ↔ workflow ↔ README 的对账；step 顺序/门/outputs、`run:` 块形状、arch 表、发布树、保留窗口的数字；seed 那一行跑真分支 |
+| `test_inventory.py` | 包清单 ↔ 目录 ↔ workflow ↔ README 的对账；step 顺序/门/outputs、`run:` 块形状、arch 表、发布树、保留窗口的数字；seed 的三种答案各跑一次真的 |
 | `test_docs.py` | README 里由程序决定的那两句（运行时间、provides/conflicts）各有 reader；测试地图与脚本地图的完整性；文档点名的模块与测试类 |
 | `install_block.py` | 不是测试：用户要粘的安装段的唯一读者——README 的块与 Release 说明都过它 |
 | `fixtures.py` | 不是测试：包文件名的唯一拼法，`test_pkg_sh.py` 用 `pkgfile_pkgname`/`pkgfile_version` 反向钉住 |

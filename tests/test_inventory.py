@@ -600,7 +600,9 @@ class PackageFilePatternTest(unittest.TestCase):
         ]
 
     def test_the_seed_asks_pkg_sh_for_the_pattern(self):
-        self.assertIn('"$ARCH/$(pkgfile_pattern)"', self.workflow())
+        # The seed owns the decision and the tar call now, so it is the script
+        # that has to ask the rule rather than spell the extension.
+        self.assertIn('"$arch/$(pkgfile_pattern)"', (REPO / "scripts" / "seed-tree.sh").read_text())
 
     def test_the_workflow_does_not_spell_the_extension(self):
         self.assertNotIn(".pkg.tar", self.workflow())
@@ -629,19 +631,24 @@ class PackageFilePatternTest(unittest.TestCase):
 
 
 class SeedTest(unittest.TestCase):
-    """The seed line, run for real against a branch that has the decoys in it.
+    """播种：三种答案，各跑一遍真的。
 
     What it carries decides what survives a publish: a seed that drops a 包文件
     silently empties the 保留窗口, and one that carries a `.sig` feeds it to
-    repo-add the day signing lands. The workflow line is the only place this
-    runs, so the test takes that line from the workflow and runs it, rather than
-    restating what it does -- a test that spelled its own `tar` call would pin
-    the test author's copy.
-    """
+    repo-add the day signing lands. That much the step's own line already
+    proved -- but only that line.
 
-    SEED_RE = re.compile(
-        r'git archive FETCH_HEAD \| tar -x -C \S+ --wildcards "[^"]+"'
-    )
+    What nothing could reach was the decision above it: `if git ls-remote
+    --exit-code --heads origin "$PAGES_BRANCH"` read an exit status as a value,
+    and git answers 2 for "no such ref" and 128 for "cannot ask" -- an
+    unreachable host, a credential that stopped working, a remote that is not a
+    repository. Both took the "no branch yet" path, so a transient failure
+    seeded an empty tree and the publish that followed force-pushed a
+    repository holding this run's 版本 alone over the branch: window emptied,
+    earlier 包文件 404, run green. The decision is scripts/seed-tree.sh's now,
+    against the bare repository this fixture already builds, so its three
+    answers are three cases here.
+    """
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -649,11 +656,6 @@ class SeedTest(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.origin = self.root / "origin"
         self.work = self.root / "work"
-
-    def seed_line(self) -> str:
-        found = self.SEED_RE.findall(workflow.text())
-        self.assertEqual(len(found), 1, found)
-        return found[0]
 
     def git(self, *args: str, cwd: Path) -> None:
         subprocess.run(
@@ -664,8 +666,8 @@ class SeedTest(unittest.TestCase):
         )
 
     def published_tree(self) -> list[str]:
-        """A previous gh-pages branch: two 包文件, a signature, a stray file."""
-        (self.origin / "x86_64").mkdir(parents=True)
+        """A previous branch of the 软件源: two 包文件, a signature, a stray file."""
+        (self.origin / workflow.env()["ARCH"]).mkdir(parents=True)
         # The names come from tests/fixtures.py -- the one spelling of a 包文件
         # in the test tree -- plus a signature, which is the decoy: it matches
         # the residue set and must never be seeded.
@@ -674,9 +676,11 @@ class SeedTest(unittest.TestCase):
             fixtures.pkgfile_name("magpie-bin", "0.1.10"),
             fixtures.pkgfile_name("magpie-bin", "0.1.10") + ".sig",
         ):
-            (self.origin / "x86_64" / name).touch()
+            (self.origin / workflow.env()["ARCH"] / name).touch()
         (self.origin / "SHA256SUMS").touch()
-        self.git("init", "-q", "--initial-branch=main", ".", cwd=self.origin)
+        self.git(
+            "init", "-q", "--initial-branch=" + workflow.env()["PAGES_BRANCH"], ".", cwd=self.origin
+        )
         self.git("add", "-A", cwd=self.origin)
         self.git("commit", "-q", "-m", "previous publish", cwd=self.origin)
         return [
@@ -684,42 +688,76 @@ class SeedTest(unittest.TestCase):
             fixtures.pkgfile_name("magpie-bin", "0.1.9"),
         ]
 
-    def test_it_carries_exactly_the_pkgfiles_pkg_sh_can_see(self):
-        expected = self.published_tree()
+    def work_tree(self) -> None:
+        """The step's cwd: a checkout whose `origin` is the fixture repository."""
         self.work.mkdir()
-        self.git("init", "-q", "--initial-branch=gh-pages", ".", cwd=self.work)
+        self.git("init", "-q", "--initial-branch=main", ".", cwd=self.work)
         self.git("remote", "add", "origin", str(self.origin), cwd=self.work)
-        self.git("fetch", "--depth", "1", "origin", "main", cwd=self.work)
 
-        declared = {
-            key: value for key, value in workflow.env().items() if key in ("ARCH", "TREE")
-        }
-        result = subprocess.run(
+    def seed(self, *extra: str) -> subprocess.CompletedProcess:
+        """Run the script the way the step does: tree, arch and branch as argv."""
+        return subprocess.run(
             [
                 "bash",
-                "-c",
-                f'set -euo pipefail; source {LIB}; '
-                f'mkdir -p "$TREE"; {self.seed_line()}',
+                str(REPO / "scripts" / "seed-tree.sh"),
+                workflow.env()["TREE"],
+                workflow.env()["ARCH"],
+                workflow.env()["PAGES_BRANCH"],
+                *extra,
             ],
             cwd=self.work,
             text=True,
             capture_output=True,
-            env={**os.environ, **declared},
         )
 
-        self.assertEqual(result.returncode, 0, result.stderr)
+    def seeded(self) -> list[str]:
         tree = self.work / workflow.env()["TREE"]
-        seeded = sorted(
-            str(path.relative_to(tree))
-            for path in tree.rglob("*")
-            if path.is_file()
-        )
-        self.assertEqual(seeded, [f"x86_64/{name}" for name in expected])
+        if not tree.exists():
+            return []
+        return sorted(str(path.relative_to(tree)) for path in tree.rglob("*") if path.is_file())
+
+    def test_it_carries_exactly_the_pkgfiles_pkg_sh_can_see(self):
+        expected = self.published_tree()
+        self.work_tree()
+
+        result = self.seed()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.seeded(), [f"x86_64/{name}" for name in expected])
         # The decoys: a signature is not a 包文件, and a stray file is not seeded.
         self.assertNotIn(
-            f"x86_64/{fixtures.pkgfile_name('magpie-bin', '0.1.10')}.sig", seeded
+            f"x86_64/{fixtures.pkgfile_name('magpie-bin', '0.1.10')}.sig", self.seeded()
         )
-        self.assertNotIn("SHA256SUMS", seeded)
+        self.assertNotIn("SHA256SUMS", self.seeded())
+
+    def test_a_branch_that_is_not_there_starts_a_fresh_repository(self):
+        # The first publish, and the only other reason to continue with an
+        # empty tree.
+        (self.origin / "x86_64").mkdir(parents=True)
+        self.git("init", "-q", "--initial-branch=main", ".", cwd=self.origin)
+        self.git("commit", "-q", "--allow-empty", "-m", "main only", cwd=self.origin)
+        self.work_tree()
+
+        result = self.seed()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.seeded(), [])
+        self.assertIn(f"no {workflow.env()['PAGES_BRANCH']} branch yet", result.stdout)
+
+    def test_a_remote_it_cannot_ask_is_refused(self):
+        # Not a repository, so `git ls-remote` exits 128 rather than 2. Reading
+        # that as "no branch yet" is the defect: the run would seed nothing and
+        # publish over the window this repository keeps.
+        self.work_tree()
+        unreachable = self.root / "not-a-repository"
+        unreachable.mkdir()
+
+        result = self.seed(str(unreachable))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot ask", result.stderr)
+        self.assertNotIn("starting a fresh repository", result.stdout + result.stderr)
+        self.assertEqual(self.seeded(), [])
 
 
 class PublishTreeTest(unittest.TestCase):
@@ -926,10 +964,27 @@ class PublishNamesTest(unittest.TestCase):
         ]
         self.assertEqual(live, [f"PAGES_BRANCH: {branch}"])
 
-    def test_the_seed_fetches_that_branch(self):
-        run = self.run_of("Build the packages")
-        self.assertIn('--heads origin "$PAGES_BRANCH"', run)
-        self.assertIn('--depth 1 origin "$PAGES_BRANCH"', run)
+    def seed_call(self, source: str | None = None) -> str:
+        """The one live line that hands the branch to scripts/seed-tree.sh."""
+        for step in workflow.steps(source=source):
+            if step.name.startswith("Build the packages"):
+                for line in step.run.splitlines():
+                    if "seed-tree.sh" in line and not line.strip().startswith("#"):
+                        return line.strip()
+        raise AssertionError("the seed call moved; reword this test")
+
+    def test_the_seed_is_handed_the_branch(self):
+        # The script takes the branch as argv and spells no literal: its
+        # `no branch yet` path is also the first-publish path, so the copy of
+        # the name that goes stale is the one that stays green.
+        self.assertIn('"$PAGES_BRANCH"', self.seed_call())
+        seed = (REPO / "scripts" / "seed-tree.sh").read_text()
+        self.assertIn('branch="${3:', seed)
+        # Code, not prose: the usage example in the header names a branch.
+        live = "\n".join(
+            line for line in seed.splitlines() if not line.lstrip().startswith("#")
+        )
+        self.assertNotIn(workflow.env()["PAGES_BRANCH"], live)
 
     def test_the_publish_step_hands_it_over(self):
         self.assertIn('"$PAGES_BRANCH"', self.run_of("Publish the pacman repository"))
@@ -941,15 +996,15 @@ class PublishNamesTest(unittest.TestCase):
         self.assertIn('"$TAG"', run)
 
     def test_a_literal_branch_in_the_seed_is_caught(self):
-        # The mutation: the seed naming `gh-pages` directly, which is the copy
+        # The mutation: the step naming `gh-pages` directly, which is the copy
         # that had no reader.
         branch = workflow.env()["PAGES_BRANCH"]
         moved = workflow.text().replace(
-            '--heads origin "$PAGES_BRANCH"', f"--heads origin {branch}"
+            './scripts/seed-tree.sh "$TREE" "$ARCH" "$PAGES_BRANCH"',
+            f'./scripts/seed-tree.sh "$TREE" "$ARCH" {branch}',
         )
         self.assertNotEqual(moved, workflow.text(), "the seed moved; reword this test")
-        live = [line for line in moved.splitlines() if f"--heads origin {branch}" in line]
-        self.assertEqual(len(live), 1)
+        self.assertNotIn('"$PAGES_BRANCH"', self.seed_call(source=moved))
 
 
 class WorkflowShellTest(unittest.TestCase):

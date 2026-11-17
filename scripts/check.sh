@@ -297,9 +297,10 @@ cat <<'EOF'
   publishes (`.nojekyll`, one squashed commit per release, the force push) and
   tests/test_publish_pages.py drives it against a local bare repository, so what
   a publish run still proves there is the token URL and Pages itself. The seed
-  line is not in this list either: tests/test_inventory.py runs it, against a
-  branch carrying a signature and a stray file, so what stays unproven about it
-  is the real previous tree it fetches, not the pattern it carries. The
+  is not in this list either: scripts/seed-tree.sh owns the decision, and
+  tests/test_inventory.py drives all three of its answers -- branch there,
+  branch absent, remote unreadable -- against a local bare repository, so what
+  stays unproven about it is the real previous tree it fetches. The
   Release's rules are scripts/release.sh's, driven offline by
   tests/test_release.py. Which of create/update to run is
   scripts/release-state.sh's answer, driven offline against a stub `gh` by
