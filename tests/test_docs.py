@@ -12,6 +12,11 @@ AGENTS.md's test map is the same shape and is held here too: a guard that lists
 files fails until the map is complete, which is what makes the sentence above
 the table a checked claim rather than a hope.
 
+GLOSSARY and check.sh's blind-spot list are the same shape one step removed:
+they point at modules, test classes and paths with the code's own names, and
+nothing checked that those names still exist -- GLOSSARY had named
+`check_arches` for a check that is inline in `read_template`.
+
     python3 -m unittest discover -s tests
 """
 
@@ -38,6 +43,78 @@ def readme() -> str:
 
 def template(pkg: str) -> str:
     return (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
+
+
+# --- what a document points at ------------------------------------------------
+#
+# Two documents point at the code with its own names: GLOSSARY says which module
+# answers a question, and check.sh's "not covered here" says which test stands
+# behind a gap. Both are entry points a reader acts on, and neither had a
+# reader of its own -- GLOSSARY had been naming `check_arches`, which does not
+# exist (the check is inline in `read_template`).
+#
+# ADRs are deliberately not scanned: a decision record quotes the code that was
+# deleted, and "the fix was to delete `scripts/publish.sh`" is its job.
+
+# A module's own name, as the docs write it: `read_template`, `line_field`.
+IDENT = re.compile(r"`([a-z][a-z0-9]*_[a-z0-9_]+)`")
+
+# A path in this repository, as the docs write it: `scripts/build-check.sh`.
+PATH = re.compile(r"`((?:scripts|tests)/[\w./-]+)`")
+
+# A test class, as the gate's note names it: `RootAdapterTest`.
+CLASS = re.compile(r"\b([A-Z][A-Za-z]*(?:Test|Reader|Error))\b")
+
+NOTE = "cat <<'EOF'"
+
+
+def note_of(gate: str) -> str:
+    """The blind-spot list a gate prints, as the heredoc it is written in."""
+    after = gate.split(NOTE, 1)[1]
+    return after.split("\nEOF", 1)[0]
+
+
+def code_facts(repo: Path = REPO) -> str:
+    """The production tree, for a name the docs point at to exist in.
+
+    `scripts/` only. A doc names what *decides* something -- a module in the
+    pipeline -- and including `tests/` would let this file's own fixtures
+    satisfy the claim they exist to falsify.
+    """
+    sources = [*repo.glob("scripts/**/*.sh"), *repo.glob("scripts/**/*.py")]
+    return "\n".join(path.read_text() for path in sources)
+
+
+def gone_names(document: str, facts: str) -> list[str]:
+    """Names a document points at that the code no longer carries."""
+    return [
+        name
+        for name in sorted(set(IDENT.findall(document)))
+        if not re.search(rf"\b{re.escape(name)}\b", facts)
+    ]
+
+
+def gone_paths(document: str, repo: Path = REPO) -> list[str]:
+    """Paths a document points at that are not there.
+
+    Existence, not executability: `scripts/lib/pkg.sh` is sourced, not run, so
+    "every script the docs name can run" is a claim about the workflow's own
+    steps -- which `test_inventory.WorkflowShellTest` already makes for the
+    scripts a step invokes.
+    """
+    return [path for path in sorted(set(PATH.findall(document))) if not (repo / path).is_file()]
+
+
+def gone_classes(note: str, repo: Path = REPO) -> list[str]:
+    """Test classes the gate's note names that no test module defines."""
+    defined = "\n".join(
+        path.read_text() for path in (repo / "tests").glob("*.py")
+    )
+    return [
+        name
+        for name in sorted(set(CLASS.findall(note)))
+        if f"class {name}" not in defined
+    ]
 
 
 class ScheduleTest(unittest.TestCase):
@@ -161,6 +238,55 @@ class TestMapTest(unittest.TestCase):
         )
         self.assertNotIn("test_docs.py", self.listed(drifted), "the row moved; reword this test")
         self.assertEqual(self.unlisted(drifted), ["test_docs.py"])
+
+
+class NamedThingsTest(unittest.TestCase):
+    """The names the docs point at exist, because a reader acts on them.
+
+    GLOSSARY answers "which module decides this", and `check.sh`'s not covered
+    here answers "what does green not prove". Both point with the code's own
+    names -- a module, a test class, a path -- and nothing read them: GLOSSARY
+    had said the render compared the arch table with `check_arches` while that
+    check was inline in `read_template`, so the one sentence that tells a reader
+    where to look named nothing at all.
+
+    The scope is those two documents, not the ADRs. A decision record is
+    allowed to quote the code it deleted -- ADR-0001 names `scripts/publish.sh`
+    to say it was removed -- and scanning them would make a history its own
+    failure.
+    """
+
+    def glossary(self) -> str:
+        return (REPO / "GLOSSARY.md").read_text()
+
+    def note(self) -> str:
+        return note_of((REPO / "scripts" / "check.sh").read_text())
+
+    def test_every_module_glossary_names_is_in_the_tree(self):
+        self.assertEqual(gone_names(self.glossary(), code_facts()), [])
+
+    def test_every_path_the_documents_name_is_there_and_runs(self):
+        for label, document in (("GLOSSARY.md", self.glossary()), ("check.sh", self.note())):
+            with self.subTest(document=label):
+                self.assertEqual(gone_paths(document), [])
+
+    def test_every_test_class_the_note_names_is_defined(self):
+        self.assertEqual(gone_classes(self.note()), [])
+
+    def test_a_name_the_code_lost_is_caught(self):
+        drifted = self.glossary().replace("`read_template`", "`check_arches`", 1)
+        self.assertNotEqual(drifted, self.glossary(), "the entry moved; reword this test")
+        self.assertEqual(gone_names(drifted, code_facts()), ["check_arches"])
+
+    def test_a_path_that_moved_is_caught(self):
+        drifted = self.glossary().replace("tests/test_templates.py", "tests/test_template.py")
+        self.assertNotEqual(drifted, self.glossary(), "the entry moved; reword this test")
+        self.assertEqual(gone_paths(drifted), ["tests/test_template.py"])
+
+    def test_a_test_class_that_was_renamed_is_caught(self):
+        drifted = self.note().replace("RootAdapterTest", "RootAdapterReaderTest")
+        self.assertIn("RootAdapterReaderTest", drifted, "the note moved; reword this test")
+        self.assertEqual(gone_classes(drifted), ["RootAdapterReaderTest"])
 
 
 class ChineseSpacingTest(unittest.TestCase):
