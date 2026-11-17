@@ -23,8 +23,8 @@
 # line instead of spelling /tmp/packages.txt, so a path that moves moves here.
 #
 # The check's own output goes to stderr. It is a log -- `packaged <pkg>=`,
-# `behind <pkg>=<reason>` -- and the run's reader is a human; the four lines
-# above are what a program reads.
+# `behind <pkg>=<reason>` -- and the run's reader is a human; the lines above
+# are what a program reads, and GLOSSARY's 冻结行 entry lists them.
 #
 # BUMP is the one seam: tests point it at a stub so the decision runs offline,
 # the way BUILD_CHECK lets build-repo.sh run without a container.
@@ -116,26 +116,41 @@ fi
 # not exist. When the others are quiet -- and only when the check actually
 # answered -- ask the question the release step already owns: absent is a
 # reason to publish, present really is nothing to do.
+#
+# The question is about the build the tree holds, not about the 版本 this run
+# would render: they differ when a pin is holding the tree back, and asking
+# about 上游's 版本 then answers "no Release yet" for a version this run must not
+# publish -- absent being a reason to publish, that answer would undo the pin on
+# the next upstream move, which is the day-long rollback the pin exists to end.
+carried="$(line_field_or carried "$check" "$target")"
 if [ "$bump" = 0 ] && [ "$answered" = 1 ]; then
     if [ -z "$repo" ]; then
-        echo "no repository named: cannot ask whether v$target has a Release (pass <owner/repo>)" >&2
+        echo "no repository named: cannot ask whether v$carried has a Release (pass <owner/repo>)" >&2
     else
         state_log="$(mktemp)"
         state_code=0
-        "$RELEASE_STATE" "$target" "$repo" >"$state_log" 2>&1 || state_code=$?
+        "$RELEASE_STATE" "$carried" "$repo" >"$state_log" 2>&1 || state_code=$?
         if [ "$state_code" -ne 0 ]; then
             # A lookup that failed is not "no Release" -- that is the bug
             # release-state.sh exists to keep out of the release step. This run
             # publishes nothing it cannot justify, and the next one asks again.
             cat "$state_log" >&2
-            echo "cannot ask whether v$target has a Release; publishing only what the check found" >&2
+            echo "cannot ask whether v$carried has a Release; publishing only what the check found" >&2
         else
             release="$(line_field release "$state_log")"
             case "$release" in
                 present) ;;
                 absent)
-                    echo "v$target has no Release: publishing it again" >&2
-                    bump=1
+                    if [ "$carried" = "$target" ]; then
+                        echo "v$carried has no Release: publishing it again" >&2
+                        bump=1
+                    else
+                        # This run would render $target, not the 版本 it is
+                        # missing a Release for: publishing is a dispatch that
+                        # names $carried, and saying so is the whole repair.
+                        echo "v$carried has no Release, and this run would publish v$target" >&2
+                        echo "a pin is holding this tree back; dispatch $carried to publish it" >&2
+                    fi
                     ;;
                 *)
                     echo "the Release lookup answered '$release', not present or absent" >&2

@@ -738,6 +738,7 @@ class CheckTest(unittest.TestCase):
             "packaged": {},
             "served": {},
             "bump": frozen.field("bump", text),
+            "carried": frozen.field("carried", text),
             "behind": {},
             "warnings": [],
         }
@@ -766,6 +767,17 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(
             log["behind"], {"magpie-bin": "upstream", "magpie-cli-bin": "upstream"}
         )
+
+    def test_hands_over_the_version_the_tree_carries(self):
+        # The fifth direction asks the Release question about this, not about
+        # 上游's: a pinned tree carries the older 版本 by design, and the
+        # question has to be about what the tree would publish.
+        fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = staged_root(Path(tmp), {"magpie-bin": "0.1.9", "magpie-cli-bin": "0.1.9"})
+            log = self.log_of(fetch, root)
+
+        self.assertEqual(log["carried"], "0.1.9")
 
     def test_says_nothing_to_do_when_the_versions_match(self):
         fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))

@@ -492,6 +492,22 @@ class DirectionsVocabularyTest(unittest.TestCase):
     def test_the_entry_names_no_word_the_check_cannot_print(self):
         self.assertEqual(self.listed(self.entry()), set(self.printed()))
 
+    def count(self, entry: str) -> str:
+        """The number the entry's opening sentence gives."""
+        match = re.search(r"([一二三四五六七八九])个方向都算", entry)
+        if match is None:
+            raise AssertionError("落后段不再说几个方向；改这句测试")
+        return match.group(1)
+
+    def test_the_entry_counts_the_directions_the_check_has(self):
+        # 四向由 `behind <包>=<方向>` 印，第五向由 upstream.sh 印：计数是两者之和。
+        self.assertEqual(self.count(self.entry()), self.NUMERALS[len(self.printed()) + 1])
+
+    def test_a_count_the_check_disagrees_with_is_reported(self):
+        drifted = self.entry().replace("五个方向都算", "六个方向都算")
+        self.assertNotEqual(drifted, self.entry(), "落后段换了写法；改这句测试")
+        self.assertEqual(self.count(drifted), "六")
+
     def test_the_fifth_direction_is_the_line_upstream_sh_prints(self):
         # 第五向不在这四个词里：它由 upstream.sh 印，形状取自那一行 echo。
         upstream = (REPO / "scripts" / "upstream.sh").read_text()

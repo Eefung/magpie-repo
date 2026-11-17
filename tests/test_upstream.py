@@ -32,13 +32,17 @@ import frozen  # noqa: E402  (the one reader of the frozen lines, as in producti
 
 
 def stub(*, upstream: str = "0.1.10", packaged: str = "0.1.10", bump: str | None = "0",
-         code: int = 0, raw: str | None = None, packages: bool = True) -> str:
+         code: int = 0, raw: str | None = None, packages: bool = True,
+         carried: str | None = None) -> str:
     """A stand-in for bump.py: the frozen lines it would print, and an exit code.
 
     `raw` replaces the check's body when the case is about its shape rather
-    than its values (a duplicated line, a value nobody expects).
+    than its values (a duplicated line, a value nobody expects). `carried` is
+    the 版本 the tree holds; by default it is the one `packaged` carries, which
+    is what production prints.
     """
-    lines = [f"upstream={upstream}", f"packaged magpie-bin={packaged}"]
+    carried = packaged.split("-", 1)[0] if carried is None else carried
+    lines = [f"upstream={upstream}", f"packaged magpie-bin={packaged}", f"carried={carried}"]
     if bump is not None:
         lines.append(f"bump={bump}")
     check = raw if raw is not None else "\n".join(lines)
@@ -226,6 +230,35 @@ class UpstreamTest(unittest.TestCase):
             [line.split("=", 1)[0] for line in result.stdout.splitlines()],
             ["upstream", "target", "bump", "pin", "packages"],
         )
+
+    def test_the_release_question_is_about_the_version_the_tree_carries(self):
+        # A pinned tree: every direction the check can see is quiet because the
+        # pin holds, so `target` is 上游's 版本 while the tree still carries the
+        # older one. Asking about 上游's would answer "no Release yet" for a
+        # 版本 this run must not publish.
+        result = self.run_script(
+            stub(upstream="0.1.11", packaged="0.1.9-1", bump="0"),
+            state=state_stub(verdict="present"),
+        )
+
+        self.assertEqual(self.asked(), "0.1.9 owner/repo")
+        self.assertEqual(self.handover(result)["bump"], "0")
+
+    def test_a_missing_release_does_not_publish_over_a_pin(self):
+        # absent is a reason to publish, and this run would render $target --
+        # 上游's 版本, not the one it is missing a Release for. Publishing that
+        # would undo the pin on the next upstream move, which is the day-long
+        # rollback the pin exists to end; it says so and leaves the tree alone.
+        result = self.run_script(
+            stub(upstream="0.1.11", packaged="0.1.9-1", bump="0"),
+            state=state_stub(verdict="absent"),
+        )
+        handed = self.handover(result)
+
+        self.assertEqual(handed["bump"], "0")
+        self.assertEqual(handed["target"], "0.1.11")
+        self.assertIn("v0.1.9 has no Release", result.stderr)
+        self.assertIn("dispatch 0.1.9", result.stderr)
 
     def test_a_release_that_exists_really_is_nothing_to_do(self):
         result = self.run_script(stub(), state=state_stub(verdict="present"))

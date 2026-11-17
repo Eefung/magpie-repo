@@ -30,7 +30,7 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 
 | 脚本 | 它回答什么 |
 | --- | --- |
-| `scripts/upstream.sh` | 这一趟发不发、发哪个版本（`WANTED` 进，四条冻结行出；其余四向都静时问 Release） |
+| `scripts/upstream.sh` | 这一趟发不发、发哪个版本（`WANTED` 进，冻结行出；其余四向都静时问 Release） |
 | `scripts/bump.py` | 渲染 PKGBUILD；入口检查的两个门；落后（四向）；包清单 |
 | `scripts/lib/pkg.sh` | 包文件名的读者、保留窗口、db 条目、载荷核对、冻结行与包清单的 reader、版本的形状 |
 | `scripts/build-check.sh` | 一个包目录从开工到交出：makepkg、依赖、`--version` 核对、清理 |

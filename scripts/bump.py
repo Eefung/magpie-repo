@@ -1319,6 +1319,13 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
         log(f"packaged {pkg}={evr}")
     if not packaged:
         log("warning: no rendered PKGBUILD yet")
+    # The 版本 the tree carries, when every package carries one and they agree.
+    # It is what a Release describes, and it is not always 上游's: a pinned tree
+    # carries the older one by design. The fifth direction asks *this*, so it
+    # does not answer "no Release yet" for a 版本 nobody rendered.
+    carried = {pkgver_of(packaged.get(pkg)) for pkg in layout.inventory}
+    if len(carried) == 1 and "" not in carried:
+        log(f"carried={carried.pop()}")
     served = served_evr(layout, fetch=fetch)
     if served is not None:
         for pkg, evr in sorted(served.items()):

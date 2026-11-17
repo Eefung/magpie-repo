@@ -72,7 +72,7 @@ jobs:
       # text in tests/test_inventory.py rather than proved by the run.
       KEEP: 2
       # The run's own handover: scripts/upstream.sh takes a work dir and prints
-      # its four frozen lines on stdout, so the step that runs it redirects them
+      # its frozen lines on stdout, so the step that runs it redirects them
       # here (and into the work dir's sibling). Declared once, because three
       # steps read the file and its path used to be spelled seven times -- two
       # of them `cat` -- while `packages=` existed precisely so that a path
@@ -98,8 +98,8 @@ jobs:
           # shellcheck source=scripts/lib/pkg.sh
           source scripts/lib/pkg.sh
           # Whether this run publishes, and which 版本 it publishes, is decided
-          # in scripts/upstream.sh: WANTED in, four frozen lines out -- the 版本
-          # --check compared, the one to render, bump=0|1, and the 包清单 file.
+          # in scripts/upstream.sh: WANTED in, frozen lines out -- the 版本
+          # --check compared, the one to render, bump=, pin=, and the 包清单 file.
           # This step relays them and judges nothing. The judgement used to live
           # right here, where only a grep over this file could hold it: a
           # reformat turned the test job red, and flipping the default that
