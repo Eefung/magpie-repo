@@ -24,6 +24,10 @@ esac
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(dirname "$here")"
+# The count this prints per commit is the gate's own frozen line, read through
+# the one reader -- not sed-ed out of unittest's prose.
+# shellcheck source=lib/pkg.sh
+source "$here/lib/pkg.sh"
 cd "$root" || exit 1
 
 # Captured first, not read through a process substitution: `< <(...)` exits 0
@@ -62,13 +66,24 @@ for commit in "${commits[@]}"; do
     log="$workroot/$commit.log"
     code=0
     ( cd "$wt" && ./scripts/check.sh ) >"$log" 2>&1 || code=$?
-    # The gate prints its own test count; this reads that line rather than
-    # counting anything itself.
-    tests="$(sed -n 's/^Ran \([0-9]*\) tests.*/\1/p' "$log" | tail -1)"
-    if [ "$code" -eq 0 ]; then
-        printf '%s ok   tests=%s\n' "${commit:0:7}" "${tests:-?}"
+    # The count is the gate's own frozen line; `tests=?` used to stand in for it
+    # on the ok line. Ask the gate *in this tree* whether it carries the
+    # contract: a tree from before the line existed has no count to give and
+    # says so, while a gate that has it and printed nothing is a failure.
+    if grep -q 'line_field tests' "$wt/scripts/check.sh"; then
+        if ! tests="$(line_field tests "$log")"; then
+            printf '%s FAIL no tests= line\n' "${commit:0:7}" >&2
+            tail -3 "$log" >&2
+            failures=$((failures + 1))
+            continue
+        fi
     else
-        printf '%s FAIL tests=%s\n' "${commit:0:7}" "${tests:-?}" >&2
+        tests="n/a"
+    fi
+    if [ "$code" -eq 0 ]; then
+        printf '%s ok   tests=%s\n' "${commit:0:7}" "$tests"
+    else
+        printf '%s FAIL tests=%s\n' "${commit:0:7}" "$tests" >&2
         sed -n '/^FAILED/p' "$log" >&2 || true
         tail -3 "$log" >&2
         failures=$((failures + 1))

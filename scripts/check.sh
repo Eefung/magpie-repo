@@ -96,7 +96,35 @@ pinned_tool() {
 cd "$root" || exit 1
 
 heading "offline tests"
-python3 -m unittest discover -s "$root/tests" || failed "the offline tests"
+# The count is this gate's own frozen line. It used to be unittest's "Ran N
+# tests" prose, sed-ed out of this log by scripts/check-range.sh: a reworded
+# line -- or a run that never happened -- printed `tests=?` while the commit
+# still read ok. `TextTestRunner.testsRun` is the number the program itself
+# knows, printed once here and read through line_field like every other
+# handover.
+tests_log="$(mktemp)"
+python3 - "$root/tests" >"$tests_log" 2>&1 <<'PY'
+import sys
+import unittest
+
+result = unittest.TextTestRunner(verbosity=2).run(
+    unittest.TestLoader().discover(sys.argv[1])
+)
+print(f"tests={result.testsRun}")
+sys.exit(0 if result.wasSuccessful() else 1)
+PY
+tests_code=$?
+if tests="$(line_field tests "$tests_log")"; then
+    printf 'tests=%s\n' "$tests"
+else
+    cat "$tests_log" >&2
+    failed "the offline tests (no tests= line)"
+fi
+if [ "$tests_code" -ne 0 ]; then
+    cat "$tests_log" >&2
+    failed "the offline tests"
+fi
+rm -f "$tests_log"
 
 heading "shellcheck"
 shells=()
