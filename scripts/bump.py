@@ -46,7 +46,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Protocol, Sequence
+from typing import Iterable, Mapping, Protocol, Sequence
 
 ROOT = Path(__file__).resolve().parent.parent
 RELEASES = "https://github.com/yetone/magpie-releases/releases"
@@ -305,15 +305,15 @@ class Release:
     sums: Mapping[str, str]
 
 
-def required_assets(plans: Sequence[tuple[str, Template]]) -> list[str]:
-    """Every asset this run's templates will ask a release's table for.
+def required_assets(templates: Iterable[Template]) -> list[str]:
+    """Every asset a release's table must carry for this run to 打包 it.
 
-    The render's question is "is every asset I need in this table", and the
-    plans already know the answer -- they are read from the templates, before
-    the network is asked anything. Asking it where the 版本 is decided is what
-    keeps a table carrying a subset from becoming the run's answer.
+    The templates are the question: their plans already decided which asset
+    feeds which placeholder, so the names a table must list are theirs, read
+    before the network is asked anything. Asking it where the 版本 is decided is
+    what keeps a table carrying a subset from becoming the run's answer.
     """
-    return sorted({asset.asset for _, template in plans for asset in template.assets})
+    return sorted({asset.asset for template in templates for asset in template.assets})
 
 
 def latest_release(*, assets: Sequence[str], fetch: Fetch = http_fetch) -> Release:
@@ -926,18 +926,21 @@ def render(
     layout: Layout,
     fetch: Fetch = http_fetch,
     plans: Sequence[tuple[str, Template]] | None = None,
+    sums: Mapping[str, str] | None = None,
 ) -> None:
     # The version lands verbatim in pkgver= (and in the source URLs); a tag with
     # a dash or shell metacharacter would break makepkg or inject into it.
+    # First, because it is about argv and needs nothing read.
     if not VERSION_RE.fullmatch(version):
         raise BumpError(f"refusing to render pkgver={version!r}: expected digits separated by dots")
 
     # Read every template once -- unless the caller already did, which is the
-    # case when it decided the 版本 from the same plans.
+    # case when it decided the 版本 from the same plans. The table likewise: a
+    # caller that decided the 版本 already has the reading that decided it.
     if plans is None:
         plans = plan(layout)
-
-    sums = release_sums(version, fetch=fetch)
+    if sums is None:
+        sums = release_sums(version, fetch=fetch)
 
     # The plain `source=` URLs come from the template, and the render fetches
     # exactly those: the digest written into the PKGBUILD is then a digest of
@@ -1097,10 +1100,7 @@ def check_templates(layout: Layout) -> dict[str, Rendered]:
     probe the runner skips for want of makepkg.
     """
     found: dict[str, Rendered] = {}
-    for pkg, prefix in layout.inventory.items():
-        text = template_text(layout, pkg)
-        template = read_template(pkg=pkg, prefix=prefix, text=text, arches=layout.arches)
-
+    for pkg, template in plan(layout):
         pkgbuild = layout.packages_dir / pkg / "PKGBUILD"
         if not pkgbuild.exists():
             # Never rendered: 落后, which check() reports, but not drift -- and
@@ -1109,7 +1109,7 @@ def check_templates(layout: Layout) -> dict[str, Rendered]:
             continue
         committed = pkgbuild.read_text()
         try:
-            values = values_of(text, committed)
+            values = values_of(template.text, committed)
         except BumpError as exc:
             raise BumpError(f"{pkg}: {exc}") from exc
         # The third door on this artifact, and it is the parser's own: the file
@@ -1209,7 +1209,7 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     # a release is not a candidate for this run unless its table carries every
     # asset these templates will ask it for.
     release = latest_release(
-        assets=required_assets([(pkg, one.template) for pkg, one in rendered.items()]),
+        assets=required_assets(one.template for one in rendered.values()),
         fetch=fetch,
     )
     upstream = release.version
@@ -1308,16 +1308,24 @@ def main(
             return 0
         if args.check:
             return check(layout=layout, fetch=fetch)
-        # The plans come first even for a version a human pinned: the render
-        # needs them, and when nobody pinned one they are what decides which
-        # 版本 is a candidate at all.
+        # A pinned 版本 is the caller's claim, and the render judges it before it
+        # reads anything -- so it goes in without plans. Nothing pinned means
+        # the plans decide which 版本 is a candidate, and the render then gets
+        # the plans and the table the decision already paid for.
+        if args.version is not None:
+            render(args.version, layout=layout, fetch=fetch)
+            return 0
         plans = plan(layout)
-        version = args.version
-        if version is None:
-            version = latest_release(
-                assets=required_assets(plans), fetch=fetch
-            ).version
-        render(version, layout=layout, fetch=fetch, plans=plans)
+        release = latest_release(
+            assets=required_assets(template for _, template in plans), fetch=fetch
+        )
+        render(
+            release.version,
+            layout=layout,
+            fetch=fetch,
+            plans=plans,
+            sums=release.sums,
+        )
         return 0
     except BumpError as exc:
         sys.exit(str(exc))

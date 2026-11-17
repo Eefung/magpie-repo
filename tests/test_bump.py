@@ -102,7 +102,9 @@ def planned_assets() -> list[str]:
     run cannot 打包 -- and every test using such a table would then be asserting
     against a state the pipeline treats as "skip this one".
     """
-    return bump.required_assets(bump.plan(bump.layout_for(REPO)))
+    return bump.required_assets(
+        template for _, template in bump.plan(bump.layout_for(REPO))
+    )
 
 
 def version_sources(
@@ -1246,6 +1248,18 @@ class MainTest(unittest.TestCase):
                 (self.root / "packages" / pkg / "PKGBUILD").read_text(),
             )
 
+    def test_a_render_without_a_version_reads_the_table_once(self):
+        # Deciding the 版本 reads the release's table; the render used to read
+        # the same URL a second time. The reading the decision was made on now
+        # travels into the render, so one run has one reading either way.
+        fetch = FetchSpy(
+            {**version_sources(github=self.VERSION, site=self.VERSION), **self.table()}
+        )
+        code, out = self.cli("--render", fetch=fetch)
+        self.assertEqual(code, 0)
+        self.assertIn(f"ver={self.VERSION}", out.splitlines())
+        self.assertEqual(fetch.urls.count(sums_url(self.VERSION)), 1)
+
     def test_a_bump_error_is_one_line_and_not_a_zero_exit(self):
         # The exit code is what makes the workflow step fail; a zero here turns
         # a broken render into "nothing to publish".
@@ -1344,15 +1358,16 @@ class TemplatePkgrelTest(unittest.TestCase):
     def test_both_doors_read_it(self):
         # The entry check and the render both go through read_template, so one
         # call there is what makes the refusal reach the mode the pipeline runs.
-        text = self.template().replace("pkgrel=1", "pkgrel=2.1")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             templates = root / "templates"
             templates.mkdir()
             for pkg in bump.PACKAGES:
-                (templates / f"{pkg}.PKGBUILD.in").write_text(
-                    self.template(pkg).replace("pkgrel=1", "pkgrel=2.1")
+                drifted = self.template(pkg).replace("pkgrel=1", "pkgrel=2.1")
+                self.assertIn(
+                    "pkgrel=2.1", drifted, "the pkgrel line moved; reword this test"
                 )
+                (templates / f"{pkg}.PKGBUILD.in").write_text(drifted)
             layout = layout_at(root, templates=templates)
             for name, call in (
                 ("check", lambda: bump.check(layout=layout, fetch=FetchSpy({}))),
@@ -1362,7 +1377,6 @@ class TemplatePkgrelTest(unittest.TestCase):
                     with self.assertRaises(bump.BumpError) as caught:
                         call()
                     self.assertIn("pkgrel=2.1", str(caught.exception))
-        self.assertIn("pkgrel=2.1", text)
 
 
 class TemplateArchesTest(unittest.TestCase):
