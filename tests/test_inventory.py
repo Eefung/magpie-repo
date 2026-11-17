@@ -716,6 +716,30 @@ class SeedTest(unittest.TestCase):
             return []
         return sorted(str(path.relative_to(tree)) for path in tree.rglob("*") if path.is_file())
 
+    def seed_source(self) -> str:
+        """The script's live lines: the usage example names a branch, and prose is not code."""
+        return "\n".join(
+            line
+            for line in (REPO / "scripts" / "seed-tree.sh").read_text().splitlines()
+            if not line.lstrip().startswith("#")
+        )
+
+    def missing_flags(self, source: str) -> list[str]:
+        """The probe flags `source` is missing: branch-not-tag, and one commit."""
+        return [flag for flag in ("--heads", "--depth 1") if flag not in source]
+
+    def test_the_probe_asks_for_the_branch_and_one_commit(self):
+        # `--heads` is what tells a branch from a tag of the same name -- git
+        # answers 0 for either, and seeding from a tag would carry the wrong
+        # tree. `--depth 1` is what keeps a seed from fetching the whole
+        # gh-pages history: AGENTS.md records it as a 150 MB tree, per run.
+        self.assertEqual(self.missing_flags(self.seed_source()), [])
+
+    def test_a_probe_flag_that_went_missing_is_reported(self):
+        dropped = self.seed_source().replace("--heads", "")
+        self.assertNotEqual(dropped, self.seed_source(), "the probe moved; reword this test")
+        self.assertEqual(self.missing_flags(dropped), ["--heads"])
+
     def test_it_carries_exactly_the_pkgfiles_pkg_sh_can_see(self):
         expected = self.published_tree()
         self.work_tree()
@@ -840,6 +864,14 @@ class PushPathsTest(unittest.TestCase):
             if "`paths`" in line:
                 return line
         raise AssertionError("AGENTS.md no longer says what `paths` watches; reword this test")
+
+    def test_the_sentence_names_nothing_the_list_does_not_watch(self):
+        # The other direction: the sentence is prose a maintainer acts on, so an
+        # entry added to it that the workflow does not watch is the same defect
+        # as one dropped from it -- and `packages/**` in particular would make
+        # every publish trigger a second run.
+        named = set(re.findall(r"`((?:[\w.-]+/\*\*)|(?:\.github/[\w./-]+))`", self.agents_sentence()))
+        self.assertEqual(sorted(named - set(workflow.paths())), [])
 
     def test_the_sentence_dropping_an_entry_is_reported(self):
         drifted = self.agents_sentence().replace("、`tests/**`", "")

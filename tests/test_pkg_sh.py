@@ -153,6 +153,20 @@ class SrcinfoFieldTest(unittest.TestCase):
         # reintroduction would be a second parse of the same file, in the
         # runtime that has no python3 to read it the way the renderer writes it.
         self.assertEqual(self.offenders("pkg_field"), [])
+        # And not by another route: a text tool reaching into the file is the
+        # same parse under another name, which the name guard above cannot see.
+        self.assertEqual(self.parsers(), [])
+
+    def parsers(self) -> list[str]:
+        """Live lines that read a PKGBUILD with a text tool."""
+        found = []
+        for path in sorted((REPO / "scripts").rglob("*.sh")):
+            for line in path.read_text().splitlines():
+                if line.lstrip().startswith("#"):
+                    continue
+                if "PKGBUILD" in line and re.search(r"\b(sed|grep|awk|cut)\b", line):
+                    found.append(f"{path.name}: {line.strip()}")
+        return found
 
     def test_two_answers_are_refused_not_chosen(self):
         result = self.field("pkgver", "pkgver = 0.1.1\npkgver = 0.1.2\n")
