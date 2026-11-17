@@ -19,8 +19,9 @@
 # write them, and every read and write goes through the gates below --
 # frozen_var / frozen_list / frozen_write -- which consult the kinds table, so a
 # key's 域, shape and "may it be absent" are stated once. `line_field` and
-# `line_field_or` are their inner reads: no step, script or test outside this
-# module calls them, and tests/test_frozen.py holds that.
+# `line_field_or` are their inner reads: no step or script outside this module
+# calls them (tests/test_frozen.py holds that), and the one test-side reader
+# that does is asking about names this table does not rule on.
 #
 # bump.py also writes the 包清单 as one `package <dir> <pkgname>` line per
 # package. That shape has one reader here (pkglist_field) for the same reason:
@@ -96,8 +97,8 @@ line_field_or() {
 # present-or-absent / v<version> / package-name / integer / gates), `-` where
 # the shape is what matters. 形状 is value / path / list / pkglist. 缺行 is
 # required / optional. 生产者 is what writes it: a script's name (release,
-# release-state, build-check, probe, check) or one of bump.py's modes (entries
-# `entry-check`, `render`, `packages`). It is read by the guard that lands with
+# release-state, build-check, probe-repo-build, check) or one of bump.py's modes
+# (`entry-check`, `render`, `packages`). It is read by the guard that lands with
 # the last of the moves, not by a gate -- and the entry check is `entry-check`
 # rather than `check`, because `check` is check.sh's own `tests=`/`gates=`.
 #
@@ -118,7 +119,7 @@ artifact|-|path|required|build-check
 assets|-|list|required|release
 sums|-|path|required|release
 notes|-|path|required|release
-assertions|integer|value|required|probe
+assertions|integer|value|required|probe-repo-build
 tests|integer|value|required|check
 gates|gates|value|optional|check
 package|-|pkglist|required|packages

@@ -21,7 +21,7 @@ _Avoid_: 打包版本号、release number
 _Avoid_: 包列表、packages 变量
 
 **冻结行**：
-生产者打印一次、读者不再回头解析的 `name=value` 行：`--check` 的 `upstream=` / `target=` / `bump=` / `pin=`、`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`release-state.sh` 的 `release=` / `tag=`、`build-check` 的 `pkgname=` / `artifact=`、`release.sh` 的 `assets=` / `sums=` / `notes=`、`probe-repo-build.sh` 的 `assertions=`、`check.sh` 的 `tests=` / `gates=`。一条行算不算冻结行由 grep 决定，不由它长得像不像：`build-check` 的 `pkgver=` 曾被列在这里，而它唯一的读者是一条测试；`--check` 的 `carried=` 走了同一条路——第五向搬进入口检查之后，读它的只剩日志的读者。那份 grep 现在是 `tests/test_frozen.py` 的一条断言——每个读点（`frozen_var` / `frozen_list`）与每个写点（`frozen_write`）都必须在这份清单里出现——所以加一条行而不写在这里，是红测试。读它只走 `scripts/lib/pkg.sh` 的门，不由每个调用方自己 split：`frozen_var` / `frozen_list`（按表判域与形状，路径读得到才算读过，答案直接赋给调用方的变量）与 `pkglist_field`（包清单那种行的唯一读）；`line_field` 是它们的内层读，缺行时给调用方默认值的那一版叫 `line_field_or`，但绝不把「写了两行」当成缺行。措辞是契约的那几条之外，其余是日志。
+生产者打印一次、读者不再回头解析的行：`name=value`，以及包清单那种 `package <目录> <pkgname>`。键名与每个键的规矩——什么值算对、值是路径还是列表、缺了算不算失败、谁生产它——只在 `scripts/lib/pkg.sh` 的种类表里；这份文档不再逐个点名，因为第二份清单就是第二份会过期的事实。一条行算不算冻结行由那张表决定，不由它长得像不像：`build-check` 的 `pkgver=` 曾被当成冻结行，而它唯一的读者是一条测试；`--check` 的 `carried=` 走了同一条路——第五向搬进入口检查之后，读它的只剩日志。读它只走表的三道门：`frozen_var` 与 `frozen_list`（按表判域与形状，路径读得到才算读过，答案直接赋给调用方的变量），写它的那一半是 `frozen_write`（域外写不出来）；包清单那种行由 `pkglist_field` 读。读者自己的报文有三种失败：缺行、写了两行、写了一个空值；域外与路径不存在也在这里红。`tests/test_frozen.py` 守着表、读点与写点三向一致——加一条行而不进表、进了表而没有生产者或读者，都是红测试。措辞是契约的那几条之外，其余是日志。
 _Avoid_: 输出格式、stdout
 
 **入口检查**：
