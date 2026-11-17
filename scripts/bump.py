@@ -1173,12 +1173,24 @@ def check_templates(layout: Layout) -> dict[str, Rendered]:
     return found
 
 
-# The four directions 落后 can come from, as the words a run prints. GLOSSARY
+# The five directions 落后 can come from, as the words a run prints. GLOSSARY
 # defines the union; these are its members.
 UPSTREAM_MOVED = "upstream"
 NOT_PUBLISHED = "unpublished"
 UPSTREAM_REUPLOADED = "checksums"
 RETIRED = "retired"
+# The one direction the tree alone cannot answer: this run's build has no
+# Release describing it. It used to live in the relay, which had no constant for
+# it -- and the count GLOSSARY states was scraped out of that script's prose.
+NO_RELEASE = "no-release"
+
+DIRECTIONS = (
+    UPSTREAM_MOVED,
+    NOT_PUBLISHED,
+    UPSTREAM_REUPLOADED,
+    RETIRED,
+    NO_RELEASE,
+)
 
 
 def behind(
@@ -1189,6 +1201,7 @@ def behind(
     served: Mapping[str, str] | None,
     stale: set[str],
     pinned: str | None,
+    released: bool | None = None,
 ) -> dict[str, str]:
     """Every package that is 落后, and which direction says so.
 
@@ -1217,6 +1230,14 @@ def behind(
     pinned tree that is not what the 软件源 serves has to be published, which is
     how a rollback's own build reaches users in the first place.
 
+    `released` is the fifth direction's answer: False means this run's build has
+    no Release, True means it has one, None means nobody asked (a hand run with
+    no repository, a lookup that failed, or a run that is publishing anyway). It
+    is a direction like the other four and is judged here for the same reason
+    they are: 落后 is one answer, not four and a patch. It fires only when
+    nothing else does -- a run that is behind for another reason creates the
+    Release it publishes -- and only for the 版本 this run would publish, which
+    is why a pinned tree is not 落后 for a Release it is not going to ask for.
     """
     reasons: dict[str, str] = {}
     for pkg in layout.inventory:
@@ -1260,19 +1281,35 @@ def behind(
     for pkg in sorted(served or {}):
         if pkg not in layout.inventory:
             reasons[pkg] = RETIRED
+    versions = {pkgver_of(packaged.get(pkg)) for pkg in layout.inventory}
+    carried = versions.pop() if len(versions) == 1 else ""
+    if released is False and not reasons and carried == upstream:
+        return {pkg: NO_RELEASE for pkg in layout.inventory}
     return reasons
+
+
+def release_exists(version: str, repo: str, *, fetch: Fetch = http_fetch) -> bool:
+    """Does v<version> have a Release in <repo>?
+
+    A 404 is "not yet" and nothing else is: a 500, a rate limit or a network
+    failure raises, and the caller says it could not ask. Reading those as
+    "absent" would republish a build on a bad minute at GitHub -- the bug
+    release-state.sh was written to keep out of the release step.
+    """
+    url = f"https://api.github.com/repos/{repo}/releases/tags/v{version}"
+    return fetch(url, missing_ok=True) is not None
 
 
 def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     """Is this tree sound, and is it 落后? The run's answers, as frozen lines.
 
-    The tree is handed in; three facts about the run are read here, at the
+    The tree is handed in; four facts about the run are read here, at the
     questions that need them and before anything is fetched, so a configuration
     error never waits behind a release nobody can compare against: the 软件源
     address (three names in the environment), the pin (one line at the tree's
-    root) and `WANTED` (the 版本 a human asked for). The address is read first,
-    so a run that declares half an address hears about that rather than about a
-    pin.
+    root), `WANTED` (the 版本 a human asked for) and `RELEASE_REPO` (whose
+    Releases the fifth direction asks about). The address is read first, so a
+    run that declares half an address hears about that rather than about a pin.
 
     It answers the run's question, not just the comparison's: `target=` is the
     版本 to render and `pin=` says whether this run is a rollback. Asking 上游
@@ -1282,6 +1319,7 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     address = served_from_env()
     pinned = pinned_of(layout.root)
     wanted = os.environ.get("WANTED", "")
+    repo = os.environ.get("RELEASE_REPO", "")
     # This repository's own problem first, before anything is fetched: the
     # render does the same, so a tree whose templates and PKGBUILDs disagree
     # fails here rather than being reported as "upstream has no such asset".
@@ -1300,14 +1338,14 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     # that stops moving, and the only thing that makes such a line visible is
     # printing it in the log of the runs it is holding back.
     if pinned is not None:
-        carried = sorted({pkgver_of(packaged.get(pkg)) for pkg in layout.inventory})
+        carried_versions = sorted({pkgver_of(packaged.get(pkg)) for pkg in layout.inventory})
         if pinned == upstream:
             log(f"pinned={pinned}: 上游 is at the pinned 版本, so it holds nothing back")
-        elif carried == [pinned]:
+        elif carried_versions == [pinned]:
             log(f"pinned={pinned}: 上游 is at {upstream}, and this tree stays where it was told")
         else:
             log(
-                f"pinned={pinned}: the tree carries {', '.join(carried)}, "
+                f"pinned={pinned}: the tree carries {', '.join(carried_versions)}, "
                 "so the pin holds nothing -- re-render it or delete PINNED"
             )
     for pkg, evr in sorted(packaged.items()):
@@ -1318,9 +1356,10 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     # It is what a Release describes, and it is not always 上游's: a pinned tree
     # carries the older one by design. The fifth direction asks *this*, so it
     # does not answer "no Release yet" for a 版本 nobody rendered.
-    carried = {pkgver_of(packaged.get(pkg)) for pkg in layout.inventory}
-    if len(carried) == 1 and "" not in carried:
-        log(f"carried={carried.pop()}")
+    versions = {pkgver_of(packaged.get(pkg)) for pkg in layout.inventory}
+    carried = versions.pop() if len(versions) == 1 else ""
+    if carried:
+        log(f"carried={carried}")
     if address is None:
         # The 上游-only comparison is a documented fallback (GLOSSARY: 落后),
         # and it was the silent half of it: a run that declared no address said
@@ -1358,17 +1397,62 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
                 stale.add(pkg)
     if stale:
         log("checksums differ from 上游's: " + " ".join(sorted(stale)))
-    # The four directions, one answer. Walking the inventory rather than what is
+    # The five directions, one answer. Walking the inventory rather than what is
     # on disk keeps a package whose PKGBUILD was never rendered 落后; walking
     # what the 软件源 serves as well is what lets a withdrawn package leave it.
-    reasons = behind(
-        layout,
-        upstream=upstream,
-        packaged=packaged,
-        served=served,
-        stale=stale,
-        pinned=pinned,
-    )
+    def directions(released: bool | None = None) -> dict[str, str]:
+        return behind(
+            layout,
+            upstream=upstream,
+            packaged=packaged,
+            served=served,
+            stale=stale,
+            pinned=pinned,
+            released=released,
+        )
+
+    reasons = directions()
+    # The fifth direction's question is asked only when the other four are
+    # quiet and nobody named a 版本: a run that is publishing anyway will
+    # create the Release it publishes. The question is about the 版本 the tree
+    # carries, not the one this run would render -- they differ when a pin
+    # holds the tree back, and "no Release" for a 版本 this run must not
+    # publish is not a reason to publish anything. Then the repair is a
+    # dispatch that names it, and saying so is the whole answer.
+    if not wanted and not reasons:
+        if not carried:
+            # A tree whose packages disagree on pkgver is 落后 for that alone,
+            # so this is here to keep the question well-formed, not to be hit:
+            # saying so beats asking GitHub about an empty 版本.
+            log("the tree carries no single 版本, so there is no Release to ask about")
+        elif not repo:
+            log(
+                f"no repository named: cannot ask whether v{carried} has a Release "
+                "(pass <owner/repo>)"
+            )
+        else:
+            released: bool | None = None
+            try:
+                released = release_exists(carried, repo, fetch=fetch)
+            except OSError as exc:
+                # A failed lookup is not "no Release"; this run publishes only
+                # what the check found, and the next one asks again.
+                log(
+                    f"cannot ask whether v{carried} has a Release ({exc}); "
+                    "publishing only what the check found"
+                )
+            if released is not None:
+                reasons = directions(released=released)
+                # The prose follows the answer `behind` just gave: if it named
+                # no-release, this run republishes the build it carries; if it
+                # did not, the tree is held back and a human dispatches it.
+                if NO_RELEASE in reasons.values():
+                    log(f"v{carried} has no Release: publishing it again")
+                elif released is False:
+                    log(
+                        f"v{carried} has no Release, and this run would publish v{upstream}; "
+                        f"a pin is holding this tree back -- dispatch {carried} to publish it"
+                    )
     for pkg, reason in sorted(reasons.items()):
         log(f"behind {pkg}={reason}")
     # The run's answer, from the comparison it just made. A human naming a

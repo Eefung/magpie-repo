@@ -30,8 +30,8 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 
 | 脚本 | 它回答什么 |
 | --- | --- |
-| `scripts/upstream.sh` | 中继入口检查的四条冻结行与包清单路径；其余四向都静时问 Release（第五向） |
-| `scripts/bump.py` | 渲染 PKGBUILD；入口检查的两个门；这一趟发不发、发哪个版本；落后（四向）；包清单 |
+| `scripts/upstream.sh` | 中继入口检查的四条冻结行，并写下包清单的路径 |
+| `scripts/bump.py` | 渲染 PKGBUILD；入口检查的两个门；这一趟发不发、发哪个版本；落后（五向）；包清单 |
 | `scripts/lib/pkg.sh` | 包文件名的读者、保留窗口、db 条目、载荷核对、冻结行与包清单的 reader、版本的形状 |
 | `scripts/build-check.sh` | 一个包目录从开工到交出：makepkg、依赖、`--version` 核对、清理 |
 | `scripts/build-repo.sh` | 窗口、退役、db 重建（容器里跑） |
@@ -58,7 +58,7 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 | `test_release_state.py` | `release-state.sh`：Release 有没有、唯一的那条 gh 查询、查失败不等于没有 |
 | `test_publish_pages.py` | `publish-pages.sh`：一棵树变成 gh-pages 上的一个 squash 提交（裸库当 remote） |
 | `test_check_range.py` | `check-range.sh`：每个 commit 三种判定（有 `gates=` 与数、契约在但没数、比契约还老），失败怎么汇总；`check.sh` 的门表两向对账 |
-| `test_upstream.py` | `upstream.sh`：中继那四条行，以及第五向 |
+| `test_upstream.py` | `upstream.sh`：中继那四条行、坏交接怎么拒、仓库名交给检查 |
 | `test_frozen.py` | 测试侧的冻结行读者与 `line_field` 同规则 |
 | `test_inventory.py` | 包清单 ↔ 目录 ↔ workflow ↔ README 的对账；step 顺序/门/outputs、`run:` 块形状、arch 表、发布树、保留窗口的数字；seed 的三种答案各跑一次真的 |
 | `test_docs.py` | README 里由程序决定的那两句（运行时间、provides/conflicts）各有 reader；测试地图与脚本地图的完整性；文档点名的模块与测试类 |

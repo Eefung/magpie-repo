@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
-# Relay the entry check, and ask the one question it cannot: does the 版本 this
-# tree carries have a Release?
+# Relay the entry check, and write the 包清单 it names.
 #
 #   ./scripts/upstream.sh <work dir> [<owner/repo>]      # WANTED rides the env
 #
-# The step that calls this used to decide in its own `run:` block: `bump` from
-# the check's frozen line unless a human passed a version, `target` from
-# `WANTED` unless it was empty, and a `WANTED` run printed the check's `bump=0`
-# and the relay's `bump=1` a few lines apart. That decision is the check's now
-# (`scripts/bump.py --check`): this script relays what it decided, and adds
-# only the fifth direction -- the one reason to publish the check cannot see.
+# The check answers "does this run publish, and which 版本"; this script hands
+# its four frozen lines to the workflow and adds one fact of its own: the file
+# the 包清单 was written to. It used to decide the 版本 and ask the fifth
+# direction too -- one run's log could then print the check's `bump=0` and the
+# relay's `bump=1` a few lines apart. Both questions are the check's now.
 #
 # What it hands over on stdout, one reader per line (pkg.sh's line_field):
 #
@@ -22,16 +20,8 @@
 # The check's own log goes to stderr -- `packaged <pkg>=`, `served <pkg>=`,
 # `behind <pkg>=<reason>`, `pinned=` -- and the run's reader is a human.
 #
-# BUMP and RELEASE_STATE are the seams: tests point them at stubs so this runs
-# offline, the way BUILD_CHECK lets build-repo.sh run without a container.
-#
-# The fifth direction is still here because it needs a repository name, and that
-# is the caller's (the workflow passes its own $GITHUB_REPOSITORY): when the
-# check found nothing to do, this asks release-state.sh whether v<carried> has a
-# Release. A rebuild whose Release step failed after the branch push leaves
-# every direction the check can see quiet, and the 软件源 serving a build with
-# no Release; absent is the reason to publish it again. `carried=` is the 版本
-# the tree holds -- not `target=`, which a pin can hold apart from it.
+# BUMP is the seam: tests point it at a stub so this runs offline, the way
+# BUILD_CHECK lets build-repo.sh run without a container.
 set -euo pipefail
 
 # shellcheck source=lib/pkg.sh
@@ -41,14 +31,10 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="${1:?usage: upstream.sh <work dir> [<owner/repo>]}"
 # The repository this run publishes to, handed in by the caller. Reading
 # GITHUB_REPOSITORY here would make the script need Actions to answer -- the
-# case ADR-0004 rules out -- and the workflow already passes its context to
-# release-state.sh as argv.
+# case ADR-0004 rules out. The check asks the fifth direction about it, so it
+# goes in through the one name that question reads.
 repo="${2:-}"
 BUMP="${BUMP:-$here/bump.py}"
-# The Release question is the fifth direction's, and it belongs to the script
-# that already answers it (release-state.sh: present/absent as a value, with gh
-# behind its own seam). Substituted here so this module can be driven offline.
-RELEASE_STATE="${RELEASE_STATE:-$here/release-state.sh}"
 mkdir -p "$work"
 work="$(cd "$work" && pwd)"
 check="$work/check.txt"
@@ -56,7 +42,7 @@ packages="$work/packages.txt"
 
 # The entry check runs in every mode, including a hand-picked 版本: it is also
 # the drift guard, and it is what decides this run now.
-if ! python3 "$BUMP" --check >"$check" 2>&1; then
+if ! RELEASE_REPO="$repo" python3 "$BUMP" --check >"$check" 2>&1; then
     cat "$check" >&2
     echo "the entry check failed" >&2
     exit 1
@@ -77,60 +63,6 @@ if ! python3 "$BUMP" --packages >"$packages"; then
     exit 1
 fi
 [ -s "$packages" ] || { echo "the 包清单 names no packages" >&2; exit 1; }
-
-# The fifth direction, and the only one the check cannot see. A rebuild's 版本
-# is committed by the person who re-rendered it, so once the branch push lands
-# every direction the check sees is quiet -- and a Release that failed after
-# that push is never asked for again, while the 软件源 serves a build whose
-# Release does not exist. When the check says nothing to do, ask the question
-# the release step already owns: absent is a reason to publish, present really
-# is nothing to do.
-#
-# The question is about the build the tree holds, not about the 版本 this run
-# would render: they differ when a pin is holding the tree back, and asking
-# about 上游's 版本 then answers "no Release yet" for a version this run must not
-# publish -- absent being a reason to publish, that answer would undo the pin on
-# the next upstream move, which is the day-long rollback the pin exists to end.
-if [ "$bump" = 0 ]; then
-    carried="$(line_field_or carried "$check" "$target")"
-    if [ -z "$repo" ]; then
-        echo "no repository named: cannot ask whether v$carried has a Release (pass <owner/repo>)" >&2
-    else
-        state_log="$(mktemp)"
-        state_code=0
-        "$RELEASE_STATE" "$carried" "$repo" >"$state_log" 2>&1 || state_code=$?
-        if [ "$state_code" -ne 0 ]; then
-            # A lookup that failed is not "no Release" -- that is the bug
-            # release-state.sh exists to keep out of the release step. This run
-            # publishes nothing it cannot justify, and the next one asks again.
-            cat "$state_log" >&2
-            echo "cannot ask whether v$carried has a Release; publishing only what the check found" >&2
-        else
-            release="$(line_field release "$state_log")"
-            case "$release" in
-                present) ;;
-                absent)
-                    if [ "$carried" = "$target" ]; then
-                        echo "v$carried has no Release: publishing it again" >&2
-                        bump=1
-                    else
-                        # This run would render $target, not the 版本 it is
-                        # missing a Release for: publishing is a dispatch that
-                        # names $carried, and saying so is the whole repair.
-                        echo "v$carried has no Release, and this run would publish v$target" >&2
-                        echo "a pin is holding this tree back; dispatch $carried to publish it" >&2
-                    fi
-                    ;;
-                *)
-                    echo "the Release lookup answered '$release', not present or absent" >&2
-                    rm -f "$state_log"
-                    exit 1
-                    ;;
-            esac
-        fi
-        rm -f "$state_log"
-    fi
-fi
 
 # The gates downstream are `if: bump == '1'` and `[ "$pin" = 1 ]`, so anything
 # else would silently skip a publish or silently not pin. Say so instead of

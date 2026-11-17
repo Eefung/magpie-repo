@@ -115,8 +115,8 @@ class FrozenFieldTest(unittest.TestCase):
         self.assertIn("2 bump= lines", str(caught.exception))
 
     def test_an_absent_line_is_the_callers_call(self):
-        # What `bump.py --check` prints when it has nothing to say: None here,
-        # the caller's default in upstream.sh.
+        # What a producer that may leave a line out looks like: None here, the
+        # caller's default where it uses `line_field_or`.
         self.assertIsNone(frozen.field("bump", "upstream=0.1.9\n"))
 
     def test_a_duplicated_line_is_the_readers_complaint(self):

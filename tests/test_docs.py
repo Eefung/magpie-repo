@@ -454,11 +454,10 @@ class GateDocumentsTest(unittest.TestCase):
 class DirectionsVocabularyTest(unittest.TestCase):
     """落后的方向词：码里印什么，GLOSSARY 与 AGENTS 就说那几个。
 
-    「这趟为什么发」的答案是日志里 `behind <包>=<方向>` 那四个词加第五向的一行。
-    四个词是 `bump.py` 的四个常量，第五向的句子是 `upstream.sh` 的一行 echo，
-    而 GLOSSARY 的落后段与 AGENTS 的脚本地图各抄了一份 -- 两份都没有读者。加一个
-    方向或删一个词，整套测试照旧全绿（这张卡的证据：删掉那四个词以后 355 条 OK），
-    而读者按老词 grep 日志会一无所获。
+    「这趟为什么发」的答案是日志里 `behind <包>=<方向>` 的那些词。它们曾经是四个
+    常量加一个没有名字的第五向（句子写在 `upstream.sh` 的一行 echo 里，计数由一条
+    测试从那行抠出来再加一）；现在五个方向都是 `bump.py` 的常量、一个元组，计数
+    与词表都从那里出，两段文档跟着它走。
 
     `tests/test_frozen.py` 给冻结行清单做了同样的两向对账，这里用的是它的形状：
     集合相等，两个方向各有一条变异证明守卫真的会响。
@@ -474,14 +473,15 @@ class DirectionsVocabularyTest(unittest.TestCase):
 
     def printed(self) -> list[str]:
         """这次检查能印出来的那些方向词。"""
-        return [bump.UPSTREAM_MOVED, bump.NOT_PUBLISHED, bump.UPSTREAM_REUPLOADED, bump.RETIRED]
+        return list(bump.DIRECTIONS)
 
     def listed(self, entry: str) -> set[str]:
         """那条 `behind <包>=<方向>` 后面括号里列的词。"""
         match = re.search(r"`behind[^`]*`（([^）]*)）", entry)
         if match is None:
             raise AssertionError("落后段不再列方向词；改这句测试")
-        return set(re.findall(r"`([a-z][a-z0-9]*)`", match.group(1)))
+        # A word may carry a dash: `no-release` is one direction, not two.
+        return set(re.findall(r"`([a-z][a-z0-9-]*)`", match.group(1)))
 
     def missing(self, entry: str, words: list[str] | None = None) -> list[str]:
         return [word for word in (words or self.printed()) if f"`{word}`" not in entry]
@@ -500,24 +500,13 @@ class DirectionsVocabularyTest(unittest.TestCase):
         return match.group(1)
 
     def test_the_entry_counts_the_directions_the_check_has(self):
-        # 四向由 `behind <包>=<方向>` 印，第五向由 upstream.sh 印：计数是两者之和。
-        self.assertEqual(self.count(self.entry()), self.NUMERALS[len(self.printed()) + 1])
+        # 五向都印 `behind <包>=<方向>`：计数就是常量的个数，没有「再加一」。
+        self.assertEqual(self.count(self.entry()), self.NUMERALS[len(self.printed())])
 
     def test_a_count_the_check_disagrees_with_is_reported(self):
         drifted = self.entry().replace("五个方向都算", "六个方向都算")
         self.assertNotEqual(drifted, self.entry(), "落后段换了写法；改这句测试")
         self.assertEqual(self.count(drifted), "六")
-
-    def test_the_fifth_direction_is_the_line_upstream_sh_prints(self):
-        # 第五向不在这四个词里：它由 upstream.sh 印，形状取自那一行 echo。
-        upstream = (REPO / "scripts" / "upstream.sh").read_text()
-        # The variable half is upstream.sh's business (it was `$target`, and it
-        # is `$carried` now that the question is about the tree's 版本); the
-        # sentence after it is what GLOSSARY quotes.
-        echo = re.search(r'echo "v\$[a-z]+([^"]*)"', upstream)
-        if echo is None:
-            raise AssertionError("upstream.sh 不再印第五向；改这句测试")
-        self.assertIn(echo.group(1).split(":")[0], self.entry())
 
     def test_agents_counts_the_directions_the_check_has(self):
         # AGENTS 的脚本地图写着「落后（四向）」：那是同一份计数的第三份抄写。
@@ -533,7 +522,7 @@ class DirectionsVocabularyTest(unittest.TestCase):
         self.assertEqual(self.missing(dropped), ["retired"])
 
     def test_a_word_the_check_cannot_print_is_reported(self):
-        drifted = self.entry().replace("`retired`）", "`retired` / `downgraded`）")
+        drifted = self.entry().replace("`no-release`）", "`no-release` / `downgraded`）")
         self.assertNotEqual(drifted, self.entry(), "落后段换了写法；改这句测试")
         self.assertEqual(self.listed(drifted) - set(self.printed()), {"downgraded"})
 

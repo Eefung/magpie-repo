@@ -271,6 +271,11 @@ def database_body(entries: dict[str, str]) -> bytes:
     return buffer.getvalue()
 
 
+def release_url(version: str, repo: str = "owner/repo") -> str:
+    """The one Release this run may need to know about."""
+    return f"https://api.github.com/repos/{repo}/releases/tags/v{version}"
+
+
 def release_table(version: str) -> dict[str, bytes]:
     """A fetch table carrying one release: its sums, its LICENSE, its icon.
 
@@ -1759,6 +1764,259 @@ class EntryDecisionTest(unittest.TestCase):
         handed = self.handover("0.1.10")
         self.assertEqual(handed["bump"], "0")
         self.assertEqual(handed["target"], "0.1.10")
+
+
+class BehindTest(unittest.TestCase):
+    """The five directions, judged where they are decided.
+
+    `behind` had one caller and no test: its inputs were chewed by the caller
+    and its answer was read back out of a log. It takes the facts now --
+    including the one the network had to answer -- and returns the directions,
+    so a direction can be changed without running a whole `--check`.
+    """
+
+    LAYOUT = bump.layout_for(REPO)  # only its 包清单 is read
+
+    def directions(
+        self,
+        packaged: dict[str, str],
+        *,
+        upstream: str = "0.1.10",
+        served: dict[str, str] | None = None,
+        stale: set[str] | None = None,
+        pinned: str | None = None,
+        released: bool | None = None,
+    ) -> dict[str, str]:
+        return bump.behind(
+            self.LAYOUT,
+            upstream=upstream,
+            packaged=packaged,
+            served=served,
+            stale=set() if stale is None else stale,
+            pinned=pinned,
+            released=released,
+        )
+
+    def test_a_pkgver_that_is_not_upstreams_is_behind(self):
+        self.assertEqual(
+            self.directions({pkg: "0.1.9-1" for pkg in bump.PACKAGES}),
+            {pkg: bump.UPSTREAM_MOVED for pkg in bump.PACKAGES},
+        )
+
+    def test_the_pin_suppresses_that_one_direction(self):
+        self.assertEqual(
+            self.directions({pkg: "0.1.9-1" for pkg in bump.PACKAGES}, pinned="0.1.9"),
+            {},
+        )
+
+    def test_a_missing_release_is_a_direction_like_the_others(self):
+        self.assertEqual(
+            self.directions({pkg: "0.1.10-1" for pkg in bump.PACKAGES}, released=False),
+            {pkg: bump.NO_RELEASE for pkg in bump.PACKAGES},
+        )
+
+    def test_an_existing_release_adds_nothing(self):
+        self.assertEqual(
+            self.directions({pkg: "0.1.10-1" for pkg in bump.PACKAGES}, released=True),
+            {},
+        )
+
+    def test_a_pin_holds_the_fifth_direction_back_too(self):
+        # The tree stays at 0.1.9; a missing Release for it is not a reason to
+        # publish 0.1.11 over the pin.
+        self.assertEqual(
+            self.directions({pkg: "0.1.9-1" for pkg in bump.PACKAGES}, pinned="0.1.9", released=False),
+            {},
+        )
+
+    def test_a_build_the_served_tree_does_not_have_is_unpublished(self):
+        packaged = {pkg: "0.1.10-1" for pkg in bump.PACKAGES}
+        self.assertEqual(
+            self.directions(packaged, served={pkg: "0.1.9-1" for pkg in bump.PACKAGES}),
+            {pkg: bump.NOT_PUBLISHED for pkg in bump.PACKAGES},
+        )
+
+    def test_a_table_upstream_re_uploaded_is_a_checksum_difference(self):
+        packaged = {pkg: "0.1.10-1" for pkg in bump.PACKAGES}
+        self.assertEqual(
+            self.directions(
+                packaged,
+                served={pkg: "0.1.10-1" for pkg in bump.PACKAGES},
+                stale={"magpie-bin"},
+            ),
+            {"magpie-bin": bump.UPSTREAM_REUPLOADED},
+        )
+
+    def test_a_package_dropped_from_the_inventory_is_retired(self):
+        packaged = {pkg: "0.1.10-1" for pkg in bump.PACKAGES}
+        retired = "magpie-docs-bin"
+        self.assertEqual(
+            self.directions(
+                packaged,
+                served={**{pkg: "0.1.10-1" for pkg in bump.PACKAGES}, retired: "0.1.10-1"},
+            ),
+            {retired: bump.RETIRED},
+        )
+
+    def test_a_direction_that_already_says_why_is_not_joined_by_another(self):
+        self.assertEqual(
+            self.directions({pkg: "0.1.9-1" for pkg in bump.PACKAGES}, released=False),
+            {pkg: bump.UPSTREAM_MOVED for pkg in bump.PACKAGES},
+        )
+
+
+class FifthDirectionTest(unittest.TestCase):
+    """The one direction the tree alone cannot answer: has its build a Release?
+
+    A rebuild's 版本 is committed by the person who re-rendered it, so once the
+    branch push lands the four directions are quiet -- and a Release that
+    failed after that push is never asked for again, while the 软件源 serves a
+    build nobody can describe. That question used to be the relay's, with a
+    sentence in the docs standing in for a name; it is the check's now, and it
+    is a direction like the other four: `behind <包>=no-release`.
+    """
+
+    VERSION = "0.1.10"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def tree(self, version: str = VERSION, *, pin: str | None = None) -> Path:
+        tree = staged_checkout(self.root, {pkg: version for pkg in bump.PACKAGES})
+        if pin is not None:
+            (tree / bump.PIN_FILE).write_text(pin + "\n")
+        return tree
+
+    def check(
+        self,
+        tree: Path,
+        *,
+        upstream: str = VERSION,
+        releases: dict | None = None,
+        repo: str | None = "owner/repo",
+    ) -> tuple[object, list[str], FetchSpy]:
+        table = version_sources(github=upstream, site=upstream)
+        table.update(releases or {})
+        fetch = FetchSpy(table)
+        env = {} if repo is None else {"RELEASE_REPO": repo}
+        code, out = run_main("--check", fetch=fetch, root=tree, env=env)
+        return code, out.splitlines(), fetch
+
+    def behind_lines(self, lines: list[str]) -> dict[str, str]:
+        return {
+            line.split(" ", 1)[1].split("=", 1)[0]: line.split("=", 1)[1]
+            for line in lines
+            if line.startswith("behind ")
+        }
+
+    def test_a_missing_release_is_a_reason_to_publish(self):
+        code, lines, fetch = self.check(
+            self.tree(), releases={release_url(self.VERSION): None}
+        )
+
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(
+            self.behind_lines(lines),
+            {"magpie-bin": "no-release", "magpie-cli-bin": "no-release"},
+        )
+        self.assertIn("bump=1", lines)
+        said = [line for line in lines if f"v{self.VERSION} has no Release" in line]
+        self.assertEqual(said, [f"v{self.VERSION} has no Release: publishing it again"])
+        self.assertIn(release_url(self.VERSION), fetch.urls)
+
+    def test_an_existing_release_is_nothing_to_do(self):
+        # Line for line what the run said before this question moved in: the
+        # only thing a 200 may add is the fetch itself.
+        code, lines, _ = self.check(
+            self.tree(), releases={release_url(self.VERSION): b"{}"}
+        )
+
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.behind_lines(lines), {})
+        self.assertIn("bump=0", lines)
+        self.assertEqual([line for line in lines if "Release" in line], [])
+
+    def test_a_lookup_that_failed_is_not_a_missing_release(self):
+        # A 500 or a rate limit is not "no Release": it says so and publishes
+        # only what the check found. Reading it as absent would republish a
+        # build on a bad minute at GitHub.
+        url = release_url(self.VERSION)
+        code, lines, _ = self.check(
+            self.tree(), releases={url: urllib.error.HTTPError(url, 500, "boom", Message(), None)}
+        )
+
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.behind_lines(lines), {})
+        self.assertIn("bump=0", lines)
+        self.assertTrue(
+            any("cannot ask whether v0.1.10 has a Release" in line for line in lines), lines
+        )
+
+    def test_a_network_failure_is_not_a_missing_release(self):
+        # The other exception a fetch can raise: no route, no DNS, no answer.
+        url = release_url(self.VERSION)
+        code, lines, _ = self.check(
+            self.tree(), releases={url: urllib.error.URLError("no route to host")}
+        )
+
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.behind_lines(lines), {})
+        self.assertIn("bump=0", lines)
+        self.assertTrue(
+            any("cannot ask whether v0.1.10 has a Release" in line for line in lines), lines
+        )
+
+    def test_a_run_that_is_publishing_anyway_does_not_ask(self):
+        # The fifth direction is for the quiet runs: a run that is behind for
+        # another reason creates the Release it publishes.
+        code, lines, fetch = self.check(
+            self.tree("0.1.9"), releases={release_url("0.1.9"): None}
+        )
+
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(
+            self.behind_lines(lines), {pkg: "upstream" for pkg in bump.PACKAGES}
+        )
+        self.assertIn("bump=1", lines)
+        self.assertNotIn(release_url("0.1.9"), fetch.urls)
+
+    def test_without_a_repository_the_question_is_skipped_out_loud(self):
+        code, lines, fetch = self.check(self.tree(), repo=None)
+
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.behind_lines(lines), {})
+        self.assertIn("bump=0", lines)
+        said = [line for line in lines if "no repository named" in line]
+        self.assertEqual(len(said), 1, said)
+        # How to fix it, not just that it could not be asked.
+        self.assertIn("(pass <owner/repo>)", said[0])
+        self.assertNotIn(release_url(self.VERSION), fetch.urls)
+
+    def test_a_pinned_tree_without_a_release_is_not_published(self):
+        # The tree stays at 0.1.9 on purpose; this run would render 上游's
+        # 0.1.11. Publishing that to fix a missing Release would undo the pin
+        # on the next upstream move -- the day-long rollback the pin ends.
+        tree = self.tree("0.1.9", pin="0.1.9")
+        code, lines, _ = self.check(
+            tree, upstream="0.1.11", releases={release_url("0.1.9"): None}
+        )
+
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.behind_lines(lines), {})
+        self.assertIn("bump=0", lines)
+        said = [line for line in lines if "has no Release" in line]
+        self.assertEqual(len(said), 1, said)
+        self.assertIn("dispatch 0.1.9", said[0])
+
+    def test_the_direction_has_a_name_like_the_others(self):
+        # The count GLOSSARY states used to be scraped out of a shell echo
+        # because this one had no constant to be counted from.
+        self.assertEqual(
+            set(bump.DIRECTIONS),
+            {"upstream", "unpublished", "checksums", "retired", bump.NO_RELEASE},
+        )
 
 
 class TemplatePkgnameTest(unittest.TestCase):
