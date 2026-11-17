@@ -18,7 +18,7 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 
 ## 检查
 
-推送前跑 `scripts/check.sh`：它就是 CI `test` job 的全部闸门（离线单测、shellcheck、ruff、actionlint，以及本机装着 makepkg 时的 probe——真 `makepkg` + `repo-add` 跑一遍打包链），三个 linter 由脚本按固定版本下到 `~/.cache/magpie-repo`，所以本机没装也跑得动、且与 runner 同版本。分段提交时每个中间态也跑一次：它要十几秒，probe 占大头（真 `makepkg` 跑几个 case，数量看它自己打印的 `assertions=`），而每次 push 都会真的跑流水线。它跑不到的边界只有一个出处：它自己打印的 `not covered here` 段——那份清单会随改动变长或变短，别在这里另抄一份。
+推送前跑 `scripts/check.sh`：它就是 CI `test` job 的全部闸门（离线单测、shellcheck、ruff、actionlint，以及本机装着 makepkg 时的 probe——真 `makepkg` + `repo-add` 跑一遍打包链），三个 linter 由脚本按固定版本下到 `~/.cache/magpie-repo`，所以本机没装也跑得动、且与 runner 同版本。分段提交时每个中间态也跑一次（`./scripts/check-range.sh <base>..HEAD` 替你把每个 commit 建进 worktree 跑一遍，一行一个测试数）：它要十几秒，probe 占大头（真 `makepkg` 跑几个 case，数量看它自己打印的 `assertions=`），而每次 push 都会真的跑流水线。它跑不到的边界只有一个出处：它自己打印的 `not covered here` 段——那份清单会随改动变长或变短，别在这里另抄一份。
 
 `publish.yml` 的 `paths` 含 `scripts/**`、`tests/**`、`templates/**`，所以这些改动推送后会触发一次 publish，可能直接发一版。这类提交与别的工作分开推，相关的几笔一起推：一次推送只跑一次流水线，一笔一推就会发一遍。
 
