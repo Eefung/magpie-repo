@@ -949,5 +949,61 @@ class PkgrelShapeTest(unittest.TestCase):
         self.assertFalse(self.name_accepts("１"))
 
 
+class VersionShapeTest(unittest.TestCase):
+    """One table of 版本 shapes, and the two runtimes that must agree on it.
+
+    Three places used to answer "what is a 版本": the render's `VERSION_RE`, the
+    包文件 name reader's character class, and publish-pages.sh's own copy of
+    that class. The two shell copies accepted `1`, `1.` and `1..2` -- shapes no
+    render can produce -- while GLOSSARY described the loose rule and the render
+    enforced the strict one. pkgrel had the same split and its repair was one
+    table fed to both readers; this is that table for the other half.
+
+    The shell side is one function now (`version_shape_ok`: the name reader and
+    the hand-run gate both call it), so the pair here is python's regex and
+    that function.
+    """
+
+    SHAPES = (
+        "0.1.3995",
+        "0.1.2.3",   # more parts than upstream uses: the rule has no ceiling
+        "1",         # one part: no version this repository renders
+        "1.",        # a trailing empty part
+        "1..2",      # an empty part in the middle
+        ".1",        # a leading one
+        "v0.1.9",    # the tag shape, before the `v` comes off
+        "",
+        "0.1.２",    # a fullwidth digit: neither side calls that a number
+    )
+
+    def python_accepts(self, version: str) -> bool:
+        return bool(bump.VERSION_RE.fullmatch(version))
+
+    def shell_accepts(self, version: str) -> bool:
+        return call(f"version_shape_ok {shlex.quote(version)}").returncode == 0
+
+    def test_the_two_readers_accept_the_same_shapes(self):
+        for version in self.SHAPES:
+            with self.subTest(version=version):
+                self.assertEqual(
+                    self.python_accepts(version),
+                    self.shell_accepts(version),
+                    f"版本={version!r}: the render and pkg.sh disagree",
+                )
+
+    def test_the_table_holds_both_verdicts(self):
+        verdicts = {self.python_accepts(version) for version in self.SHAPES}
+        self.assertEqual(verdicts, {True, False})
+
+    def test_a_package_name_the_render_would_refuse_does_not_parse(self):
+        # The reader asks the same function, so the width reaches all the way
+        # out to a name the directory carries.
+        with tempfile.TemporaryDirectory() as tmp:
+            for version in ("1", "1..2", "1."):
+                name = fixtures.pkgfile_name("magpie-bin", version)
+                result = call(f"pkgfile_pkgname {shlex.quote(str(Path(tmp) / name))}")
+                self.assertNotEqual(result.returncode, 0, name)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -222,6 +222,27 @@ pkgfile_evr() {
     printf '%s\n' "${base#"$pkgname"-}"
 }
 
+# version_shape_ok <版本> -- the one accept-set for a 版本, in shell.
+#
+# Digits and dots, at least two parts, none of them empty: `0.1.3995`, not `1`,
+# not `1.`, not `1..2`. bump.py's `VERSION_RE` is this same rule in python, and
+# one table feeds both (tests/test_pkg_sh.py, VersionShapeTest).
+#
+# It was written twice in shell -- here and in publish-pages.sh -- as
+# `*[!0-9.]*`, which accepted a 包文件 name no render can produce and a version
+# the render refuses. Two readers of one question is how the pkgrel width drifted
+# too, and the repair there was the same: one function, both callers.
+version_shape_ok() {
+    local version="$1"
+    case "$version" in
+        *[!0-9.]* | "" | .* | *. | *..*) return 1 ;;
+    esac
+    case "$version" in
+        *.*) return 0 ;;
+    esac
+    return 1
+}
+
 # pkgfile_pkgname <包文件> -- the pkgname in that file's name.
 #
 # The inverse of the naming rule, for the question pkg.sh did not answer: which
@@ -229,6 +250,10 @@ pkgfile_evr() {
 # <arch>, and pkgname itself carries dashes (magpie-bin), so the three fields
 # makepkg appends are peeled off the right and whatever is left is the package.
 # A name that does not parse is a change to the rule, not a package to guess at.
+#
+# The version half is `version_shape_ok`, the same rule the render applies to a
+# pkgver and the same one publish-pages.sh refuses a hand-run 版本 with: a name
+# carrying `0.1..2` is a change to the rule, not a package to read a 版本 from.
 #
 # The whole-number pkgrel here is the model GLOSSARY states, and it is decided
 # where pkgrel enters (bump.py's check_pkgrel, which names the template's own
@@ -246,9 +271,7 @@ pkgfile_pkgname() {
     rel="${base##*-}"; base="${base%-*}"
     version="${base##*-}"; base="${base%-*}"
     [ -n "$base" ] || return 1
-    case "$version" in
-        "" | *[!0-9.]*) return 1 ;;
-    esac
+    version_shape_ok "$version" || return 1
     case "$rel" in
         "" | *[!0-9]*) return 1 ;;
     esac

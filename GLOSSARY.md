@@ -9,7 +9,7 @@ yetone/magpie 项目以及它发布的构建产物；本仓库只读取，不修
 _Avoid_: 官方、源仓库
 
 **版本**：
-上游 release 的 tag 去掉 `v`，形如 `0.1.3995`，只由数字和点组成。这是渲染前强制的那条不变量。
+上游 release 的 tag 去掉 `v`，形如 `0.1.3995`：数字与点，至少两段，每段都不空——`1`、`1.`、`1..2` 都不算。这是渲染前强制的那条不变量，也是 `pkg.sh` 的 `version_shape_ok`（包文件名的读者与 `publish-pages.sh` 手跑的门都问它）用的同一条：shell 侧一份，`bump.py` 的 `VERSION_RE` 一份，两个被 `tests/test_pkg_sh.py` 的一张表钉在一起。
 _Avoid_: 版本号、tag
 
 **pkgrel**：

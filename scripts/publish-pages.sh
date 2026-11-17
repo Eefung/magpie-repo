@@ -22,6 +22,9 @@
 # repository in tests/test_publish_pages.py.
 set -euo pipefail
 
+# shellcheck source=lib/pkg.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pkg.sh"
+
 dir="${1:?usage: publish-pages.sh <repo dir> <version> <remote>}"
 version="${2:?usage: publish-pages.sh <repo dir> <version> <remote>}"
 remote="${3:?usage: publish-pages.sh <repo dir> <version> <remote>}"
@@ -34,9 +37,9 @@ GIT_NAME="${GIT_NAME:?publish-pages.sh needs GIT_NAME: the committer name}"
 GIT_EMAIL="${GIT_EMAIL:?publish-pages.sh needs GIT_EMAIL: the committer email}"
 
 [ -d "$dir" ] || { echo "no such tree: $dir" >&2; exit 1; }
-case "$version" in
-    "" | *[!0-9.]*) echo "not a 版本: '$version'" >&2; exit 1 ;;
-esac
+# The same accept-set the render applies to a pkgver and the name reader applies
+# to a 包文件, from pkg.sh: this script's own `*[!0-9.]*` was a third spelling.
+version_shape_ok "$version" || { echo "not a 版本: '$version'" >&2; exit 1; }
 
 cd "$dir"
 

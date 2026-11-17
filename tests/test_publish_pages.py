@@ -173,11 +173,19 @@ class PublishPagesTest(unittest.TestCase):
         self.assertNotEqual(git("rev-parse", "--verify", "gh-pages", cwd=self.remote).returncode, 0)
 
     def test_a_version_that_is_not_dotted_digits_is_refused(self):
-        result = self.publish(self.tree("one"), "v0.1.9")
+        # `v0.1.9` was the shape both doors refused, so on its own it proved
+        # nothing about which one this script uses. `1`, `1.` and `1..2` are
+        # the ones its own character class used to accept while the render
+        # refused them. One rule now, from pkg.sh: `version_shape_ok`.
+        for index, version in enumerate(("v0.1.9", "1", "1.", "1..2")):
+            with self.subTest(version=version):
+                result = self.publish(self.tree(f"bad{index}"), version)
 
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("not a 版本", result.stderr)
-        self.assertNotEqual(git("rev-parse", "--verify", "gh-pages", cwd=self.remote).returncode, 0)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("not a 版本", result.stderr)
+                self.assertNotEqual(
+                    git("rev-parse", "--verify", "gh-pages", cwd=self.remote).returncode, 0
+                )
 
 
 if __name__ == "__main__":
