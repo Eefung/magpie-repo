@@ -35,8 +35,10 @@ GLOSSARY = REPO / "GLOSSARY.md"
 # a literal name.
 READ = re.compile(r"line_field(?:_or)?\s+([a-z][a-z0-9_]*)")
 
-# The same names as the 冻结行 entry writes them: `bump=`.
-LISTED = re.compile(r"`([a-z][a-z0-9_]*)=")
+# The same names as the list writes them: a backticked `bump=`, closing right
+# after the `=`. The entry's opening phrase writes the shape itself as
+# `name=value`, which is a metavariable and not a line anyone reads.
+LISTED = re.compile(r"`([a-z][a-z0-9_]*)=`")
 
 
 def keys_in(text: str) -> set[str]:
@@ -58,6 +60,22 @@ def entry_of(glossary: str) -> str:
     return glossary.split("**冻结行**：", 1)[1].split("\n_Avoid_", 1)[0]
 
 
+# The sentence that says what being in the list means. Everything after it is
+# prose *about* the list -- including its counterexample.
+LIST_END = "一条行算不算冻结行"
+
+
+def list_part(glossary: str) -> str:
+    """The part of the entry that is the list, before the rule that names it.
+
+    The entry goes on to name `pkgver=` as the counterexample -- the line that
+    used to be listed and whose only reader is a test -- so "everything listed
+    has a reader" is only answerable over the list itself, never over the prose
+    around it.
+    """
+    return entry_of(glossary).split(LIST_END, 1)[0]
+
+
 def readers(repo: Path = REPO) -> set[str]:
     """Every name a program reads through line_field, outside tests/."""
     sources = [*repo.glob("scripts/**/*.sh"), *repo.glob("scripts/**/*.py"),
@@ -65,10 +83,19 @@ def readers(repo: Path = REPO) -> set[str]:
     return {name for path in sources for name in keys_in(path.read_text())}
 
 
+def listed(glossary: str) -> set[str]:
+    """The names the list itself names."""
+    return set(LISTED.findall(list_part(glossary)))
+
+
 def unlisted(glossary: str, names: set[str]) -> list[str]:
-    """The names in `names` that the 冻结行 entry does not list."""
-    listed = set(LISTED.findall(entry_of(glossary)))
-    return sorted(set(names) - listed)
+    """The names in `names` that the list does not name."""
+    return sorted(set(names) - listed(glossary))
+
+
+def unread(glossary: str, names: set[str]) -> list[str]:
+    """The names the list names that nothing reads through line_field."""
+    return sorted(listed(glossary) - set(names))
 
 
 class FrozenFieldTest(unittest.TestCase):
@@ -124,10 +151,29 @@ class GlossaryListTest(unittest.TestCase):
     def test_every_key_a_program_reads_is_in_the_glossary_list(self):
         self.assertEqual(unlisted(GLOSSARY.read_text(), readers()), [])
 
+    def test_every_key_the_list_names_has_a_reader(self):
+        # The other direction, which the first version of this guard left out:
+        # a key kept in the list after its reader went is a promise about a
+        # contract nothing keeps.
+        self.assertEqual(unread(GLOSSARY.read_text(), readers()), [])
+
     def test_a_key_missing_from_the_list_is_caught(self):
         drifted = GLOSSARY.read_text().replace("`release=`、", "")
         self.assertNotEqual(drifted, GLOSSARY.read_text(), "the entry moved; reword this test")
         self.assertEqual(unlisted(drifted, readers()), ["release"])
+
+    def test_a_listed_key_without_a_reader_is_caught(self):
+        # `tests` is read by check-range.sh; take the reader away and the list
+        # is the only place the name survives.
+        self.assertEqual(unread(GLOSSARY.read_text(), readers() - {"tests"}), ["tests"])
+
+    def test_the_counterexample_is_read_as_prose_not_as_a_listing(self):
+        # The entry names `pkgver=` *after* the rule, as the line that used to
+        # be listed and whose only reader is a test. Reading the whole entry
+        # would count it as listed, and the reverse direction would then fail
+        # on a sentence that is there to teach.
+        self.assertIn("`pkgver=`", entry_of(GLOSSARY.read_text()))
+        self.assertNotIn("pkgver", listed(GLOSSARY.read_text()))
 
     def test_the_list_is_read_from_its_own_entry(self):
         # Scoped to the 冻结行 entry: another section naming a `name=` is a term
@@ -136,7 +182,7 @@ class GlossaryListTest(unittest.TestCase):
             "**包清单**：\n一句话里有 `ghost=` 但不在冻结行那一节。\n"
             "**冻结行**：\n只有 `bump=`。\n"
         )
-        self.assertEqual(unlisted(document, {"ghost", "bump"}), ["ghost"])
+        self.assertEqual(listed(document), {"bump"})
 
     def test_a_comment_naming_a_reader_is_not_a_reader(self):
         # `pkg.sh` documents both readers, and its own bodies pass "$1"; a list
