@@ -214,5 +214,8 @@ fi
 # handed over too, with no reader anywhere but a test; it is the log line
 # above (`ok: ... reports $pkgver`) that says which version was built.
 keep="$artifact"
-echo "pkgname=$pkgname"
-echo "artifact=$artifact"
+# Through the table's write gate: `pkgname` is a package name (no separator, not
+# empty) and `artifact` is a path that is there. A name the gate refuses fails
+# this run, not the step two minutes later that moved a file nobody made.
+frozen_write pkgname "$pkgname"
+frozen_write artifact "$artifact"

@@ -45,8 +45,14 @@ set -euo pipefail
 dir="$1"
 pkgname="$(basename "$dir")"
 pkgver="${STUB_PKGVER:?}"
-artifact="$dir/$pkgname-$pkgver-${PKG_REL}-${PKG_ARCH}$PKG_SUFFIX"
-: > "$artifact"
+if [ -n "${STUB_ARTIFACT:-}" ]; then
+    # A handover naming a file the build never made: the read that takes it has
+    # to be the one that says so, not the `mv` two lines later.
+    artifact="$STUB_ARTIFACT"
+else
+    artifact="$dir/$pkgname-$pkgver-${PKG_REL}-${PKG_ARCH}$PKG_SUFFIX"
+    : > "$artifact"
+fi
 echo "ok: $(basename "$artifact")"
 echo "pkgname=$pkgname"
 echo "artifact=$artifact"
@@ -98,7 +104,11 @@ class BuildRepoTest(unittest.TestCase):
         (self.out / fixtures.pkgfile_name("magpie-bin", version)).touch()
 
     def run_script(
-        self, build_check: Path | None = None, *, repo_name: str | None = "testrepo"
+        self,
+        build_check: Path | None = None,
+        *,
+        repo_name: str | None = "testrepo",
+        extra_env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess:
         env = dict(os.environ)
         env["BUILD_CHECK"] = str(build_check or self.stub_build)
@@ -115,6 +125,7 @@ class BuildRepoTest(unittest.TestCase):
         env.pop("REPO_NAME", None)
         if repo_name is not None:
             env["REPO_NAME"] = repo_name
+        env.update(extra_env or {})
         return subprocess.run(
             ["bash", str(SCRIPT), str(self.out), str(self.pkgdir)],
             cwd=self.root,
@@ -163,6 +174,20 @@ class BuildRepoTest(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in self.repo.iterdir()), ["x86_64"])
         # The artifact left the package directory: the source tree stays clean.
         self.assertEqual(list(self.pkgdir.glob("*.pkg.tar.*")), [])
+
+    def test_an_artifact_nothing_made_fails_at_the_read_not_at_the_move(self):
+        # The two keys are taken before the file is moved. A read that only
+        # spelled the path handed `mv` a name no build made, and the run failed
+        # in `mv`'s words -- after the build had already been paid for.
+        self.stage("0.1.10")
+        gone = self.root / "gone.pkg.tar.zst"
+
+        result = self.run_script(extra_env={"STUB_ARTIFACT": str(gone)})
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"artifact={gone} is not a file", result.stderr)
+        self.assertNotIn("mv:", result.stderr)
+        self.assertEqual(self.files_on_disk(), [])
 
     def test_a_package_that_left_the_inventory_is_retired(self):
         # The window counts the packages this run built, so a package removed

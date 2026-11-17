@@ -52,8 +52,11 @@ case "${1:-}" in
         # so the fixture answers all four: a fake that answered only `depends`
         # would leave the two identity fields unanswered.
         . ./PKGBUILD
+        # STUB_SRCINFO_PKGNAME is the adversarial answer: makepkg's srcinfo is
+        # the only source this script has for the name, so a name it cannot
+        # justify is an input, not a corrupt local variable.
         printf 'pkgbase = %s\n\tpkgver = %s\n\tpkgrel = %s\n\tdepends = glibc\n\tpkgname = %s\n' \
-            "$pkgname" "$pkgver" "$pkgrel" "$pkgname"
+            "$pkgname" "$pkgver" "$pkgrel" "${STUB_SRCINFO_PKGNAME:-$pkgname}"
         exit 0
         ;;
     --packagelist)
@@ -96,7 +99,11 @@ class BuildCheckTest(unittest.TestCase):
         return match.group(1)
 
     def run_script(
-        self, *, reports: str | None = None, skip_build: bool = False
+        self,
+        *,
+        reports: str | None = None,
+        skip_build: bool = False,
+        srcinfo_pkgname: str | None = None,
     ) -> subprocess.CompletedProcess:
         env = dict(os.environ)
         env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
@@ -107,6 +114,8 @@ class BuildCheckTest(unittest.TestCase):
             env["STUB_REPORTS"] = reports
         if skip_build:
             env["STUB_SKIP_BUILD"] = "1"
+        if srcinfo_pkgname is not None:
+            env["STUB_SRCINFO_PKGNAME"] = srcinfo_pkgname
         return subprocess.run(
             ["bash", str(SCRIPT), str(self.pkgdir)],
             cwd=self.root,
@@ -120,6 +129,16 @@ class BuildCheckTest(unittest.TestCase):
         self.assertTrue(lines, result.stderr)
         self.assertRegex(lines[-1], r"^artifact=/")
         return Path(lines[-1].removeprefix("artifact="))
+
+    def test_a_package_name_outside_its_domain_is_not_handed_on(self):
+        # A `pkgname` with a path separator would become a 包文件 name nothing
+        # can file; the handover refuses it by name, and the run fails instead
+        # of publishing a package nobody can install.
+        result = self.run_script(srcinfo_pkgname="magpie/bin")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("pkgname=magpie/bin is not a 包名", result.stderr)
+        self.assertNotIn("pkgname=magpie/bin\n", result.stdout)
 
     def test_the_artifact_line_names_the_file_and_nothing_else_survives(self):
         result = self.run_script()

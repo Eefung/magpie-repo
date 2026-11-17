@@ -54,9 +54,12 @@ build_one() {
     fi
     cat "$log"
     # Not `local`: the caller moves the file this names, and files the package
-    # under the name this names.
-    if ! built="$(line_field artifact "$log")" \
-        || ! built_name="$(line_field pkgname "$log")"; then
+    # under the name this names -- so both are declared above and the gate's
+    # answer goes into them by name rather than through stdout. What keeps `mv`
+    # from reporting a missing file is the key's shape: `artifact=` is a path,
+    # and a path naming no file is refused here, before the move.
+    if ! frozen_var artifact "$log" built \
+        || ! frozen_var pkgname "$log" built_name; then
         rm -f "$log"
         echo "building $dir failed" >&2
         return 1
