@@ -808,7 +808,8 @@ class FrozenKindTest(unittest.TestCase):
                     self.assertEqual(result.stdout, f"{key}={value}\n")
                 else:
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn(f"{key}={value}", result.stderr)
+                    # The key, the value, and the shape it failed to be.
+                    self.assertIn(f"{key}={value} is not ", result.stderr)
 
     def test_the_table_domain_vocabulary_is_the_one_the_gate_interprets(self):
         tokens = {row[1] for row in self.table()}

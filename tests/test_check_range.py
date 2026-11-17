@@ -93,6 +93,14 @@ class RangeTest(unittest.TestCase):
     COUNTED = '#!/usr/bin/env bash\necho "== offline tests"\necho "tests=7"\necho "gates=1/1"\nexit 0\n'
     COUNT_MISSING = '#!/usr/bin/env bash\necho "== offline tests"\necho "gates=1/1"\nexit 0\n'
     NO_CONTRACT = '#!/usr/bin/env bash\necho "== offline tests"\necho "all gates passed"\nexit 0\n'
+    # A gate that counts in words, and one whose contract line is the wrong
+    # shape. Both used to be reported as green: `tests=` was read as a string
+    # and `gates=bogus` was simply "not pre-contract".
+    COUNT_NOT_A_NUMBER = '#!/usr/bin/env bash\necho "tests=seven"\necho "gates=1/1"\nexit 0\n'
+    # No contract line at all, and a count in words: the absence is the table's
+    # answer and comes first, so the count is never read.
+    NO_CONTRACT_BAD_COUNT = '#!/usr/bin/env bash\necho "tests=seven"\nexit 0\n'
+    GATES_NOT_A_COUNT = '#!/usr/bin/env bash\necho "tests=7"\necho "gates=bogus"\nexit 0\n'
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -143,12 +151,46 @@ class RangeTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         counted, missing, old = self.git("log", "--reverse", "--format=%h", "main~3..main").stdout.split()
         self.assertIn(f"{counted} ok   tests=7 gates=1/1", result.stdout)
-        self.assertIn(f"{missing} FAIL no tests= line", result.stderr)
+        # No line at all and a line that is not a count are one answer: the
+        # gate printed a contract and no number to report.
+        self.assertIn(f"{missing} FAIL a broken tests= line", result.stderr)
         # The old tree is not a failure: its exit code decides, and it has no
         # contract to break. It says so, and still gets a verdict line.
         self.assertIn(f"{old}: its gate prints no gates= line", result.stderr)
         self.assertIn(f"{old} ok   tests=none gates=none", result.stdout)
         self.assertIn("1 of 3 commit(s) failed their own tree", result.stderr)
+
+    def test_a_count_that_is_not_a_number_is_a_broken_gate(self):
+        # The table says `tests=` is an integer. A gate that prints a word is
+        # one this loop cannot report a number for, and reporting the word as
+        # the count is how a broken gate reads as a green commit.
+        self.commit("a gate that counts in words", self.COUNT_NOT_A_NUMBER)
+
+        result = self.run_range("main~1..main")
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("FAIL a broken tests= line", result.stderr)
+
+    def test_a_gates_line_that_is_not_a_count_is_a_broken_gate(self):
+        self.commit("a gate with a malformed contract", self.GATES_NOT_A_COUNT)
+
+        result = self.run_range("main~1..main")
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("FAIL a broken gates= line", result.stderr)
+
+    def test_an_old_tree_is_not_read_for_a_count(self):
+        # Which of the two failures wins is the table's answer, not a choice
+        # this loop makes quietly: `gates` may be absent, and an absent one
+        # means the tree predates the contract -- so a count it printed anyway
+        # is not read at all.
+        commit = self.commit("a tree older than the contract, counting in words", self.NO_CONTRACT_BAD_COUNT)
+
+        result = self.run_range("main~1..main")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"{commit} ok   tests=none gates=none", result.stdout)
+        self.assertIn("its gate prints no gates= line", result.stderr)
 
     def test_a_green_range_says_so(self):
         self.commit("a gate that counts", self.COUNTED)

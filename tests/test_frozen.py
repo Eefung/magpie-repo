@@ -120,9 +120,44 @@ def unlisted(glossary: str, names: set[str]) -> list[str]:
     return sorted(set(names) - listed(glossary))
 
 
+def leftovers(repo: Path = REPO) -> list[str]:
+    """Files outside pkg.sh that still read a frozen line through the bare reader.
+
+    `line_field` and `line_field_or` are the gates' inner reads now: every
+    caller outside the module goes through `frozen_var` / `frozen_list`, so a
+    new direct call is a second reader with its own rules -- the shape this
+    repository has removed twice.
+    """
+    found = []
+    for path in sources(repo):
+        if path.name == "pkg.sh":
+            continue
+        code = "\n".join(line.split("#", 1)[0] for line in path.read_text().splitlines())
+        if re.search(r"\bline_field(?:_or)?\s", code):
+            found.append(path.name)
+    return found
+
+
 def unread(glossary: str, names: set[str]) -> list[str]:
     """The names the list names that nothing reads."""
     return sorted(listed(glossary) - set(names))
+
+
+class LeftoverReaderTest(unittest.TestCase):
+    """The gates are the only door: nothing outside pkg.sh reads a line bare.
+
+    The last direct reads moved with #13's keys, and a guard is what makes the
+    absence stay true -- a new `line_field` call in a step or a script would be
+    a reader with none of the table's answers, and nothing else would notice.
+    """
+
+    def test_nothing_outside_pkg_sh_calls_the_bare_reader(self):
+        self.assertEqual(leftovers(), [])
+
+    def test_a_bare_call_would_be_caught(self):
+        # The detector itself: a call spelled the way the gate's caller used to
+        # spell it, so this guard cannot pass by matching no pattern at all.
+        self.assertTrue(re.search(r"\bline_field(?:_or)?\s", 'bump="$(line_field bump "$log")"'))
 
 
 class FrozenFieldTest(unittest.TestCase):

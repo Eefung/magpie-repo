@@ -75,8 +75,11 @@ for commit in "${commits[@]}"; do
     # behaviour-identical rewrite of that call (`line_field "$COUNT_KEY"`)
     # turned it into `none` while the log carried the count. A duplicate or an
     # empty `gates=` is the reader's own complaint, which is a broken gate too.
+    # The table answers the absence: `gates` is the one optional key, and the
+    # default here is only accepted because the table says it may be absent.
     contract=0
-    gates="$(line_field_or gates "$log" pre-contract)" || contract=$?
+    gates=""
+    frozen_var gates "$log" gates pre-contract || contract=$?
     if [ "$contract" -ne 0 ]; then
         printf '%s FAIL a broken gates= line\n' "${commit:0:7}" >&2
         tail -3 "$log" >&2
@@ -87,8 +90,8 @@ for commit in "${commits[@]}"; do
         gates=none
         tests=none
         printf '%s: its gate prints no gates= line, so there is no count\n' "${commit:0:7}" >&2
-    elif ! tests="$(line_field tests "$log")"; then
-        printf '%s FAIL no tests= line\n' "${commit:0:7}" >&2
+    elif ! frozen_var tests "$log" tests; then
+        printf '%s FAIL a broken tests= line\n' "${commit:0:7}" >&2
         tail -3 "$log" >&2
         failures=$((failures + 1))
         continue

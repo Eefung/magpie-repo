@@ -144,13 +144,13 @@ PY
     # One gate, one verdict. A python that crashed prints no count, so the exit
     # code and the missing line are the same failure -- reporting both printed
     # two FAILED lines for one gate and the log twice.
-    if ! tests="$(line_field tests "$tests_log")"; then
+    if ! frozen_var tests "$tests_log" tests; then
         cat "$tests_log" >&2
         rm -f "$tests_log"
-        failing "the offline tests (no tests= line)"
+        failing "the offline tests (a broken tests= line)"
         return 1
     fi
-    printf 'tests=%s\n' "$tests"
+    frozen_write tests "$tests"
     if [ "$tests_code" -ne 0 ]; then
         cat "$tests_log" >&2
         rm -f "$tests_log"
@@ -242,10 +242,10 @@ gate_probe() {
     # the report's whole evidence: re-indenting two of them printed "ok: 3
     # assertions" and the gate stayed green. Absent, empty or duplicated is
     # now a failed gate, by line_field's rule.
-    if ! assertions="$(line_field assertions "$log")"; then
+    if ! frozen_var assertions "$log" assertions; then
         cat "$log" >&2
         rm -f "$log"
-        failing "probe-repo-build.sh (no assertions= line)"
+        failing "probe-repo-build.sh (a broken assertions= line)"
         return 1
     fi
     printf 'ok: %s assertions, real makepkg and repo-add\n' "$assertions"
@@ -273,7 +273,7 @@ for row in "${GATE_ROWS[@]}"; do
 done
 
 declared="${#GATE_ROWS[@]}"
-printf 'gates=%s/%s\n' "$ran" "$declared"
+frozen_write gates "$ran/$declared"
 
 heading "not covered here"
 cat <<'EOF'

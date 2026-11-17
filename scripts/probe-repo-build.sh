@@ -24,6 +24,11 @@
 set -euo pipefail
 
 REPO="$(cd "${1:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd)"
+
+# The handover at the end is a frozen line, so it goes through the same write
+# gate the producers use -- the probe is one more producer, not a special case.
+# shellcheck source=lib/pkg.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pkg.sh"
 PKG="magpie-bin"                 # pkgname the fixture pretends to be
 BIN="usr/bin/magpie"             # path inside the package the build check asserts on
 VER="0.1.2"                      # version the fixture builds
@@ -74,7 +79,7 @@ seed_old() {
     printf 'pkgname = %s\npkgbase = %s\npkgver = %s\npkgrel = 1\npkgdesc = d\nurl = u\nbuilddate = 1\nsize = 1\narch = x86_64\nlicense = MIT\n' \
         "$PKG" "$PKG" "$OLD" > "$d/.PKGINFO"
     touch "$d/usr"
-    ( cd "$d" && bsdtar -czf "$work/repo/x86_64/$PKG-$OLD-1-x86_64.pkg.tar.zst" .PKGINFO usr )
+    ( cd "$d" && bsdtar -czf "$work/repo/x86_64/$PKG-$OLD-1-x86_64$(pkgfile_suffix)" .PKGINFO usr )
 }
 
 run() { ./scripts/build-repo.sh repo/x86_64 packages/fixture; }
@@ -82,8 +87,8 @@ run() { ./scripts/build-repo.sh repo/x86_64 packages/fixture; }
 # What case 1 and case 4 claim, asked of the tree rather than read by eye --
 # printing the state and letting a human compare was how a broken retention
 # window passed this probe with exit 0.
-db_entries() { bsdtar -xOf "repo/x86_64/$REPO_NAME.db.tar.gz" | grep -c 'pkg.tar.zst' || true; }
-disk_files() { find repo/x86_64 -name '*.pkg.tar.zst' | wc -l; }
+db_entries() { bsdtar -xOf "repo/x86_64/$REPO_NAME.db.tar.gz" | grep -cF "$(pkgfile_suffix)" || true; }
+disk_files() { find repo/x86_64 -name "$(pkgfile_pattern)" | wc -l; }
 
 # expect <expected> <actual> <label>
 # Every assertion goes through `ok`, so the count handed over at the end is the
@@ -113,8 +118,8 @@ expect_gone() {
 }
 
 show() {
-    bsdtar -xOf "repo/x86_64/$REPO_NAME.db.tar.gz" 2>/dev/null | grep 'pkg.tar.zst' | sed 's/^/  db:   /'
-    find repo/x86_64 -name '*.pkg.tar.zst' | sort | sed 's|.*/|  disk: |'
+    bsdtar -xOf "repo/x86_64/$REPO_NAME.db.tar.gz" 2>/dev/null | grep -F "$(pkgfile_suffix)" | sed 's/^/  db:   /'
+    find repo/x86_64 -name "$(pkgfile_pattern)" | sort | sed 's|.*/|  disk: |'
 }
 
 echo "########## 1. payload reports $VER (expect: pass, db=1, disk=2) ##########"
@@ -150,7 +155,7 @@ if grep -q -- "$PKG-$OLD" rel/assets.txt; then
     exit 1
 fi
 ok "the older build is not in the release"
-expect "$(sha256sum "repo/x86_64/$PKG-$VER-1-x86_64.pkg.tar.zst" | cut -d' ' -f1)" \
+expect "$(sha256sum "repo/x86_64/$PKG-$VER-1-x86_64$(pkgfile_suffix)" | cut -d' ' -f1)" \
     "$(cut -d' ' -f1 < rel/SHA256SUMS)" "the checksum of the served bytes"
 if grep -q "pacman -S $PKG" rel/notes.md; then
     ok "the notes carry the install line from the 包清单"
@@ -177,7 +182,7 @@ make_pkgbuild "$VER" "$VER"
 KEEP=1 run
 expect 1 "$(db_entries)" "database entries"
 expect 1 "$(disk_files)" "files on disk"
-expect_gone "repo/x86_64/$PKG-$OLD-1-x86_64.pkg.tar.zst"
+expect_gone "repo/x86_64/$PKG-$OLD-1-x86_64$(pkgfile_suffix)"
 show
 
 echo
@@ -213,4 +218,4 @@ done
 
 # The handover, last: how many assertions ran. A reader that finds no such line
 # is reading a probe that never finished its cases.
-echo "assertions=$assertions"
+frozen_write assertions "$assertions"

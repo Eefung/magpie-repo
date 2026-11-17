@@ -159,8 +159,10 @@ jobs:
           # Checking it here rather than letting an empty value flow on: the
           # failure would otherwise land after the gh-pages push, leaving a
           # half-published run the "publish first, commit last" order exists
-          # to prevent. line_field fails the step if the line is absent.
-          ver="$(line_field ver /tmp/render.txt)"
+          # to prevent. The gate refuses an absent line and a value that is not
+          # a 版本 -- the same two answers, in one place.
+          ver=""
+          frozen_var ver /tmp/render.txt ver || exit 1
           # Out through the same carrier as the check's three facts, so the
           # suite's "every output has a reader" rule covers it too. This key
           # used to go to `$GITHUB_ENV`, a second carrier with none of those
@@ -246,11 +248,16 @@ jobs:
           # the one reader like every other handover.
           ./scripts/release-state.sh "$VER" "$GITHUB_REPOSITORY" > /tmp/release-state.txt
           cat /tmp/release-state.txt
-          release="$(line_field release /tmp/release-state.txt)"
+          # Read through the gates: `release=` is one of two words and `tag=` is
+          # a 版本 with a `v` in front, so the step that acts on them needs no
+          # `case` of its own -- the domain is checked once, here.
+          release=""
+          tag=""
+          frozen_var release /tmp/release-state.txt release || exit 1
           # The tag the lookup asked about, handed on rather than spelled
           # again: `v$VER` used to appear in five gh calls below, a second
           # place for a name this step already holds.
-          tag="$(line_field tag /tmp/release-state.txt)"
+          frozen_var tag /tmp/release-state.txt tag || exit 1
           printf 'release=%s\ntag=%s\n' \
             "$release" "$tag" >> "$GITHUB_OUTPUT"
 
@@ -268,10 +275,9 @@ jobs:
           # SHA256SUMS built from exactly those, the notes whose install lines
           # come from the 包清单 -- is scripts/release.sh's answer. gh is what is
           # left here, and it is the only part a publish run can prove.
-          case "$STATE" in
-            present | absent) ;;
-            *) echo "the Release lookup answered '$STATE', not present or absent" >&2; exit 1 ;;
-          esac
+          # `$STATE` is one of the table's two words: the step that read it
+          # refuses anything else, so this step acts on it instead of
+          # re-deciding what it may be.
           ./scripts/release.sh "$TREE/$ARCH" "$VER" "$PKGS" /tmp/rel \
             > /tmp/release.txt
           cat /tmp/release.txt

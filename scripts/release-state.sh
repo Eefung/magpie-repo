@@ -28,6 +28,9 @@
 # told to.
 set -euo pipefail
 
+# shellcheck source=lib/pkg.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pkg.sh"
+
 version="${1:?usage: release-state.sh <版本> <owner/repo>}"
 repo="${2:?usage: release-state.sh <版本> <owner/repo>}"
 GH="${GH:-gh}"
@@ -40,9 +43,12 @@ response="$("$GH" api -i "repos/$repo/releases/tags/v$version" 2>/dev/null || tr
 # would then report as a failed lookup.
 code="$(printf '%s\n' "$response" | sed -n '1s|^HTTP/[0-9.]* \([0-9]\{3\}\).*|\1|p')"
 
+# Through the table's write gate: `release` is one of two words and `tag` is a
+# 版本 with a `v` in front, so a reader downstream can act on them without a
+# second check of its own.
 case "$code" in
-    200) printf 'release=present\ntag=v%s\n' "$version" ;;
-    404) printf 'release=absent\ntag=v%s\n' "$version" ;;
+    200) frozen_write release present ;;
+    404) frozen_write release absent ;;
     "")
         echo "the release lookup for v$version answered nothing; is gh authenticated?" >&2
         exit 1
@@ -52,3 +58,6 @@ case "$code" in
         exit 1
         ;;
 esac
+# The tag the lookup asked about, written once: the state is what the case
+# decides, and both answers carry the same version back.
+frozen_write tag "v$version"

@@ -16,12 +16,11 @@
 # PKGBUILD field belongs there, not here.
 #
 # The same goes for the frozen `name=value` lines: bump.py and build-check.sh
-# write them, and the gates below -- frozen_var / frozen_list / frozen_write --
-# consult the kinds table, so a key's 域, shape and "may it be absent" are
-# stated once. `line_field` is their inner read. Not every call site is a gate
-# yet: the steps and scripts still holding a direct `line_field` move over one
-# producer at a time, and the guard that names the leftovers lands with the
-# last of them.
+# write them, and every read and write goes through the gates below --
+# frozen_var / frozen_list / frozen_write -- which consult the kinds table, so a
+# key's 域, shape and "may it be absent" are stated once. `line_field` and
+# `line_field_or` are their inner reads: no step, script or test outside this
+# module calls them, and tests/test_frozen.py holds that.
 #
 # bump.py also writes the 包清单 as one `package <dir> <pkgname>` line per
 # package. That shape has one reader here (pkglist_field) for the same reason:
@@ -65,7 +64,11 @@ line_field() {
 #
 # "Absent" and "broken" are different failures, and only the caller knows the
 # first one's meaning: an absent `bump=` is a check with nothing to say, while
-# two `bump=` lines is a producer that wrote twice. `line_field ... || true`
+# two `bump=` lines is a producer that wrote twice. No production caller is left
+# -- `frozen_var` answers "may this key be absent" from the table -- and the one
+# that remains is tests/frozen.py, which asks about a key it cannot name in
+# advance and wants `None` for an absence the gates deliberately refuse to
+# answer. That is why this stays rather than moving with the rest. `line_field ... || true`
 # collapses the two into the default, so a duplicated line read as "nothing to
 # do" -- a check that broke now looks like a quiet day.
 line_field_or() {

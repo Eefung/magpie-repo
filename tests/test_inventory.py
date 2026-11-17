@@ -151,6 +151,33 @@ class UpstreamHandoverTest(unittest.TestCase):
         self.assertNotIn("case ", self.code())
 
 
+def step_source(name: str) -> str:
+    """A step's shell, ready to run: the workflow's own text for it."""
+    for step in workflow.steps():
+        if step.name == name:
+            return "set -euo pipefail\n" + step.run
+    raise AssertionError(f"the step moved; reword this test: {name}")
+
+
+def run_step(name: str, root: Path, **env: str) -> subprocess.CompletedProcess:
+    """Run one step the way the runner does: its shell, its env, a scratch root.
+
+    `WANTED` is dropped from the inherited environment unless the caller names
+    it: a developer's shell must not stand in for a workflow input.
+    """
+    full = dict(os.environ)
+    if "WANTED" not in env:
+        full.pop("WANTED", None)
+    full.update(env)
+    return subprocess.run(
+        ["bash", "-c", step_source(name)],
+        cwd=str(root),
+        env=full,
+        text=True,
+        capture_output=True,
+    )
+
+
 class EntryStepTest(unittest.TestCase):
     """The entry step, run for real against a stub check.
 
@@ -187,23 +214,15 @@ class EntryStepTest(unittest.TestCase):
             "sys.exit('stub: unknown mode ' + sys.argv[1])\n"
         )
 
-    def step(self) -> str:
-        for step in workflow.steps():
-            if step.name == self.STEP:
-                return "set -euo pipefail\n" + step.run
-        raise AssertionError("the entry step moved; reword this test")
 
     def run_step(self) -> subprocess.CompletedProcess:
-        env = dict(
-            os.environ,
+        return run_step(
+            self.STEP,
+            self.root,
             UP=str(self.root / "up"),
             PKGS=str(self.root / "packages.txt"),
             GITHUB_OUTPUT=str(self.root / "outputs.txt"),
             RELEASE_REPO="owner/repo",
-        )
-        env.pop("WANTED", None)
-        return subprocess.run(
-            ["bash", "-c", self.step()], cwd=str(self.root), env=env, text=True, capture_output=True
         )
 
     def test_the_check_log_reaches_the_run_when_it_fails(self):
@@ -262,6 +281,75 @@ class EntryStepTest(unittest.TestCase):
             (self.root / "packages.txt").read_text().splitlines(),
             ["package packages/magpie-bin magpie-bin"],
         )
+
+
+class ReleaseStateStepTest(unittest.TestCase):
+    """发布状态那一步：读的是表里的域，不是猜字符串。
+
+    The step hands `release=` and `tag=` to the publish step as outputs, and
+    the publish step used to re-check the state with its own `case` -- a domain
+    written twice, and the second copy's only job was to catch the first one's
+    mistake. The gate reads it once; this drives the step that reads it.
+    """
+
+    STEP = "Does this version already have a Release?"
+
+    SETUP = (
+        'mkdir -p scripts/lib && cp {repo}/scripts/lib/pkg.sh scripts/lib/ && '
+        "cp {repo}/scripts/release-state.sh scripts/"
+    )
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        subprocess.run(
+            ["bash", "-c", self.SETUP.format(repo=REPO)], cwd=str(self.root), check=True
+        )
+
+    def corrupt(self, body: str) -> None:
+        """A release-state that answers the wrong thing, without gh at all."""
+        path = self.root / "scripts" / "release-state.sh"
+        path.write_text("#!/usr/bin/env bash\n" + body)
+        path.chmod(0o755)
+
+    def run_it(self) -> subprocess.CompletedProcess:
+        return run_step(
+            self.STEP,
+            self.root,
+            VER="0.1.10",
+            GITHUB_REPOSITORY="owner/repo",
+            GITHUB_OUTPUT=str(self.root / "outputs.txt"),
+        )
+
+    def test_the_two_lines_are_what_it_hands_on(self):
+        self.corrupt('printf \'release=present\\ntag=v0.1.10\\n\'\n')
+
+        result = self.run_it()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (self.root / "outputs.txt").read_text().splitlines(),
+            ["release=present", "tag=v0.1.10"],
+        )
+
+    def test_a_state_outside_its_domain_fails_the_step(self):
+        self.corrupt('printf \'release=maybe\\ntag=v0.1.10\\n\'\n')
+
+        result = self.run_it()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("release=maybe is not present or absent", result.stderr)
+        self.assertFalse((self.root / "outputs.txt").exists())
+
+    def test_a_tag_that_is_not_a_version_fails_the_step(self):
+        self.corrupt('printf \'release=present\\ntag=0.1.10\\n\'\n')
+
+        result = self.run_it()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("tag=0.1.10 is not v<版本>", result.stderr)
+        self.assertFalse((self.root / "outputs.txt").exists())
 
 
 class PublishTransactionTest(unittest.TestCase):
@@ -770,13 +858,16 @@ class PackageFilePatternTest(unittest.TestCase):
     def test_no_script_that_sources_pkg_sh_spells_the_extension(self):
         # The guard used to stop at the workflow, so build-check's own globs
         # (their own width, `*.pkg.tar.*`) and the probe's sat outside it. A
-        # script that already sources the rule has no excuse for spelling it.
-        # scripts/probe-repo-build.sh is deliberately not on this list: it
-        # counts files with a glob of its own, which is what makes it a
-        # measurement of the build rather than a second copy of the rule.
+        # script that already sources the rule has no excuse for spelling it --
+        # the probe included: it sources pkg.sh for its own `assertions=`
+        # handover, which costs it the independent glob it used to count with.
+        # What it still measures is repo-add's answer against the window's, and
+        # both are compared to the numbers each case expects, not to each other,
+        # so a rule that stopped matching the files would show as 0 ≠ 1.
         sources = self.sourcing()
         self.assertIn("build-check.sh", [path.name for path in sources])
         self.assertIn("build-repo.sh", [path.name for path in sources])
+        self.assertIn("probe-repo-build.sh", [path.name for path in sources])
         self.assertEqual(
             [path.name for path in sources if self.spelling(path.read_text())], []
         )
