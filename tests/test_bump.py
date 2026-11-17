@@ -1260,6 +1260,27 @@ class MainTest(unittest.TestCase):
         self.assertIn(f"ver={self.VERSION}", out.splitlines())
         self.assertEqual(fetch.urls.count(sums_url(self.VERSION)), 1)
 
+    def test_no_run_reads_the_same_url_twice(self):
+        # One run, one reading per URL. The 版本 decision, the checksum
+        # comparison and the render all ask the same producer, and a second
+        # fetch of one URL is how a run decides on one answer and compares
+        # against another -- the exact defect this pair of modes had, in `check`
+        # first and then again in `render`. The spy records every read, so the
+        # rule is one assertion per mode instead of a review.
+        for label, argv in (
+            ("check", ("--check",)),
+            ("render-a-pinned-version", ("--render", "--version", self.VERSION)),
+            ("render-the-walk", ("--render",)),
+        ):
+            with self.subTest(mode=label):
+                fetch = FetchSpy(
+                    {**version_sources(github=self.VERSION, site=self.VERSION), **self.table()}
+                )
+                code, _ = self.cli(*argv, fetch=fetch)
+                self.assertEqual(code, 0)
+                twice = sorted({url for url in fetch.urls if fetch.urls.count(url) > 1})
+                self.assertEqual(twice, [])
+
     def test_a_bump_error_is_one_line_and_not_a_zero_exit(self):
         # The exit code is what makes the workflow step fail; a zero here turns
         # a broken render into "nothing to publish".
