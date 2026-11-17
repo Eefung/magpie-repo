@@ -1543,7 +1543,14 @@ def main(
                 maintainer=os.environ.get("MAINTAINER", DEFAULT_MAINTAINER),
             )
         if args.packages:
-            for directory, pkg in package_entries(layout):
+            # An empty 包清单 is refused here rather than by the caller: it is
+            # this exit's own invariant -- a file nobody can build from is not
+            # a 包清单 -- and the step that runs it keeps no decision of its
+            # own.
+            entries = package_entries(layout)
+            if not entries:
+                raise BumpError("the 包清单 names no packages")
+            for directory, pkg in entries:
                 log(f"package {directory} {pkg}")
             return 0
         if args.check:

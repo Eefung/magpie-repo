@@ -189,7 +189,7 @@ class BuildRepoTest(unittest.TestCase):
         )
 
     def test_a_pinned_older_version_is_the_one_that_ships(self):
-        # `WANTED` pins a 版本 and upstream.sh publishes it without a
+        # `WANTED` pins a 版本 and the entry check publishes it without a
         # comparison, so this is the rollback path. The window used to count
         # back from the directory's maximum and deleted the build the run had
         # just made: the database named 0.1.10 and release.sh -- which asks for

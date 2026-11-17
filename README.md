@@ -10,7 +10,7 @@ Actions 每天 04:17 UTC 跑一次，有新版本才发布：
 scripts/bump.py --check   入口检查：问上游最新、核对这棵树，回答这次要不要发布、发哪个版本
                           上游 = GitHub releases 与 usemagpie.ai/api/latest 里最高的、
                           SHA256SUMS 已经传齐（本仓库要打的资产一个不缺）的那个版本
-scripts/upstream.sh       中继：跑 --check，交出 upstream= / target= / bump= / pin= / packages=（清单在 GLOSSARY）
+                          交出 upstream= / target= / bump= / pin=（冻结行的清单在 GLOSSARY）
   └ bump=1 时 → scripts/bump.py --render --version <target>
       target 就是 --check 比对过的上游版本（或人手动指定并 pin 住的那个），渲染不再问上游第二遍
       checksum 取 release 的 SHA256SUMS，LICENSE 与图标下载后现算 → 生成 PKGBUILD
@@ -47,7 +47,6 @@ sudo pacman -S magpie-cli-bin    # 终端版（静态，无 GUI 依赖），可�
 ## 用法
 
 ```bash
-./scripts/upstream.sh /tmp/up                          # 中继入口检查：打印 upstream= / target= / bump= / pin= / packages=
 export GITHUB_TOKEN="$(gh auth token)"               # 手跑前设上：没 token 时 GitHub API 只给 60 次/小时，检查会退回站点 API
 python3 scripts/bump.py --check                     # upstream=… / packaged … / bump=0|1
 python3 scripts/bump.py --render --version <版本>    # 生成 PKGBUILD 并打印 ver=<版本>；不给 --version 时取最新的已上传版本

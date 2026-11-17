@@ -7,7 +7,7 @@ duplicated `bump=` (taking the last one) where `line_field` fails the step, so
 the test job stayed green on a log the workflow would have died on.
 
 This runs the production reader, with the caller's default for a line the
-producer never wrote, which is what `upstream.sh` does with an absent `bump=`.
+producer may leave out -- `line_field_or` is for the keys that can be absent.
 
     python3 -m unittest discover -s tests
 """
@@ -60,9 +60,9 @@ def fields(log: str) -> dict[str, str]:
 
     The handover a step prints, as a mapping: the callers ask for a key, so a
     line in another order is not a break, and a line written twice is. A test
-    that splits the lines itself answers neither -- `test_upstream`'s own
-    helper took the last of two `bump=` lines, which is the one thing the
-    workflow's reader refuses to do.
+    that splits the lines itself answers neither -- a helper that took the last
+    of two `bump=` lines was exactly that, while the workflow's reader refuses
+    to choose.
     """
     found: dict[str, str] = {}
     for name in dict.fromkeys(LINE_NAME_RE.findall(log)):

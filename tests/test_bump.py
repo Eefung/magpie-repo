@@ -2019,6 +2019,24 @@ class FifthDirectionTest(unittest.TestCase):
         )
 
 
+class PackageListExitTest(unittest.TestCase):
+    """The 包清单 exit keeps its own invariant: a file nobody can build from.
+
+    The refusal used to live in the step that ran this exit, which made it the
+    one decision the workflow still held. It is the exit's own: what it writes
+    is a list of packages, and an empty one is not a list.
+    """
+
+    def test_an_empty_inventory_is_refused(self):
+        code, out = run_main(
+            "--packages", fetch=FetchSpy({}), layout=bump.layout_for(REPO, inventory={})
+        )
+
+        self.assertIsInstance(code, str)
+        self.assertIn("names no packages", str(code))
+        self.assertEqual(out.splitlines(), [])
+
+
 class TemplatePkgnameTest(unittest.TestCase):
     """A template's literal pkgname= is the inventory key it is filed under."""
 

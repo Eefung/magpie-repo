@@ -62,20 +62,32 @@ class UpstreamHandoverTest(unittest.TestCase):
 
     The decision -- whether this run publishes, and which 版本 it renders --
     used to be bash in the step's own `run:` block, held only by greps over
-    this file. tests/test_upstream.py drives the module against a stub 上游;
-    this holds the step to calling it and reading its lines, and holds the
-    decision words out of the YAML.
+    this file. It moved into a script, and then into the check itself, which is
+    where the comparison already lived: the step calls it and reads its lines.
     """
+
+    STEP = "What is upstream at, and what gets packaged"
 
     def workflow(self) -> str:
         return workflow.text()
 
-    def test_the_step_calls_the_entry_check_once(self):
-        self.assertEqual(self.workflow().count("./scripts/upstream.sh"), 1)
+    def code(self, source: str | None = None) -> str:
+        """The entry step's code, comments dropped: a note about it is not it."""
+        for step in workflow.steps(source=source):
+            if step.name == self.STEP:
+                return "\n".join(line.split("#", 1)[0] for line in step.run.splitlines())
+        raise AssertionError("the entry step moved; reword this test")
 
-    def test_the_step_reads_the_lines_it_was_handed(self):
-        for key in ("upstream", "target", "bump", "packages"):
-            self.assertIn(f'line_field {key} "$UP.txt"', self.workflow())
+    def test_the_step_calls_the_check_itself(self):
+        # No script between them any more: a relay with one caller and no
+        # decision is the module ADR-0004 would send back to the YAML, and this
+        # one was deleted (ADR-0005).
+        self.assertEqual(self.code().count("scripts/bump.py --check"), 1)
+        self.assertFalse((REPO / "scripts" / "upstream.sh").exists())
+
+    def test_the_step_reads_the_four_lines_it_was_handed(self):
+        for key in ("upstream", "target", "bump", "pin"):
+            self.assertIn(f'line_field {key} "$UP.txt"', self.code())
 
     def test_the_handover_path_is_declared_once(self):
         # Declared in the job's env, where every step sees it -- a step-level
@@ -84,6 +96,20 @@ class UpstreamHandoverTest(unittest.TestCase):
         # spelled nowhere else.
         self.assertEqual(workflow.env().get("UP"), "/tmp/up")
         self.assertEqual(self.workflow().count("/tmp/up"), 1)
+
+    def test_the_package_list_path_is_declared_once(self):
+        # It used to ride a frozen line -- `packages=` existed so that a path
+        # would not be spelled twice -- whose only job was to name a file. With
+        # no script in between, the job env is that one place.
+        self.assertEqual(workflow.env().get("PKGS"), "/tmp/packages.txt")
+        self.assertEqual(self.workflow().count("/tmp/packages.txt"), 1)
+        self.assertIn('--packages > "$PKGS"', self.code())
+
+    def test_the_repository_the_fifth_direction_asks_about_is_declared(self):
+        # The check asks GitHub whether this run's build has a Release; without
+        # this line it would only ever say it could not ask.
+        self.assertEqual(workflow.env().get("RELEASE_REPO"), "${{ github.repository }}")
+        self.assertEqual(self.workflow().count("github.repository"), 1)
 
     def test_the_render_step_takes_the_version_the_check_decided(self):
         workflow = self.workflow()
@@ -97,11 +123,91 @@ class UpstreamHandoverTest(unittest.TestCase):
         # These two are what the step used to decide: `bump` from a default,
         # and `target` from WANTED-or-UPSTREAM. A reformat broke the test job
         # while flipping the default -- a broken check now meaning "publish"
-        # -- did not. Both are upstream.sh's now, so neither spelling returns.
+        # -- did not. Both are the check's now, so neither spelling returns,
+        # and the step has no branch of its own either.
         workflow = self.workflow()
         self.assertNotIn("bump:-", workflow)
         self.assertNotIn("WANTED:-", workflow)
-        self.assertNotIn("bump.py --check", workflow)
+        self.assertNotIn("case ", self.code())
+
+
+class EntryStepTest(unittest.TestCase):
+    """The entry step, run for real against a stub check.
+
+    The step is shell in YAML, and what it does with a broken check is the
+    behaviour no text guard can hold: the check's log is written to a file by
+    redirection, so under `set -e` the reason a run stopped is exactly what
+    would be swallowed. The relay used to `cat` it before exiting; the step
+    says both itself now, and this drives it.
+    """
+
+    STEP = "What is upstream at, and what gets packaged"
+    LOG = ["upstream=0.1.10", "packaged magpie-bin=0.1.10-1", "carried=0.1.10",
+           "target=0.1.10", "pin=0", "bump=0"]
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        (self.root / "scripts" / "lib").mkdir(parents=True)
+        (self.root / "scripts" / "lib" / "pkg.sh").write_text(LIB.read_text())
+
+    def check(self, *, code: int = 0, lines: list[str] | None = None) -> None:
+        """A stub entry check: the lines it prints, and its exit code."""
+        body = self.LOG if lines is None else lines
+        (self.root / "scripts" / "bump.py").write_text(
+            "import sys\n"
+            f"lines = {body!r}\n"
+            "if sys.argv[1] == '--check':\n"
+            "    print('\\n'.join(lines))\n"
+            f"    sys.exit({code})\n"
+            "if sys.argv[1] == '--packages':\n"
+            "    print('package packages/magpie-bin magpie-bin')\n"
+            "    sys.exit(0)\n"
+            "sys.exit('stub: unknown mode ' + sys.argv[1])\n"
+        )
+
+    def step(self) -> str:
+        for step in workflow.steps():
+            if step.name == self.STEP:
+                return "set -euo pipefail\n" + step.run
+        raise AssertionError("the entry step moved; reword this test")
+
+    def run_step(self) -> subprocess.CompletedProcess:
+        env = dict(
+            os.environ,
+            UP=str(self.root / "up"),
+            PKGS=str(self.root / "packages.txt"),
+            GITHUB_OUTPUT=str(self.root / "outputs.txt"),
+            RELEASE_REPO="owner/repo",
+        )
+        env.pop("WANTED", None)
+        return subprocess.run(
+            ["bash", "-c", self.step()], cwd=str(self.root), env=env, text=True, capture_output=True
+        )
+
+    def test_the_check_log_reaches_the_run_when_it_fails(self):
+        self.check(code=1, lines=["upstream=0.1.10", "behind magpie-bin=upstream"])
+        result = self.run_step()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("behind magpie-bin=upstream", result.stderr)
+        self.assertIn("the entry check failed", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_the_four_lines_and_the_package_list_are_what_it_hands_on(self):
+        self.check()
+        result = self.run_step()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (self.root / "outputs.txt").read_text().splitlines(),
+            ["upstream=0.1.10", "target=0.1.10", "bump=0", "pin=0"],
+        )
+        self.assertEqual(
+            (self.root / "packages.txt").read_text().splitlines(),
+            ["package packages/magpie-bin magpie-bin"],
+        )
 
 
 class PublishTransactionTest(unittest.TestCase):
@@ -287,8 +393,8 @@ class PublishTransactionTest(unittest.TestCase):
     def test_an_output_nobody_reads_is_caught(self):
         text = workflow.text()
         moved = text.replace(
-            "printf 'upstream=%s\\ntarget=%s\\nbump=%s\\n' \\",
-            "printf 'upstream=%s\\ntarget=%s\\nbump=%s\\nunused=%s\\n' \\",
+            "printf 'upstream=%s\\ntarget=%s\\nbump=%s\\npin=%s\\n' \\",
+            "printf 'upstream=%s\\ntarget=%s\\nbump=%s\\npin=%s\\nunused=%s\\n' \\",
         )
         self.assertNotEqual(moved, text)
         self.assertEqual(self.dead_outputs(moved), ["unused"])
@@ -954,9 +1060,10 @@ class PinnedRollbackTest(unittest.TestCase):
         # `pin=` comes from the module that compares target with 上游. Reading
         # it off "the dispatch input was non-empty" made a retry of the current
         # 版本 a pin nobody asked for, and a pin suppresses the upstream
-        # direction on every later run.
-        self.assertIn('line_field pin "$UP.txt"', self.run_of())
-        self.assertIn('[ "$pin" = 1 ]', self.run_of())
+        # direction on every later run. It rides the step output now that the
+        # relay is gone -- one carrier, one reader.
+        self.assertIn("PIN: ${{ steps.upstream.outputs.pin }}", workflow.text())
+        self.assertIn('[ "$PIN" = 1 ]', self.run_of())
         self.assertNotIn("inputs.version", self.run_of())
 
     def test_a_renamed_file_is_caught(self):

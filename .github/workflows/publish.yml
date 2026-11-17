@@ -71,13 +71,18 @@ jobs:
       # default for a hand run; that is why the flag's presence is asserted as
       # text in tests/test_inventory.py rather than proved by the run.
       KEEP: 2
-      # The run's own handover: scripts/upstream.sh takes a work dir and prints
-      # its frozen lines on stdout, so the step that runs it redirects them
-      # here (and into the work dir's sibling). Declared once, because three
-      # steps read the file and its path used to be spelled seven times -- two
-      # of them `cat` -- while `packages=` existed precisely so that a path
-      # would not be spelled twice.
+      # The entry check's own output: its four frozen lines and its log, one
+      # stream in one file. Declared once, because the step that runs the check
+      # redirects it here and its path used to be spelled seven times.
       UP: /tmp/up
+      # The 包清单 this run builds and publishes from. It used to ride a frozen
+      # line (`packages=`) whose one job was to name the file; with no script
+      # between the check and the step, the job env is that one place.
+      PKGS: /tmp/packages.txt
+      # The repository whose Releases the fifth direction asks about. The
+      # workflow hands over its own; the check reads this name and nothing else,
+      # so a hand run points it wherever it means.
+      RELEASE_REPO: ${{ github.repository }}
       # The bot both commits are signed by: the gh-pages squash that
       # scripts/publish-pages.sh makes and the main-branch PKGBUILD commit the
       # last step makes. The identity used to be spelled verbatim in both --
@@ -97,14 +102,21 @@ jobs:
           set -euo pipefail
           # shellcheck source=scripts/lib/pkg.sh
           source scripts/lib/pkg.sh
-          # Whether this run publishes, and which 版本 it publishes, is decided
-          # in scripts/upstream.sh: WANTED in, frozen lines out -- the 版本
-          # --check compared, the one to render, bump=, pin=, and the 包清单 file.
-          # This step relays them and judges nothing. The judgement used to live
-          # right here, where only a grep over this file could hold it: a
-          # reformat turned the test job red, and flipping the default that
-          # decides "publish" did not.
-          ./scripts/upstream.sh "$UP" "$GITHUB_REPOSITORY" > "$UP.txt"
+          # Whether this run publishes, and which 版本 it publishes, is the
+          # entry check's answer: WANTED in, frozen lines out. This step relays
+          # them and judges nothing. The judgement used to live right here,
+          # where only a grep over this file could hold it: a reformat turned
+          # the test job red, and flipping the default that decides "publish"
+          # did not. It moved into a script, and then into the check itself,
+          # which is where the comparison already lived.
+          # The log goes into the file with the lines, so a failed check must
+          # say both before it exits: the redirection is why `set -e` would
+          # otherwise swallow the reason.
+          if ! python3 scripts/bump.py --check > "$UP.txt"; then
+            cat "$UP.txt" >&2
+            echo "the entry check failed" >&2
+            exit 1
+          fi
           cat "$UP.txt"
           # Assigned first, then written: `echo "x=$(reader)" >> "$GITHUB_OUTPUT"`
           # writes an empty value and exits 0 when the reader fails, which would
@@ -112,8 +124,12 @@ jobs:
           upstream="$(line_field upstream "$UP.txt")"
           target="$(line_field target "$UP.txt")"
           bump="$(line_field bump "$UP.txt")"
-          printf 'upstream=%s\ntarget=%s\nbump=%s\n' \
-            "$upstream" "$target" "$bump" >> "$GITHUB_OUTPUT"
+          pin="$(line_field pin "$UP.txt")"
+          printf 'upstream=%s\ntarget=%s\nbump=%s\npin=%s\n' \
+            "$upstream" "$target" "$bump" "$pin" >> "$GITHUB_OUTPUT"
+          # The 包清单 the build and release steps read: the path is declared
+          # once in the job env, and the file is what `--packages` writes.
+          python3 scripts/bump.py --packages > "$PKGS"
 
       - name: Render the PKGBUILDs
         id: render
@@ -162,8 +178,8 @@ jobs:
           ./scripts/seed-tree.sh "$TREE" "$ARCH" "$PAGES_BRANCH"
           # The dirs come from the 包清单 the check step wrote, not from this
           # file: a package added to the inventory is built without an edit
-          # here. Its path is a frozen line too, so the two steps that read it
-          # ask the producer instead of spelling a filename twice.
+          # here. The file's path is declared once in the job env, so the two
+          # steps that read it spell it nowhere.
           # They are named relative to the repository root, which is why this
           # container mounts $PWD and works from /src. Those two facts are one
           # assumption -- move the mount, keep the paths, and every build step
@@ -173,8 +189,7 @@ jobs:
           # malformed 包清单 would reach build-repo.sh as "name at least one
           # package directory" -- the wrong module, inside the container, with
           # the reader's own message already printed and ignored.
-          packages="$(line_field packages "$UP.txt")"
-          dirs="$(pkglist_dirs "$packages")" || exit 1
+          dirs="$(pkglist_dirs "$PKGS")" || exit 1
           [ -n "$dirs" ] || { echo "the 包清单 names no package directories" >&2; exit 1; }
           mapfile -t pkgdirs <<<"$dirs"
           # REPO_NAME crosses into the container so the database is named after
@@ -250,8 +265,7 @@ jobs:
             present | absent) ;;
             *) echo "the Release lookup answered '$STATE', not present or absent" >&2; exit 1 ;;
           esac
-          packages="$(line_field packages "$UP.txt")"
-          ./scripts/release.sh "$TREE/$ARCH" "$VER" "$packages" /tmp/rel \
+          ./scripts/release.sh "$TREE/$ARCH" "$VER" "$PKGS" /tmp/rel \
             > /tmp/release.txt
           cat /tmp/release.txt
           mapfile -t assets < "$(line_field assets /tmp/release.txt)"
@@ -280,6 +294,7 @@ jobs:
         if: steps.upstream.outputs.bump == '1'
         env:
           VER: ${{ steps.render.outputs.ver }}
+          PIN: ${{ steps.upstream.outputs.pin }}
         run: |
           set -euo pipefail
           # shellcheck source=scripts/lib/pkg.sh
@@ -302,8 +317,7 @@ jobs:
           # every re-run of the version the tree already carries -- the retry a
           # failed Release needs -- a pin nobody asked for, and a pin outlives
           # that run.
-          pin="$(line_field pin "$UP.txt")"
-          if [ "$pin" = 1 ]; then
+          if [ "$PIN" = 1 ]; then
             printf '%s\n' "$VER" > PINNED
             git add PINNED
           elif git ls-files --error-unmatch PINNED >/dev/null 2>&1; then

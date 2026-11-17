@@ -455,8 +455,8 @@ class DirectionsVocabularyTest(unittest.TestCase):
     """落后的方向词：码里印什么，GLOSSARY 与 AGENTS 就说那几个。
 
     「这趟为什么发」的答案是日志里 `behind <包>=<方向>` 的那些词。它们曾经是四个
-    常量加一个没有名字的第五向（句子写在 `upstream.sh` 的一行 echo 里，计数由一条
-    测试从那行抠出来再加一）；现在五个方向都是 `bump.py` 的常量、一个元组，计数
+    常量加一个没有名字的第五向（句子曾写在一条 relay 脚本的 echo 里，计数由一条测试
+    从那一行抠出来再加一）；现在五个方向都是 `bump.py` 的常量、一个元组，计数
     与词表都从那里出，两段文档跟着它走。
 
     `tests/test_frozen.py` 给冻结行清单做了同样的两向对账，这里用的是它的形状：

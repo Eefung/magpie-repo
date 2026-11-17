@@ -21,11 +21,11 @@ _Avoid_: 打包版本号、release number
 _Avoid_: 包列表、packages 变量
 
 **冻结行**：
-生产者打印一次、读者不再回头解析的 `name=value` 行：`--check` 的 `upstream=` / `target=` / `bump=` / `pin=`、`upstream.sh` 的 `packages=`、`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`release-state.sh` 的 `release=` / `tag=`、`build-check` 的 `pkgname=` / `artifact=`、`release.sh` 的 `assets=` / `sums=` / `notes=`、`probe-repo-build.sh` 的 `assertions=`、`check.sh` 的 `tests=` / `gates=`。一条行算不算冻结行由 grep 决定，不由它长得像不像：`build-check` 的 `pkgver=` 曾被列在这里，而它唯一的读者是一条测试；`--check` 的 `carried=` 走了同一条路——第五向搬进入口检查之后，读它的只剩日志的读者。那份 grep 现在是 `tests/test_frozen.py` 的一条断言——`line_field` 与 `line_field_or` 的每个调用点都必须在这份清单里出现——所以加一条行而不写在这里，是红测试。读它只走 `scripts/lib/pkg.sh` 的三个 reader，不由每个调用方自己 split：`line_field`（重复一行是协议断了、空值算失败、缺行也失败）、`line_field_or`（缺行给调用方指定的默认值，但绝不把「写了两行」当成缺行）与 `pkglist_field`。措辞是契约的那几条之外，其余是日志。
+生产者打印一次、读者不再回头解析的 `name=value` 行：`--check` 的 `upstream=` / `target=` / `bump=` / `pin=`、`--render` 的 `ver=`、`--packages` 的 `package <目录> <pkgname>`、`release-state.sh` 的 `release=` / `tag=`、`build-check` 的 `pkgname=` / `artifact=`、`release.sh` 的 `assets=` / `sums=` / `notes=`、`probe-repo-build.sh` 的 `assertions=`、`check.sh` 的 `tests=` / `gates=`。一条行算不算冻结行由 grep 决定，不由它长得像不像：`build-check` 的 `pkgver=` 曾被列在这里，而它唯一的读者是一条测试；`--check` 的 `carried=` 走了同一条路——第五向搬进入口检查之后，读它的只剩日志的读者。那份 grep 现在是 `tests/test_frozen.py` 的一条断言——`line_field` 与 `line_field_or` 的每个调用点都必须在这份清单里出现——所以加一条行而不写在这里，是红测试。读它只走 `scripts/lib/pkg.sh` 的三个 reader，不由每个调用方自己 split：`line_field`（重复一行是协议断了、空值算失败、缺行也失败）、`line_field_or`（缺行给调用方指定的默认值，但绝不把「写了两行」当成缺行）与 `pkglist_field`。措辞是契约的那几条之外，其余是日志。
 _Avoid_: 输出格式、stdout
 
 **入口检查**：
-每次运行的第一步：问上游最新、核对这棵树，并决定这次要不要发布、发哪个版本。核对有两个门，都在 `scripts/bump.py`：`read_template` 判模板本身合不合法（`pkgname=`、`arch=()` 对 arch 表、`source`/`sha256sums` 数组、`package()` 的 case 臂），`values_of` 判已提交的 PKGBUILD 还是不是它的渲染——两个门都在 `--check` 里，不等渲染，所以一份改坏的模板当次就红，而不是等到上游真动了版本。三件事都在 `--check` 一处回答，它交出的冻结行就是这个答案——`bump=` 是结论，`target=` 是渲染要拿的版本，`pin=` 是这一趟要不要记下**钉住**。`scripts/upstream.sh` 与 workflow 的 step 都只中继这四条行（前者再多交一个包清单的路径 `packages=`），不再自己判：判断写在 YAML 里时，唯一能守它的是对 YAML 文本的 grep。
+每次运行的第一步：问上游最新、核对这棵树，并决定这次要不要发布、发哪个版本。核对有两个门，都在 `scripts/bump.py`：`read_template` 判模板本身合不合法（`pkgname=`、`arch=()` 对 arch 表、`source`/`sha256sums` 数组、`package()` 的 case 臂），`values_of` 判已提交的 PKGBUILD 还是不是它的渲染——两个门都在 `--check` 里，不等渲染，所以一份改坏的模板当次就红，而不是等到上游真动了版本。三件事都在 `--check` 一处回答，它交出的冻结行就是这个答案——`bump=` 是结论，`target=` 是渲染要拿的版本，`pin=` 是这一趟要不要记下**钉住**。workflow 的 step 只中继这四条行，并让 `--packages` 把包清单写进 job env 声明的那个路径；判断不在 YAML 里：判断写在 YAML 里时，唯一能守它的是对 YAML 文本的 grep。
 _Avoid_: 检查步骤、pre-check
 
 **arch 表**：
