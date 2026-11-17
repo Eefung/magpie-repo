@@ -114,15 +114,18 @@ print(f"tests={result.testsRun}")
 sys.exit(0 if result.wasSuccessful() else 1)
 PY
 tests_code=$?
+# One gate, one verdict. A python that crashed prints no count, so the exit code
+# and the missing line are the same failure -- reporting both printed two FAILED
+# lines for one gate and the log twice.
 if tests="$(line_field tests "$tests_log")"; then
     printf 'tests=%s\n' "$tests"
+    if [ "$tests_code" -ne 0 ]; then
+        cat "$tests_log" >&2
+        failed "the offline tests"
+    fi
 else
     cat "$tests_log" >&2
     failed "the offline tests (no tests= line)"
-fi
-if [ "$tests_code" -ne 0 ]; then
-    cat "$tests_log" >&2
-    failed "the offline tests"
 fi
 rm -f "$tests_log"
 
