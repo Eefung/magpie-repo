@@ -248,6 +248,55 @@ class TestMapTest(unittest.TestCase):
         self.assertEqual(self.unlisted(drifted), ["test_docs.py"])
 
 
+class ScriptsMapTest(unittest.TestCase):
+    """AGENTS.md lists the scripts, and the list is held to the directory.
+
+    The test map above answers "where is this guarded"; nothing answered "which
+    script decides this", so a reader rebuilt that map by opening every script
+    in `scripts/` -- which is the walk the map exists to save. Same shape as the
+    test map, same guard: the table's own rows against `scripts/**/*.sh`, both
+    directions, so a new script costs one row and a deleted one costs none.
+    """
+
+    SECTION = "## 脚本地图"
+
+    def agents(self) -> str:
+        return (REPO / "AGENTS.md").read_text()
+
+    def listed(self, map_text: str) -> set[str]:
+        """The paths the map's own table rows list."""
+        section = map_text.split(self.SECTION, 1)[1].split("\n## ", 1)[0]
+        return {
+            line.split("|")[1].strip().strip("`")
+            for line in section.splitlines()
+            if line.startswith("| `")
+        }
+
+    def scripts(self) -> set[str]:
+        """Everything under `scripts/` a reader could open: shell and python."""
+        found = set()
+        for suffix in ("*.sh", "*.py"):
+            found |= {
+                str(path.relative_to(REPO))
+                for path in sorted((REPO / "scripts").rglob(suffix))
+            }
+        return found
+
+    def test_every_script_is_in_the_map(self):
+        listed = self.listed(self.agents())
+        self.assertEqual(sorted(self.scripts() - listed), [])
+        self.assertEqual(sorted(listed - self.scripts()), [])
+
+    def test_a_script_the_map_omits_is_caught(self):
+        dropped = "\n".join(
+            line
+            for line in self.agents().splitlines()
+            if not line.startswith("| `scripts/check-range.sh`")
+        )
+        self.assertNotIn("scripts/check-range.sh", self.listed(dropped), "the row moved; reword this test")
+        self.assertEqual(sorted(self.scripts() - self.listed(dropped)), ["scripts/check-range.sh"])
+
+
 class NamedThingsTest(unittest.TestCase):
     """The names the docs point at exist, because a reader acts on them.
 

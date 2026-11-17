@@ -24,6 +24,24 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 
 拉远端只拉 main：`git fetch --no-tags origin main`。默认 refspec 里还有 `gh-pages`，那是 150 MB 的一棵树，全量 `git fetch` 会超时。
 
+## 脚本地图
+
+`scripts/` 里每个文件回答一个问题。改一条链之前先看这里，别从头翻：
+
+| 脚本 | 它回答什么 |
+| --- | --- |
+| `scripts/upstream.sh` | 这一趟发不发、发哪个版本（`WANTED` 进，四条冻结行出；其余四向都静时问 Release） |
+| `scripts/bump.py` | 渲染 PKGBUILD；入口检查的两个门；落后（四向）；包清单 |
+| `scripts/lib/pkg.sh` | 包文件名的读者、保留窗口、db 条目、载荷核对、冻结行与包清单的 reader、版本的形状 |
+| `scripts/build-check.sh` | 一个包目录从开工到交出：makepkg、依赖、`--version` 核对、清理 |
+| `scripts/build-repo.sh` | 窗口、退役、db 重建（容器里跑） |
+| `scripts/release.sh` | Release 的资产、SHA256SUMS、说明 |
+| `scripts/release-state.sh` | `v<版本>` 有没有 Release（present/absent 是一个值） |
+| `scripts/publish-pages.sh` | 一棵树 → gh-pages 上的一个 squash 提交 |
+| `scripts/check.sh` | 全部闸门，以及它自己打印的「跑不到什么」 |
+| `scripts/check-range.sh` | range 里每个 commit 各自的树过一遍闸门 |
+| `scripts/probe-repo-build.sh` | 真 `makepkg` + `repo-add` 的离线探针 |
+
 ## 测试地图
 
 `tests/` 的每个文件都在下面这张表上——`tests/test_docs.py` 对账，所以漏一个文件是红测试，不是一个记性。文件名说的是范围，不是它守住的事实。找一条断言时先看这张表，别从头翻：
