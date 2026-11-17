@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -34,30 +35,9 @@ CHECK = REPO / "scripts" / "check.sh"
 RANGE = REPO / "scripts" / "check-range.sh"
 LIB = REPO / "scripts" / "lib" / "pkg.sh"
 
-# A gate body, the table that dispatches it, and one row of that table. Scoped
-# to the table: `PINNED_TOOLS` above it is a table of rows too, and it names
-# three of the same tools.
-FUNCTION = re.compile(r"^gate_([a-z][a-z0-9_]*)\(\)", re.M)
-TABLE = re.compile(r"^GATE_ROWS=\(\n(.*?)^\)", re.M | re.S)
-ROW = re.compile(r'^\s+"([a-z][a-z0-9_]*)\|', re.M)
+sys.path.insert(0, str(REPO / "tests"))
 
-
-def gate_table(source: str) -> str:
-    """The gate table itself, so a row cannot be found in another table."""
-    match = TABLE.search(source)
-    if match is None:
-        raise AssertionError("no GATE_ROWS table in scripts/check.sh")
-    return match.group(1)
-
-
-def gate_rows(source: str) -> list[str]:
-    """The slugs the gate's table declares, in the order it runs them."""
-    return ROW.findall(gate_table(source))
-
-
-def gate_functions(source: str) -> list[str]:
-    """The slugs that have a body."""
-    return FUNCTION.findall(source)
+import gate  # noqa: E402  (the reader of check.sh: its table, bodies and note)
 
 
 class GateTableTest(unittest.TestCase):
@@ -71,13 +51,13 @@ class GateTableTest(unittest.TestCase):
 
     def test_every_row_has_a_body(self):
         source = CHECK.read_text()
-        rows = gate_rows(source)
+        rows = gate.slugs(source)
         self.assertEqual(rows, ["tests", "shellcheck", "ruff", "actionlint", "probe"])
-        self.assertEqual([slug for slug in rows if slug not in gate_functions(source)], [])
+        self.assertEqual([slug for slug in rows if slug not in gate.functions(source)], [])
 
     def test_every_body_is_a_row(self):
         source = CHECK.read_text()
-        self.assertEqual([slug for slug in gate_functions(source) if slug not in gate_rows(source)], [])
+        self.assertEqual([slug for slug in gate.functions(source) if slug not in gate.slugs(source)], [])
 
     def test_a_deleted_gate_is_caught(self):
         # The mutation this file exists for: twenty lines gone, the run green,
@@ -86,7 +66,7 @@ class GateTableTest(unittest.TestCase):
         dropped = re.sub(r"^gate_ruff\(\) \{.*?^\}\n", "", source, flags=re.M | re.S)
         self.assertNotEqual(dropped, source, "the gate moved; reword this test")
         self.assertEqual(
-            [slug for slug in gate_rows(dropped) if slug not in gate_functions(dropped)],
+            [slug for slug in gate.slugs(dropped) if slug not in gate.functions(dropped)],
             ["ruff"],
         )
 
@@ -95,7 +75,7 @@ class GateTableTest(unittest.TestCase):
         moved = source.replace('    "ruff|ruff"\n', "")
         self.assertNotEqual(moved, source, "the row moved; reword this test")
         self.assertEqual(
-            [slug for slug in gate_functions(moved) if slug not in gate_rows(moved)],
+            [slug for slug in gate.functions(moved) if slug not in gate.slugs(moved)],
             ["ruff"],
         )
 

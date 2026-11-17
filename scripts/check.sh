@@ -3,14 +3,11 @@
 #
 #   ./scripts/check.sh
 #
-# Five gates: the offline tests, shellcheck over every shell script under
-# scripts/, ruff over the python that decides what gets published, actionlint
-# over .github/workflows, and the probe -- the real makepkg + repo-add chain,
-# run when this machine has those tools.
-#
-# The list is a table, and the loop below runs one row per gate: the summary
-# counts the rows that reported, and `all gates passed` is printed only when
-# every declared gate reported and none failed. Before this, that sentence was
+# The gates are the table below, not a list here: GATE_ROWS is what runs and in
+# what order, so a new gate is one row and nothing in this file has to be kept
+# in step with a sentence. The loop runs one row per gate and counts the rows
+# that reported: `all gates passed` is printed only when every declared gate
+# reported and none failed. Before this, that sentence was
 # a claim with nothing behind it -- `failures` counts failures, never gates --
 # so deleting a gate's twenty lines left the run green and the summary saying
 # everything had passed, with 333 offline tests green because none of them read
@@ -32,12 +29,10 @@
 # meaning "the gate did not run". Each digest is the sha256 of the release
 # asset as fetched at pin time; bump the version and the digest together.
 #
-# What this cannot reach: the tools `BUILD_AS=root` calls -- useradd, chown, su
-# and pacman themselves. The adapter and the order it runs in are driven offline
-# against stubs (tests/test_build_check.py, RootAdapterTest), so all a publish
-# run still proves is that the real tools do what their stubs pretend. The rest
-# of the package build -- the retention window and the database entry -- runs
-# offline in tests/test_build_repo.py, against the real build-repo.sh.
+# What a green run still cannot prove is printed with the summary, under
+# `not covered here`. That list has exactly one copy -- the one a run prints --
+# and this header does not restate it: the copy that used to sit here named half
+# the gaps, and the half it named was the one a stub had already replaced.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

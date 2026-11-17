@@ -64,7 +64,8 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 | `install_block.py` | 不是测试：用户要粘的安装段的唯一读者——README 的块与 Release 说明都过它 |
 | `fixtures.py` | 不是测试：包文件名的唯一拼法，`test_pkg_sh.py` 用 `pkgfile_pkgname`/`pkgfile_version` 反向钉住 |
 | `frozen.py` | 不是测试：冻结行的测试侧读者——直接跑生产的 `line_field`，其余测试都经它 |
-| `workflow.py` | 不是测试：`publish.yml` 的唯一读者（job 的 env、step 列表、cron、`$GITHUB_OUTPUT` 的写与读、它不用的那个载体） |
+| `workflow.py` | 不是测试：`publish.yml` 的唯一读者（job 的 env、step 列表、cron、push 的 `paths`、`$GITHUB_OUTPUT` 的写与读、它不用的那个载体） |
+| `gate.py` | 不是测试：`check.sh` 的唯一读者（门表、`gate_*` 函数、抬头注释、打印的 note） |
 
 ## 提交
 

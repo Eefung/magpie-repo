@@ -35,6 +35,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "tests"))
 
 import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
+import gate  # noqa: E402  (the reader of scripts/check.sh)
 import workflow  # noqa: E402  (the one reader of publish.yml)
 
 
@@ -65,15 +66,6 @@ PATH = re.compile(r"`((?:scripts|tests)/[\w./-]+)`")
 
 # A test class, as the gate's note names it: `RootAdapterTest`.
 CLASS = re.compile(r"\b([A-Z][A-Za-z]*(?:Test|Reader|Error))\b")
-
-NOTE = "cat <<'EOF'"
-
-
-def note_of(gate: str) -> str:
-    """The blind-spot list a gate prints, as the heredoc it is written in."""
-    after = gate.split(NOTE, 1)[1]
-    return after.split("\nEOF", 1)[0]
-
 
 def code_facts(repo: Path = REPO) -> str:
     """The production tree, for a name the docs point at to exist in.
@@ -324,7 +316,7 @@ class NamedThingsTest(unittest.TestCase):
         return (REPO / "GLOSSARY.md").read_text()
 
     def note(self) -> str:
-        return note_of((REPO / "scripts" / "check.sh").read_text())
+        return gate.note()
 
     def test_every_module_glossary_names_is_in_the_tree(self):
         self.assertEqual(gone_names(self.glossary(), code_facts()), [])
@@ -375,6 +367,88 @@ class NamedThingsTest(unittest.TestCase):
         drifted = self.note().replace("RootAdapterTest", "RootAdapterReaderTest")
         self.assertIn("RootAdapterReaderTest", drifted, "the note moved; reword this test")
         self.assertEqual(gone_classes(drifted), ["RootAdapterReaderTest"])
+
+
+class GateDocumentsTest(unittest.TestCase):
+    """What the gate runs, and what a green run does not prove: one copy each.
+
+    `GATE_ROWS` decides the gate set, and `tests/test_check_range.py` holds it
+    to the `gate_*` bodies -- but four prose copies of the same facts lived
+    beside it: `check.sh`'s header stated the count ("Five gates") and the
+    blind-spot list, README's 全部闸门 line named the tools, and AGENTS.md named
+    them again. None had a reader, so a sixth gate (row, body, and the roster
+    assertion updated) left all 355 tests green with every sentence describing
+    five.
+
+    Two rules, because there are two facts. The roster: every row's word is in
+    the sentence that claims to list the gates. The blind-spot list: exactly one
+    copy, the one the run prints -- a sentence in the header describing coverage
+    is the second copy AGENTS.md says does not exist.
+    """
+
+    # One row's word is not its slug: README and AGENTS name the offline tests
+    # the way a Chinese reader does. One entry, and a gate whose word is neither
+    # its slug nor here is what this guard reports.
+    TRANSLATED = {"tests": "单测"}
+
+    def documents(self) -> dict[str, str]:
+        """The one line in each document that claims to list the gates."""
+        sources = {
+            "README.md": readme(),
+            "AGENTS.md": (REPO / "AGENTS.md").read_text(),
+        }
+        found: dict[str, str] = {}
+        for name, source in sources.items():
+            # The map's own row about check.sh says the same words, and it is
+            # a row about the script, not a claim to list the gates.
+            lines = [
+                line
+                for line in source.splitlines()
+                if "全部闸门" in line and not line.startswith("|")
+            ]
+            if len(lines) != 1:
+                raise AssertionError(f"{name} states the gate list {len(lines)} times; reword this test")
+            found[name] = lines[0]
+        return found
+
+    def missing(self, source: str | None = None) -> dict[str, list[str]]:
+        """For each document, the gates its sentence does not name."""
+        return {
+            name: [
+                row.slug
+                for row in gate.rows(source)
+                if self.TRANSLATED.get(row.slug, row.slug) not in line
+            ]
+            for name, line in self.documents().items()
+        }
+
+    def test_each_document_names_every_gate(self):
+        self.assertEqual({name: found for name, found in self.missing().items() if found}, {})
+
+    def test_a_gate_the_documents_do_not_name_is_reported(self):
+        row = '    "probe|probe (real makepkg + repo-add)"\n'
+        added = gate.text().replace(row, row + '    "vocabulary|the 落后 vocabulary"\n')
+        self.assertNotEqual(added, gate.text(), "the table moved; reword this test")
+        self.assertEqual(self.missing(added), {"README.md": ["vocabulary"], "AGENTS.md": ["vocabulary"]})
+
+    def test_the_header_states_no_coverage_of_its_own(self):
+        # The header is prose about the gate set and about what green does not
+        # prove; the note the run prints is the list that has a reader.
+        header = gate.header()
+        self.assertEqual(re.findall(r"\btests/[\w./-]+", header), [])
+        self.assertEqual(CLASS.findall(header), [])
+
+    def test_a_header_that_restates_the_note_is_reported(self):
+        first = "# Run every gate CI's test job runs, from any directory."
+        leaked = gate.text().replace(
+            first,
+            first
+            + "\n# Not covered here: tests/test_build_check.py stubs the root path.",
+        )
+        self.assertNotEqual(leaked, gate.text(), "the header moved; reword this test")
+        self.assertEqual(
+            re.findall(r"\btests/[\w./-]+", gate.header(leaked)), ["tests/test_build_check.py"]
+        )
 
 
 class ChineseSpacingTest(unittest.TestCase):
