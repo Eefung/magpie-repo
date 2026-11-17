@@ -178,13 +178,13 @@ def layout_at(
     templates: Path | None = None,
     inventory: dict[str, str] | None = None,
     arches: dict[str, str] | None = None,
-    pinned: str | None = None,
 ) -> bump.Layout:
     """A layout pointing the renderer at a temporary tree.
 
-    Only the output directory moves: the templates and the inventory are the
-    repository's own unless a test overrides them -- and unless the tree staged
-    its own `templates/`, which is what `layout_for` would use for that root.
+    The layout is rooted at that tree -- the root is where the check looks for
+    `PINNED` beside the PKGBUILDs -- while the templates and the inventory are
+    the repository's own unless a test overrides them, and unless the tree
+    staged its own `templates/`.
     That last clause is the one that matters: `staged_root` renders a PKGBUILD
     from the templates it was handed, and this function builds the layout the
     code under test reads, so a caller that names a tree to one and not the
@@ -193,24 +193,22 @@ def layout_at(
     template's render", which is the drift message.
 
     This goes through the production constructor, so the defaults under test
-    are the ones that ship. The 软件源 address is not one of them: it is a fact
-    about the run, declared in the environment and read by the check, so a test
-    that is about the comparison declares it the way the workflow does.
+    are the ones that ship. Two things are not: the 软件源 address is a fact
+    about the run, declared in the environment, and the pin is one line in this
+    tree -- so the layout is rooted at the tree, not at the repository it was
+    copied from. Rooting it at the repository was what the pin's old sentinel
+    papered over: the file the check reads is `root/PINNED`, and this is `root`.
     """
     if templates is None:
         staged = root / "templates"
-        templates = staged if staged.is_dir() else None
+        templates = staged if staged.is_dir() else REPO / "templates"
     return bump.layout_for(
-        REPO,
+        root,
         templates=templates,
         packages_dir=root / "packages",
         inventory=inventory,
         arches=arches,
         maintainer="Test Maintainer <test@example.invalid>",
-        # Handed in, never inherited from `REPO`: a fixture that read the
-        # repository's own pin would change meaning on the day one is committed,
-        # and every test here would then be asserting about a pinned tree.
-        pinned=pinned,
     )
 
 
@@ -323,6 +321,23 @@ class LayoutForTest(unittest.TestCase):
         # field nothing may read.
         with self.assertRaises(TypeError):
             bump.layout_for(REPO, served=served_at())
+
+    def test_the_tree_takes_no_pin(self):
+        # The pin is one line in the tree, read at the question that needs it;
+        # hand it in and "this tree has no pin" becomes a second way to say a
+        # thing the file already says.
+        with self.assertRaises(TypeError):
+            bump.layout_for(REPO, pinned="0.1.9")
+
+    def test_the_tree_constructs_over_a_broken_pin(self):
+        # Construction reads nothing, so a pin nobody can parse cannot stop a
+        # tree from being named. It is still refused -- by the check, by name.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / bump.PIN_FILE).write_text("not-a-version\n")
+            with mock.patch.dict(os.environ, {}, clear=True):
+                layout = bump.layout_for(root)
+        self.assertEqual(layout.root, root)
 
 
 class LayoutAtTest(unittest.TestCase):
@@ -989,10 +1004,10 @@ class PinnedTreeTest(unittest.TestCase):
     printed in the log of every run it is holding back.
     """
 
-    def log_of(
-        self, *, tree: Path, served: dict[str, str] | None, pinned: str | None, upstream: str = "0.1.10"
+    def check_tree(
+        self, tree: Path, *, served: dict[str, str] | None, upstream: str = "0.1.10"
     ) -> tuple[dict, list[str]]:
-        """One `--check` over a staged tree, with a pin and a 软件源."""
+        """One `--check` over the tree as it stands, plus a 软件源 if named."""
         fetch = FetchSpy(version_sources(github=upstream, site=upstream))
         if served is not None:
             fetch.table[served_at().database] = database_body(served)
@@ -1000,7 +1015,7 @@ class PinnedTreeTest(unittest.TestCase):
         declared = address_env() if served is not None else {}
         with mock.patch.dict(os.environ, declared, clear=True):
             with contextlib.redirect_stdout(buffer):
-                bump.check(layout=layout_at(tree, pinned=pinned), fetch=fetch)
+                bump.check(layout=layout_at(tree), fetch=fetch)
         lines = buffer.getvalue().splitlines()
         text = "\n".join(lines) + "\n"
         log = {"bump": frozen.field("bump", text), "pinned": frozen.field("pinned", text), "behind": {}}
@@ -1010,13 +1025,20 @@ class PinnedTreeTest(unittest.TestCase):
                 log["behind"][pkg] = reason
         return log, lines
 
+    def check_pinned(
+        self, tree: Path, pinned: str, *, served: dict[str, str] | None, upstream: str = "0.1.10"
+    ) -> tuple[dict, list[str]]:
+        """A staged tree that carries `pinned`, then one `--check` over it."""
+        (tree / bump.PIN_FILE).write_text(pinned + "\n")
+        return self.check_tree(tree, served=served, upstream=upstream)
+
     def test_a_pinned_tree_is_not_behind_when_upstream_moves(self):
         with tempfile.TemporaryDirectory() as tmp:
             tree = staged_root(Path(tmp), {"magpie-bin": "0.1.9", "magpie-cli-bin": "0.1.9"})
-            log, lines = self.log_of(
-                tree=tree,
+            log, lines = self.check_pinned(
+                tree,
+                "0.1.9",
                 served={"magpie-bin": "0.1.9-1", "magpie-cli-bin": "0.1.9-1"},
-                pinned="0.1.9",
             )
         self.assertEqual(log["behind"], {})
         self.assertEqual(log["bump"], "0")
@@ -1031,10 +1053,10 @@ class PinnedTreeTest(unittest.TestCase):
         # that run starts from exactly this state.
         with tempfile.TemporaryDirectory() as tmp:
             tree = staged_root(Path(tmp), {"magpie-bin": "0.1.9", "magpie-cli-bin": "0.1.9"})
-            log, _ = self.log_of(
-                tree=tree,
+            log, _ = self.check_pinned(
+                tree,
+                "0.1.9",
                 served={"magpie-bin": "0.1.10-1", "magpie-cli-bin": "0.1.10-1"},
-                pinned="0.1.9",
             )
         self.assertEqual(
             log["behind"], {"magpie-bin": "unpublished", "magpie-cli-bin": "unpublished"}
@@ -1044,22 +1066,33 @@ class PinnedTreeTest(unittest.TestCase):
     def test_a_pin_the_tree_does_not_carry_holds_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
             tree = staged_root(Path(tmp), {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
-            log, lines = self.log_of(tree=tree, served=None, pinned="0.1.9")
+            log, lines = self.check_pinned(tree, "0.1.9", served=None)
         self.assertEqual(log["bump"], "0")
         self.assertTrue(any("holds nothing" in line for line in lines), lines)
 
-    def test_the_constructor_reads_the_pin_out_of_the_tree(self):
-        # The production wire, not the argument: `main()` builds the layout
-        # through `layout_for(ROOT)`, so a pin that this constructor does not
-        # read is a file the entry check never sees -- and every test above
-        # would stay green, because they hand the value in.
+    def test_the_check_reads_the_pin_out_of_the_tree(self):
+        # The production wire, and the only one: the file is where a pin comes
+        # from, so a check that did not open it would leave every test above
+        # green -- the helper writes the file it then honours. Here the tree
+        # carries the file and the helper wrote nothing.
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            self.assertIsNone(bump.layout_for(root).pinned)
-            (root / bump.PIN_FILE).write_text("0.1.9\n")
-            self.assertEqual(bump.layout_for(root).pinned, "0.1.9")
-            # A caller that says "no pin" is not overruled by the file.
-            self.assertIsNone(bump.layout_for(root, pinned=None).pinned)
+            tree = staged_root(Path(tmp), {"magpie-bin": "0.1.9", "magpie-cli-bin": "0.1.9"})
+            (tree / bump.PIN_FILE).write_text("0.1.9\n")
+            log, lines = self.check_tree(tree, served=None)
+        self.assertTrue(log["pinned"].startswith("0.1.9"), log["pinned"])
+        self.assertEqual(log["bump"], "0")
+        self.assertTrue(any("stays where it was told" in line for line in lines), lines)
+
+    def test_a_tree_without_a_pin_prints_no_line(self):
+        # The other two states are "one line" and "refused by name". A log that
+        # said `pinned=None` every run would be a line nobody asked for, and it
+        # would make the pin look like a state this tree is in rather than a
+        # record someone left.
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = staged_root(Path(tmp), {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+            log, lines = self.check_tree(tree, served=None)
+        self.assertIsNone(log["pinned"])
+        self.assertFalse([line for line in lines if line.startswith("pinned=")], lines)
 
     def test_the_pin_is_one_version_or_a_named_refusal(self):
         # A pin nothing can read must not read as "nothing is pinned": that is
@@ -1598,6 +1631,15 @@ class ExitFactsTest(unittest.TestCase):
         self.assertIsInstance(code, str)
         self.assertIn(bump.PIN_FILE, str(code))
         self.assertIn("not a 版本", str(code))
+
+    def test_a_tree_that_is_both_broken_reports_the_address(self):
+        # Two configuration errors, one message: the address is read first, so
+        # that is what a reader fixes first. Said once, held here.
+        self.tree(pin="not-a-version")
+        code, _ = self.cli("--check", env={"PAGES_URL": "https://example.invalid/r"})
+        self.assertIsInstance(code, str)
+        self.assertIn("half declared", str(code))
+        self.assertNotIn(bump.PIN_FILE, str(code))
 
     def test_the_check_still_refuses_half_an_address(self):
         # By name: the message says which of the three was not declared.

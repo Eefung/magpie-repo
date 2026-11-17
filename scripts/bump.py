@@ -133,9 +133,11 @@ class Layout:
     read from the environment in main(), when the layout is built -- not when
     this file is imported.
 
-    There is no 软件源 address here, on purpose: where this run publishes is a
-    fact about the run, not about the tree, and the check asks for it at the
-    question that needs it.
+    Two facts the check needs are deliberately not fields here. Where this run
+    publishes (the 软件源 address) is not about the tree at all; the pin does
+    name a 版本 this tree stays at, but it lives in a file at the root of the
+    tree, and the check reads it where it asks. Carrying either one meant
+    every exit inherited a failure it never asked about.
     """
 
     templates: Path
@@ -144,20 +146,6 @@ class Layout:
     arches: Mapping[str, str]
     maintainer: str
     root: Path
-    pinned: str | None = None
-
-
-class _Unset:
-    """The type of the sentinel below: "the caller did not say".
-
-    A plain `object()` makes the parameter `str | None | object`, which is the
-    same as `object`, and then nothing can be narrowed. `pinned=None` has to
-    keep meaning "this tree has no pin" -- a fixture root may need that even
-    when the repository it was built from carries one.
-    """
-
-
-_UNSET = _Unset()
 
 
 def layout_for(
@@ -168,7 +156,6 @@ def layout_for(
     maintainer: str = DEFAULT_MAINTAINER,
     inventory: Mapping[str, str] | None = None,
     arches: Mapping[str, str] | None = None,
-    pinned: str | None | _Unset = _UNSET,
 ) -> Layout:
     """The one way a Layout is built, for production and for tests alike.
 
@@ -177,13 +164,11 @@ def layout_for(
     alone. Before this, tests hand-assembled a Layout, so every default lived
     twice and a field added here had to be added there too.
 
-    `pinned` is read out of the root when nobody says otherwise: the pin is one
-    line beside the PKGBUILDs it describes, and this is the one place a tree is
-    named, so it is the one place the file can be found. A caller that says
-    `pinned=None` means "no pin" -- a fixture stages its own world.
+    Nothing is read: no file, no environment. The pin and the address are
+    questions for the entry check, not facts this value carries -- and a
+    fixture no longer has to say "no pin" to keep the repository's own out of a
+    tree it just built.
     """
-    if isinstance(pinned, _Unset):
-        pinned = pinned_of(root)
     return Layout(
         templates=root / "templates" if templates is None else templates,
         packages_dir=root / "packages" if packages_dir is None else packages_dir,
@@ -191,7 +176,6 @@ def layout_for(
         arches=dict(ARCHES if arches is None else arches),
         maintainer=maintainer,
         root=root,
-        pinned=pinned,
     )
 
 
@@ -1204,6 +1188,7 @@ def behind(
     packaged: Mapping[str, str],
     served: Mapping[str, str] | None,
     stale: set[str],
+    pinned: str | None,
 ) -> dict[str, str]:
     """Every package that is 落后, and which direction says so.
 
@@ -1231,11 +1216,12 @@ def behind(
     where someone said it should stay. Every other direction still fires -- a
     pinned tree that is not what the 软件源 serves has to be published, which is
     how a rollback's own build reaches users in the first place.
+
     """
     reasons: dict[str, str] = {}
     for pkg in layout.inventory:
         evr = packaged.get(pkg)
-        held = layout.pinned is not None and pkgver_of(evr) == layout.pinned
+        held = pinned is not None and pkgver_of(evr) == pinned
         if pkgver_of(evr) != upstream and not held:
             reasons[pkg] = UPSTREAM_MOVED
         elif served is not None and served.get(pkg) != evr:
@@ -1280,13 +1266,15 @@ def behind(
 def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     """Is this tree sound, and is it 落后? The run's answers, as frozen lines.
 
-    The tree is handed in; the 软件源 address is read from the environment,
-    because where this run publishes is not a fact about the tree. Reading it
-    first also means a configuration error is reported before anything is
-    fetched -- though after `main()` has read the pin, so a tree that is both
-    badly pinned and half-addressed reports the pin first.
+    The tree is handed in. Two facts are read here, at the questions that need
+    them and before anything is fetched, so a configuration error never waits
+    behind a release nobody can compare against: the 软件源 address (three names
+    in the environment) and the pin (one line at the tree's root). The address
+    is read first, so a run that declares half an address hears about that
+    rather than about a pin.
     """
     address = served_from_env()
+    pinned = pinned_of(layout.root)
     # This repository's own problem first, before anything is fetched: the
     # render does the same, so a tree whose templates and PKGBUILDs disagree
     # fails here rather than being reported as "upstream has no such asset".
@@ -1304,15 +1292,15 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     # The pin, said every run: a line that outlives its reason is a repository
     # that stops moving, and the only thing that makes such a line visible is
     # printing it in the log of the runs it is holding back.
-    if layout.pinned is not None:
+    if pinned is not None:
         carried = sorted({pkgver_of(packaged.get(pkg)) for pkg in layout.inventory})
-        if layout.pinned == upstream:
-            log(f"pinned={layout.pinned}: 上游 is at the pinned 版本, so it holds nothing back")
-        elif carried == [layout.pinned]:
-            log(f"pinned={layout.pinned}: 上游 is at {upstream}, and this tree stays where it was told")
+        if pinned == upstream:
+            log(f"pinned={pinned}: 上游 is at the pinned 版本, so it holds nothing back")
+        elif carried == [pinned]:
+            log(f"pinned={pinned}: 上游 is at {upstream}, and this tree stays where it was told")
         else:
             log(
-                f"pinned={layout.pinned}: the tree carries {', '.join(carried)}, "
+                f"pinned={pinned}: the tree carries {', '.join(carried)}, "
                 "so the pin holds nothing -- re-render it or delete PINNED"
             )
     for pkg, evr in sorted(packaged.items()):
@@ -1367,7 +1355,12 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     # on disk keeps a package whose PKGBUILD was never rendered 落后; walking
     # what the 软件源 serves as well is what lets a withdrawn package leave it.
     reasons = behind(
-        layout, upstream=upstream, packaged=packaged, served=served, stale=stale
+        layout,
+        upstream=upstream,
+        packaged=packaged,
+        served=served,
+        stale=stale,
+        pinned=pinned,
     )
     for pkg, reason in sorted(reasons.items()):
         log(f"behind {pkg}={reason}")
@@ -1417,13 +1410,10 @@ def main(
     tests went in through check() and render() directly, and the two things CI
     actually reads -- the frozen lines and the exit code -- were never run.
 
-    Only the comparison asks the pin, and the 软件源 address never reaches the
-    tree at all: the check reads it at the question that needs it.
-    `--packages` prints directory names and `--render` takes a 版本; neither
-    asks either question, so neither may fail on one -- a refusal belongs to
-    the module that asked. `root` points the production constructor at a staged
-    tree; `layout` stays for a caller bringing a whole value of its own (a
-    different 包清单 or arch 表).
+    The pin and the 软件源 address are read inside the check, at the questions
+    that need them, so no exit inherits their failures. `root` points the
+    production constructor at a staged tree; `layout` stays for a caller
+    bringing a whole value of its own (a different 包清单 or arch 表).
     """
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -1439,13 +1429,12 @@ def main(
 
     try:
         if layout is None:
-            # The pin is read only for the mode that asks it. It used to share
-            # this construction with the 软件源 address, which took down exits
-            # that had asked nothing -- the address is not here at all now.
+            # The tree, and nothing else: the pin and the address used to be
+            # read here, so every exit inherited their failures. Both are the
+            # check's questions now.
             layout = layout_for(
                 root,
                 maintainer=os.environ.get("MAINTAINER", DEFAULT_MAINTAINER),
-                pinned=pinned_of(root) if args.check else None,
             )
         if args.packages:
             for directory, pkg in package_entries(layout):
