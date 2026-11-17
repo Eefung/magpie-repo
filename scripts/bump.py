@@ -817,6 +817,10 @@ def served_evr(layout: Layout, *, fetch: Fetch = http_fetch) -> dict[str, str] |
     """
     served = layout.served
     if served is None:
+        # The 上游-only comparison is a documented fallback (GLOSSARY: 落后),
+        # and it was the silent half of it: a run that declared no address said
+        # nothing, while the run whose read failed said why.
+        log("no 软件源 address declared (PAGES_URL, REPO_NAME, ARCH); comparing against 上游 alone")
         return None
     try:
         body = fetch(served.database, missing_ok=True)
@@ -1233,6 +1237,10 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     if served is not None:
         for pkg, evr in sorted(served.items()):
             log(f"served {pkg}={evr}")
+    # Which halves this run actually compared, said every time. GLOSSARY
+    # promises the log explains it, and until this line the reader's only clue
+    # was the absence of a `served` section.
+    log("compared=" + ("upstream+served" if served is not None else "upstream"))
     # The release's own checksums, which is the third way this tree can be
     # 落后: 上游 re-uploaded an asset under a tag that did not move. Nothing
     # else would ever notice -- the version matches, the render matches, and
@@ -1272,13 +1280,27 @@ def served_from_env() -> Served | None:
 
     The workflow declares all three for every publish job; a hand run that
     leaves them out gets the 上游-only comparison instead of a wrong URL.
+
+    Half a declaration is a configuration error, not a hand run. A name typed
+    into the job env with its neighbour forgotten used to collapse into the
+    same None as "nothing declared", which silently turned off the two
+    directions that read the 软件源 -- and the pkgrel refusal with them. Say
+    which name is missing instead.
     """
-    url = os.environ.get("PAGES_URL")
-    section = os.environ.get("REPO_NAME")
-    arch = os.environ.get("ARCH")
-    if not (url and section and arch):
+    names = ("PAGES_URL", "REPO_NAME", "ARCH")
+    found = {name: os.environ.get(name, "") for name in names}
+    declared = [name for name in names if found[name]]
+    if not declared:
         return None
-    return Served(url=url, section=section, arch=arch)
+    missing = [name for name in names if not found[name]]
+    if missing:
+        raise BumpError(
+            f"the 软件源 address is half declared: {', '.join(declared)} set, "
+            f"{', '.join(missing)} not -- declare all three or none"
+        )
+    return Served(
+        url=found["PAGES_URL"], section=found["REPO_NAME"], arch=found["ARCH"]
+    )
 
 
 def main(

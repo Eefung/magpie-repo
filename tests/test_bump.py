@@ -1164,10 +1164,32 @@ class ServedTest(unittest.TestCase):
     def test_a_layout_without_an_address_never_asks_for_the_database(self):
         root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
         fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
-        with contextlib.redirect_stdout(io.StringIO()):
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
             bump.check(layout=layout_at(root), fetch=fetch)
         self.assertIn(f"{bump.RELEASES}/download/v0.1.10/SHA256SUMS", fetch.urls)
         self.assertEqual([url for url in fetch.urls if url.endswith(".db.tar.gz")], [])
+        # And it says so: the 上游-only comparison used to be the silent half of
+        # the fallback GLOSSARY documents ("日志会说明").
+        lines = buffer.getvalue().splitlines()
+        self.assertTrue(any("no 软件源 address declared" in line for line in lines), lines)
+        self.assertIn("compared=upstream", lines)
+
+    def test_a_run_that_read_the_repository_says_it_compared_both_halves(self):
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+        fetch = self.fetch_with(
+            database_body({"magpie-bin": "0.1.10-1", "magpie-cli-bin": "0.1.10-1"})
+        )
+        log = self.log_of(fetch, root)
+        self.assertIn("compared=upstream+served", log["lines"])
+
+    def test_a_repository_that_could_not_be_read_says_which_half_was_compared(self):
+        # The other None: declared, asked, unreadable. served_evr logs the
+        # reason; the run states the conclusion, so neither is left to infer.
+        root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+        log = self.log_of(self.fetch_with(b"not a tarball"), root)
+        self.assertIn("compared=upstream", log["lines"])
+        self.assertTrue(any("is not a database" in line for line in log["lines"]), log["lines"])
 
 
 class ServedFromEnvTest(unittest.TestCase):
@@ -1180,13 +1202,24 @@ class ServedFromEnvTest(unittest.TestCase):
         self.assertEqual(served, bump.Served(url="https://h.invalid/r", section="magpie", arch="x86_64"))
         self.assertEqual(served.database, "https://h.invalid/r/x86_64/magpie.db.tar.gz")
 
-    def test_a_missing_name_declares_no_address(self):
+    def test_no_name_at_all_declares_no_address(self):
+        # A hand run: the 上游-only comparison, and the log says so.
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(bump.served_from_env())
+
+    def test_two_of_three_names_is_a_half_declaration_the_run_refuses(self):
+        # It used to answer None, the same value as "nothing declared": a
+        # mistyped name in the job env turned off the two directions that read
+        # the 软件源 -- and the pkgrel refusal -- and every run stayed green.
         for missing in ("PAGES_URL", "REPO_NAME", "ARCH"):
             with self.subTest(missing=missing):
                 env = {"PAGES_URL": "https://h.invalid/r", "REPO_NAME": "magpie", "ARCH": "x86_64"}
                 env.pop(missing)
                 with mock.patch.dict(os.environ, env, clear=True):
-                    self.assertIsNone(bump.served_from_env())
+                    with self.assertRaises(bump.BumpError) as caught:
+                        bump.served_from_env()
+                self.assertIn(missing, str(caught.exception))
+                self.assertIn("declare all three or none", str(caught.exception))
 
 
 class MainTest(unittest.TestCase):
