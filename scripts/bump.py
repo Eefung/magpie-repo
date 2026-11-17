@@ -54,6 +54,10 @@ GITHUB_RELEASES = "https://api.github.com/repos/yetone/magpie-releases/releases?
 SITE_API = "https://usemagpie.ai/api/latest"
 UA = "magpie-repo-bump (+https://github.com/Eefung/magpie-repo)"
 VERSION_RE = re.compile(r"[0-9]+(?:\.[0-9]+)+")
+# pkgrel is a whole number, and in ASCII: `str.isdigit` also says yes to `²`
+# and to the full-width `１`, neither of which the shell reader
+# (`pkgfile_pkgname`) or `int()` agree with. One rule, checked where it enters.
+PKGREL_RE = re.compile(r"[0-9]+")
 PKGNAME_RE = re.compile(r"^pkgname=(\S+)", re.M)
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([\w-]+)\s*\}\}")
 ARCH_LINE_RE = re.compile(r"^arch=\(([^)]*)\)\s*$", re.M)
@@ -477,7 +481,7 @@ def check_pkgrel(pkg: str, template: str) -> None:
     value = pkg_field(template, "pkgrel")
     if not value:
         raise BumpError(f"{pkg}: the template declares no pkgrel=")
-    if not value.isdigit():
+    if not PKGREL_RE.fullmatch(value):
         raise BumpError(
             f"{pkg}: pkgrel={value} is not a whole number; "
             "this repository models `<int>` only, not Arch's `<int>.<int>` form"
@@ -797,7 +801,7 @@ def pkgrel_of(evr: str) -> int:
     a contradiction to report, not an absent one.
     """
     _, separator, rel = evr.partition("-")
-    if not separator or not rel.isdigit():
+    if not separator or not PKGREL_RE.fullmatch(rel):
         raise BumpError(f"{evr} carries no whole-number pkgrel")
     return int(rel)
 
@@ -1185,12 +1189,18 @@ def behind(
                 evr is not None
                 and published is not None
                 and pkgver_of(published) == pkgver_of(evr)
-                and pkgrel_of(evr) < pkgrel_of(published)
             ):
-                raise BumpError(
-                    f"{pkg}: the 软件源 serves {published}, and this tree renders {evr}; "
-                    "pkgrel 只能往上加 -- raise it, then re-render"
-                )
+                try:
+                    held, served_rel = pkgrel_of(evr), pkgrel_of(published)
+                except BumpError as exc:
+                    # The reader names the value it could not read; which
+                    # package it belongs to is this loop's to add.
+                    raise BumpError(f"{pkg}: {exc}") from exc
+                if held < served_rel:
+                    raise BumpError(
+                        f"{pkg}: the 软件源 serves {published}, and this tree renders {evr}; "
+                        "pkgrel 只能往上加 -- raise it, then re-render"
+                    )
             reasons[pkg] = NOT_PUBLISHED
         elif pkg in stale:
             reasons[pkg] = UPSTREAM_REUPLOADED

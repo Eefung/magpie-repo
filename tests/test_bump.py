@@ -1355,6 +1355,23 @@ class TemplatePkgrelTest(unittest.TestCase):
     def test_a_quoted_value_reads_the_way_the_renderer_writes_it(self):
         bump.check_pkgrel("magpie-bin", "pkgrel='2'\n")
 
+    def test_a_digit_int_does_not_agree_with_is_refused(self):
+        # `str.isdigit` says yes to `²` and to the full-width `１`; `int()` and
+        # the shell's `pkgfile_pkgname` say no. Either one getting past this
+        # door puts a pkgrel in the tree the container cannot name -- or makes
+        # the reader raise ValueError where a BumpError was promised.
+        for value in ("²", "１"):
+            with self.subTest(value=value):
+                with self.assertRaises(bump.BumpError) as caught:
+                    bump.check_pkgrel("magpie-bin", f"pkgrel={value}\n")
+                self.assertIn("whole number", str(caught.exception))
+
+    def test_the_reader_refuses_what_it_cannot_read_as_a_number(self):
+        self.assertEqual(bump.pkgrel_of("0.1.10-2"), 2)
+        with self.assertRaises(bump.BumpError) as caught:
+            bump.pkgrel_of("0.1.10-²")
+        self.assertIn("0.1.10-²", str(caught.exception))
+
     def test_both_doors_read_it(self):
         # The entry check and the render both go through read_template, so one
         # call there is what makes the refusal reach the mode the pipeline runs.

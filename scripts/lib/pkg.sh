@@ -231,9 +231,10 @@ pkgfile_evr() {
 # A name that does not parse is a change to the rule, not a package to guess at.
 #
 # The whole-number pkgrel here is the model GLOSSARY states, and it is decided
-# where pkgrel enters (bump.py's check_pkgrel): Arch's `<int>.<int>` form would
-# pass bump.py's comparison as 未发布 instead of refusing it, so widening this
-# reader alone would be half a change -- say so in the glossary first.
+# where pkgrel enters (bump.py's check_pkgrel, which names the template's own
+# pkgrel=): widening this reader alone would leave the two disagreeing again --
+# a `-2.1-` file name this one refuses, that one renders and publishes. Say so
+# in the glossary first.
 pkgfile_pkgname() {
     local name="${1##*/}" suffix base arch rel version
     suffix="$(pkgfile_suffix)"
