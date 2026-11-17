@@ -179,6 +179,7 @@ def layout_at(
     inventory: dict[str, str] | None = None,
     arches: dict[str, str] | None = None,
     served: bump.Served | None = None,
+    pinned: str | None = None,
 ) -> bump.Layout:
     """A layout pointing the renderer at a temporary tree.
 
@@ -208,6 +209,10 @@ def layout_at(
         arches=arches,
         maintainer="Test Maintainer <test@example.invalid>",
         served=served,
+        # Handed in, never inherited from `REPO`: a fixture that read the
+        # repository's own pin would change meaning on the day one is committed,
+        # and every test here would then be asserting about a pinned tree.
+        pinned=pinned,
     )
 
 
@@ -889,6 +894,111 @@ class CheckTest(unittest.TestCase):
                 bump.check(layout=layout_at(Path(tmp), templates=templates), fetch=fetch)
         self.assertIn("magpie-cli-bin", str(caught.exception))
         self.assertEqual(fetch.urls, [])
+
+
+class PinnedTreeTest(unittest.TestCase):
+    """A rollback that records itself, so the next scheduled run honours it.
+
+    `WANTED` reaches one run and is forgotten with the container. The run that
+    performs a rollback commits the PKGBUILDs it rendered, and that state reads
+    as 落后 to every later run: the tree carries an older 版本 than 上游, so the
+    next 04:17 renders the newer one and publishes it again -- a rollback that
+    lasts a day, with no run saying it had undone it. The pin is the missing
+    record: one line in the tree the run commits, read by the entry check, and
+    printed in the log of every run it is holding back.
+    """
+
+    def log_of(
+        self, *, tree: Path, served: dict[str, str] | None, pinned: str | None, upstream: str = "0.1.10"
+    ) -> tuple[dict, list[str]]:
+        """One `--check` over a staged tree, with a pin and a 软件源."""
+        fetch = FetchSpy(version_sources(github=upstream, site=upstream))
+        if served is not None:
+            fetch.table[served_at().database] = database_body(served)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            bump.check(
+                layout=layout_at(
+                    tree,
+                    served=served_at() if served is not None else None,
+                    pinned=pinned,
+                ),
+                fetch=fetch,
+            )
+        lines = buffer.getvalue().splitlines()
+        text = "\n".join(lines) + "\n"
+        log = {"bump": frozen.field("bump", text), "pinned": frozen.field("pinned", text), "behind": {}}
+        for line in lines:
+            if line.startswith("behind "):
+                pkg, _, reason = line.removeprefix("behind ").partition("=")
+                log["behind"][pkg] = reason
+        return log, lines
+
+    def test_a_pinned_tree_is_not_behind_when_upstream_moves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = staged_root(Path(tmp), {"magpie-bin": "0.1.9", "magpie-cli-bin": "0.1.9"})
+            log, lines = self.log_of(
+                tree=tree,
+                served={"magpie-bin": "0.1.9-1", "magpie-cli-bin": "0.1.9-1"},
+                pinned="0.1.9",
+            )
+        self.assertEqual(log["behind"], {})
+        self.assertEqual(log["bump"], "0")
+        self.assertTrue(log["pinned"].startswith("0.1.9"), log["pinned"])
+        # The log says why nothing is being published, so a pin nobody
+        # remembers is a line in every run rather than a silent repository.
+        self.assertTrue(any("stays where it was told" in line for line in lines), lines)
+
+    def test_a_pinned_tree_that_is_not_served_still_publishes(self):
+        # The pin says which 版本 the tree stays at; it does not say the build
+        # reached the 软件源. The rollback's own run is what puts it there, and
+        # that run starts from exactly this state.
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = staged_root(Path(tmp), {"magpie-bin": "0.1.9", "magpie-cli-bin": "0.1.9"})
+            log, _ = self.log_of(
+                tree=tree,
+                served={"magpie-bin": "0.1.10-1", "magpie-cli-bin": "0.1.10-1"},
+                pinned="0.1.9",
+            )
+        self.assertEqual(
+            log["behind"], {"magpie-bin": "unpublished", "magpie-cli-bin": "unpublished"}
+        )
+        self.assertEqual(log["bump"], "1")
+
+    def test_a_pin_the_tree_does_not_carry_holds_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = staged_root(Path(tmp), {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
+            log, lines = self.log_of(tree=tree, served=None, pinned="0.1.9")
+        self.assertEqual(log["bump"], "0")
+        self.assertTrue(any("holds nothing" in line for line in lines), lines)
+
+    def test_the_constructor_reads_the_pin_out_of_the_tree(self):
+        # The production wire, not the argument: `main()` builds the layout
+        # through `layout_for(ROOT)`, so a pin that this constructor does not
+        # read is a file the entry check never sees -- and every test above
+        # would stay green, because they hand the value in.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertIsNone(bump.layout_for(root).pinned)
+            (root / bump.PIN_FILE).write_text("0.1.9\n")
+            self.assertEqual(bump.layout_for(root).pinned, "0.1.9")
+            # A caller that says "no pin" is not overruled by the file.
+            self.assertIsNone(bump.layout_for(root, pinned=None).pinned)
+
+    def test_the_pin_is_one_version_or_a_named_refusal(self):
+        # A pin nothing can read must not read as "nothing is pinned": that is
+        # the defect the file exists to fix, and a typo in it would cost a day
+        # of publishing.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertIsNone(bump.pinned_of(root))
+            (root / bump.PIN_FILE).write_text("0.1.9\n")
+            self.assertEqual(bump.pinned_of(root), "0.1.9")
+            for bad in ("0.1.9\n0.1.10\n", "main\n", "\n"):
+                with self.subTest(bad=bad):
+                    (root / bump.PIN_FILE).write_text(bad)
+                    with self.assertRaises(bump.BumpError):
+                        bump.pinned_of(root)
 
 
 class SyntaxDoorTest(unittest.TestCase):

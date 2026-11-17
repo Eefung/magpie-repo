@@ -60,6 +60,7 @@ REPO_NAME=magpie ./scripts/build-repo.sh /tmp/magpie-repo/x86_64 packages/magpie
 python3 -m http.server -d /tmp/magpie-repo 8765     # 再用临时 pacman.conf 从 http 试装
 
 gh workflow run publish.yml                         # 立刻发布，version 留空＝上游最新
+gh workflow run publish.yml -f version=<版本>       # 回滚：钉住这个版本，树里的 PINNED 就是那条记录
 ```
 
 `--packages` 一行一个包交出目录与 `pkgname`（`package packages/magpie-bin magpie-bin`）；workflow 与发布步骤都从这一份取，包名不写死在 YAML 里，也不再回头读 PKGBUILD。包文件的名字（含 `pkgrel` 与 `arch`）只由 `scripts/lib/pkg.sh` 回答。
@@ -108,6 +109,8 @@ gh workflow run publish.yml                         # 立刻发布，version 留
 - **版本比上游旧**
 
   `gh workflow run publish.yml --repo Eefung/magpie-repo` 立即构建；或从 [Release](https://github.com/Eefung/magpie-repo/releases) 下载 `.pkg.tar.zst`，用 `sudo pacman -U` 装。
+
+  如果你刚做过一次回滚，树里会有一个 `PINNED` 文件（见[钉住](GLOSSARY.md)）：那一趟会照它说的停住，不再跟上上游，直到把它删掉做一次提交。
 
 ## 文档
 

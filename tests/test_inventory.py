@@ -796,6 +796,39 @@ class RetentionWindowTest(unittest.TestCase):
         self.assertEqual(match.group(1), self.keep())
 
 
+class PinnedRollbackTest(unittest.TestCase):
+    """The pin the entry check reads is the one the commit step writes.
+
+    One name crossing the workflow-to-script seam: bump.py reads PINNED out of
+    the tree, and the step that commits the PKGBUILDs is what puts it there. A
+    rename on one side is a pin that never lands -- the run publishes an older
+    版本, the next scheduled run reads it as 落后 and moves forward again, which
+    is the day-long rollback the pin exists to prevent -- and every test stays
+    green, because nothing else reads the name.
+    """
+
+    def run_of(self, source: str | None = None) -> str:
+        """The commit step's code, comments dropped: a note about it is not it."""
+        for step in workflow.steps(source=source):
+            if step.name == "Commit the rendered PKGBUILDs":
+                return "\n".join(line.split("#", 1)[0] for line in step.run.splitlines())
+        raise AssertionError("the commit step moved; reword this test")
+
+    def test_the_step_writes_the_file_the_check_reads(self):
+        self.assertIn(bump.PIN_FILE, self.run_of())
+
+    def test_the_pin_is_the_version_this_run_was_asked_for(self):
+        self.assertIn("PIN: ${{ inputs.version }}", workflow.text())
+        self.assertIn('"$PIN"', self.run_of())
+
+    def test_a_renamed_file_is_caught(self):
+        code = self.run_of()
+        self.assertIn("> PINNED", code)
+        # Every spelling in the step, not the one the assertion happens to name:
+        # the write and the `git rm` are two statements about the same file.
+        self.assertNotIn(bump.PIN_FILE, self.run_of(workflow.text().replace("PINNED", "PIN")), "the guard did not notice the rename")
+
+
 class WorkflowShellTest(unittest.TestCase):
     """The workflow's `run:` blocks are shell, and two shapes in them bite.
 

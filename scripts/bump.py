@@ -67,6 +67,15 @@ CASE_ARM_RE = re.compile(r"^\s*(\w+)\)\s*_suffix=([\w-]+)\s*;;", re.M)
 
 DEFAULT_MAINTAINER = "Eefung <eefung@tuta.io>"
 
+# The 版本 a rollback pinned, as a file in the tree the run publishes from.
+# `WANTED` is argv: it reaches one run and is forgotten with the container, so
+# after a rollback landed nothing recorded that the older 版本 was on purpose.
+# The next scheduled run compared the tree to 上游, read the difference as 落后,
+# and published the newer 版本 again -- one day of relief, and no run saying it
+# had undone the rollback. One line, read by the entry check, removed by the
+# run that moves forward again (or by a commit that deletes it).
+PIN_FILE = "PINNED"
+
 # package dir -> upstream asset prefix
 PACKAGES = {
     "magpie-bin": "magpie",
@@ -135,6 +144,20 @@ class Layout:
     maintainer: str
     root: Path
     served: Served | None = None
+    pinned: str | None = None
+
+
+class _Unset:
+    """The type of the sentinel below: "the caller did not say".
+
+    A plain `object()` makes the parameter `str | None | object`, which is the
+    same as `object`, and then nothing can be narrowed. `pinned=None` has to
+    keep meaning "this tree has no pin" -- a fixture root may need that even
+    when the repository it was built from carries one.
+    """
+
+
+_UNSET = _Unset()
 
 
 def layout_for(
@@ -146,6 +169,7 @@ def layout_for(
     inventory: Mapping[str, str] | None = None,
     arches: Mapping[str, str] | None = None,
     served: Served | None = None,
+    pinned: str | None | _Unset = _UNSET,
 ) -> Layout:
     """The one way a Layout is built, for production and for tests alike.
 
@@ -153,7 +177,14 @@ def layout_for(
     overrides that one root and leaves the rest of the production defaults
     alone. Before this, tests hand-assembled a Layout, so every default lived
     twice and a field added here had to be added there too.
+
+    `pinned` is read out of the root when nobody says otherwise: the pin is one
+    line beside the PKGBUILDs it describes, and this is the one place a tree is
+    named, so it is the one place the file can be found. A caller that says
+    `pinned=None` means "no pin" -- a fixture stages its own world.
     """
+    if isinstance(pinned, _Unset):
+        pinned = pinned_of(root)
     return Layout(
         templates=root / "templates" if templates is None else templates,
         packages_dir=root / "packages" if packages_dir is None else packages_dir,
@@ -162,7 +193,40 @@ def layout_for(
         maintainer=maintainer,
         root=root,
         served=served,
+        pinned=pinned,
     )
+
+
+def pinned_of(root: Path) -> str | None:
+    """The 版本 this tree was told to stay at, or None when nothing is pinned.
+
+    A rollback is a 版本 a human picked (`WANTED`), and the run that performs it
+    commits the PKGBUILDs it rendered -- which is exactly the state that reads
+    as 落后 to the next scheduled run: the tree carries an older 版本 than 上游
+    publishes, so it renders the newer one and publishes it again. The pin is
+    the missing half of that record, and it lives in the tree because that is
+    what the run commits and what a reader of `git log` can find.
+
+    Anything but one whole 版本 is refused, not ignored: a pin nothing can read
+    would silently mean "nothing is pinned", which is the defect the file
+    exists to fix -- and a typo in it would cost a day of publishing.
+    """
+    path = root / PIN_FILE
+    if not path.exists():
+        return None
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        raise BumpError(f"cannot read {path}: {exc.strerror}") from exc
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise BumpError(f"{path} carries {len(lines)} lines; a pin is one 版本")
+    if not VERSION_RE.fullmatch(lines[0]):
+        raise BumpError(
+            f"{path} pins {lines[0]!r}, which is not a 版本; "
+            "write the 版本 (digits and dots) or delete the file"
+        )
+    return lines[0]
 
 
 class BumpError(Exception):
@@ -1169,11 +1233,18 @@ def behind(
     than the one being served, of the same 版本. pkgrel is a counter that only
     goes up, and reading it as 未发布 opens a loop that publishes the same bytes
     every run.
+
+    A pinned 版本 suppresses the first direction and nothing else: a rollback is
+    a deliberate mismatch with 上游, and a tree that carries the pinned 版本 is
+    where someone said it should stay. Every other direction still fires -- a
+    pinned tree that is not what the 软件源 serves has to be published, which is
+    how a rollback's own build reaches users in the first place.
     """
     reasons: dict[str, str] = {}
     for pkg in layout.inventory:
         evr = packaged.get(pkg)
-        if pkgver_of(evr) != upstream:
+        held = layout.pinned is not None and pkgver_of(evr) == layout.pinned
+        if pkgver_of(evr) != upstream and not held:
             reasons[pkg] = UPSTREAM_MOVED
         elif served is not None and served.get(pkg) != evr:
             published = served.get(pkg)
@@ -1229,6 +1300,20 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     upstream = release.version
     packaged = packaged_evr(layout)
     log(f"upstream={upstream}")
+    # The pin, said every run: a line that outlives its reason is a repository
+    # that stops moving, and the only thing that makes such a line visible is
+    # printing it in the log of the runs it is holding back.
+    if layout.pinned is not None:
+        carried = sorted({pkgver_of(packaged.get(pkg)) for pkg in layout.inventory})
+        if layout.pinned == upstream:
+            log(f"pinned={layout.pinned}: 上游 is at the pinned 版本, so it holds nothing back")
+        elif carried == [layout.pinned]:
+            log(f"pinned={layout.pinned}: 上游 is at {upstream}, and this tree stays where it was told")
+        else:
+            log(
+                f"pinned={layout.pinned}: the tree carries {', '.join(carried)}, "
+                "so the pin holds nothing -- re-render it or delete PINNED"
+            )
     for pkg, evr in sorted(packaged.items()):
         log(f"packaged {pkg}={evr}")
     if not packaged:
