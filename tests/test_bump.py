@@ -172,6 +172,22 @@ def staged_root(root: Path, versions: dict[str, str], *, templates: Path | None 
     return root
 
 
+def staged_checkout(root: Path, versions: dict[str, str]) -> Path:
+    """A tree the production constructor can read: templates, then packages.
+
+    The templates are the repository's, copied in: a staged tree is a checkout,
+    and the check reads `root/templates` for its plans before it reads anything
+    else.
+    """
+    templates = root / "templates"
+    templates.mkdir(parents=True, exist_ok=True)
+    for pkg in bump.PACKAGES:
+        (templates / f"{pkg}.PKGBUILD.in").write_text(
+            (REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text()
+        )
+    return staged_root(root, versions, templates=templates)
+
+
 def layout_at(
     root: Path,
     *,
@@ -217,8 +233,9 @@ def served_at(url: str = "https://example.invalid/repo") -> bump.Served:
     return bump.Served(url=url, section="magpie", arch="x86_64")
 
 
-# The three names a run declares for a 软件源, as the workflow exports them.
-ADDRESS_NAMES = ("PAGES_URL", "REPO_NAME", "ARCH")
+# What a run declares: the three names of its 软件源, and the version a human
+# asked for. None is a fact about the tree.
+DECLARED_NAMES = ("PAGES_URL", "REPO_NAME", "ARCH", "WANTED")
 
 
 def address_env() -> dict[str, str]:
@@ -227,15 +244,15 @@ def address_env() -> dict[str, str]:
     return {"PAGES_URL": served.url, "REPO_NAME": served.section, "ARCH": served.arch}
 
 
-def no_address():
-    """The run a fixture describes: no 软件源 declared, so 上游 alone.
+def nothing_declared():
+    """The run a fixture describes: nothing said, so 上游 alone.
 
-    The check reads the address out of the environment now, which is
-    production's shape -- and means a shell that exports the three names would
-    decide a test that never said anything about them. Only those three are
-    cleared: the rest of the environment is not this fixture's business.
+    The check reads its run's facts out of the environment now, which is
+    production's shape -- and means a shell that exports them would decide a
+    test that never said anything. Only those are cleared: the rest of the
+    environment is not this fixture's business.
     """
-    kept = {name: value for name, value in os.environ.items() if name not in ADDRESS_NAMES}
+    kept = {name: value for name, value in os.environ.items() if name not in DECLARED_NAMES}
     return mock.patch.dict(os.environ, kept, clear=True)
 
 
@@ -285,7 +302,7 @@ def run_main(
     buffer = io.StringIO()
     code: object = 0
     extra = {} if root is None else {"root": root}
-    declared = no_address() if env is None else mock.patch.dict(os.environ, env, clear=True)
+    declared = nothing_declared() if env is None else mock.patch.dict(os.environ, env, clear=True)
     with declared:
         with contextlib.redirect_stdout(buffer):
             try:
@@ -803,7 +820,7 @@ class CheckTest(unittest.TestCase):
 
     def lines(self, fetch, out_root) -> list[str]:
         buffer = io.StringIO()
-        with no_address(), contextlib.redirect_stdout(buffer):
+        with nothing_declared(), contextlib.redirect_stdout(buffer):
             bump.check(layout=layout_at(out_root), fetch=fetch)
         return buffer.getvalue().splitlines()
 
@@ -932,7 +949,7 @@ class CheckTest(unittest.TestCase):
             )
             path = root / "packages" / "magpie-cli-bin" / "PKGBUILD"
             path.write_text(path.read_text().replace("pkgrel=1", "pkgrel=2"))
-            with no_address(), self.assertRaises(bump.BumpError) as caught:
+            with nothing_declared(), self.assertRaises(bump.BumpError) as caught:
                 bump.check(layout=layout_at(root), fetch=fetch)
         self.assertIn("magpie-cli-bin", str(caught.exception))
         self.assertIn("re-render", str(caught.exception))
@@ -969,7 +986,7 @@ class CheckTest(unittest.TestCase):
                         self.assertIn(old, text)
                         path.write_text(text.replace(old, new))
 
-                    with no_address(), self.assertRaises(bump.BumpError) as caught:
+                    with nothing_declared(), self.assertRaises(bump.BumpError) as caught:
                         bump.check(layout=layout_at(root, templates=templates), fetch=fetch)
 
                 self.assertIn("magpie-bin", str(caught.exception))
@@ -986,7 +1003,7 @@ class CheckTest(unittest.TestCase):
             shutil.copytree(REPO / "templates", templates)
             path = templates / "magpie-cli-bin.PKGBUILD.in"
             path.write_text(path.read_text().replace("arch=('x86_64')", "arch=('aarch64')"))
-            with no_address(), self.assertRaises(bump.BumpError) as caught:
+            with nothing_declared(), self.assertRaises(bump.BumpError) as caught:
                 bump.check(layout=layout_at(Path(tmp), templates=templates), fetch=fetch)
         self.assertIn("magpie-cli-bin", str(caught.exception))
         self.assertEqual(fetch.urls, [])
@@ -1153,7 +1170,7 @@ class SyntaxDoorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = staged_root(Path(tmp), {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
             templates = self.broken(root)
-            with no_address(), self.assertRaises(bump.BumpError) as caught:
+            with nothing_declared(), self.assertRaises(bump.BumpError) as caught:
                 bump.check(layout=layout_at(root, templates=templates), fetch=fetch)
         self.assertIn("bash cannot parse", str(caught.exception))
         self.assertIn("magpie-bin", str(caught.exception))
@@ -1382,7 +1399,7 @@ class ServedTest(unittest.TestCase):
         root = staged_root(self.tmp, {"magpie-bin": "0.1.10", "magpie-cli-bin": "0.1.10"})
         fetch = FetchSpy(version_sources(github="0.1.10", site="0.1.10"))
         buffer = io.StringIO()
-        with no_address():
+        with nothing_declared():
             with contextlib.redirect_stdout(buffer):
                 bump.check(layout=layout_at(root), fetch=fetch)
         self.assertIn(f"{bump.RELEASES}/download/v0.1.10/SHA256SUMS", fetch.urls)
@@ -1583,15 +1600,7 @@ class ExitFactsTest(unittest.TestCase):
 
     def tree(self, *, pin: str | None = None) -> Path:
         """A staged checkout: its own templates, its packages, and maybe a pin."""
-        for pkg in bump.PACKAGES:
-            path = self.root / "templates" / f"{pkg}.PKGBUILD.in"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text((REPO / "templates" / f"{pkg}.PKGBUILD.in").read_text())
-        staged_root(
-            self.root,
-            {pkg: self.VERSION for pkg in bump.PACKAGES},
-            templates=self.root / "templates",
-        )
+        staged_checkout(self.root, {pkg: self.VERSION for pkg in bump.PACKAGES})
         if pin is not None:
             (self.root / bump.PIN_FILE).write_text(pin + "\n")
         return self.root
@@ -1693,6 +1702,65 @@ class ExitFactsTest(unittest.TestCase):
         self.assertEqual(frozen.field("ver", out), self.VERSION)
 
 
+class EntryDecisionTest(unittest.TestCase):
+    """What this run publishes, and whether it records a pin.
+
+    The decision used to live one module up, in the shell step body that called
+    the check: the check compared, the caller decided. That made the
+    comparison's answer ("is anything 落后") a different fact from the run's
+    ("does this run publish"), and the two could disagree in one run's log --
+    a `WANTED` run printed the check's `bump=0` on stderr and the relay's
+    `bump=1` on stdout. Both come out of the check now.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def tree(self, version: str = "0.1.10") -> Path:
+        return staged_checkout(self.root, {pkg: version for pkg in bump.PACKAGES})
+
+    def fetch(self, upstream: str) -> FetchSpy:
+        return FetchSpy(version_sources(github=upstream, site=upstream))
+
+    def handover(self, upstream: str, *, tree_version: str = "0.1.10", wanted: str | None = None) -> dict:
+        """One `--check`, its lines read the way the workflow reads them."""
+        env = {} if wanted is None else {"WANTED": wanted}
+        code, out = run_main("--check", fetch=self.fetch(upstream), root=self.tree(tree_version), env=env)
+        self.assertEqual(code, 0, out)
+        return frozen.fields(out)
+
+    def test_a_wanted_version_is_the_target_and_records_a_pin(self):
+        # A human's 版本 publishes even though the check just said the tree is
+        # current; the pin is what keeps the next run from undoing it.
+        handed = self.handover("0.1.10", wanted="0.1.9")
+        self.assertEqual(handed["upstream"], "0.1.10")
+        self.assertEqual(handed["target"], "0.1.9")
+        self.assertEqual(handed["bump"], "1")
+        self.assertEqual(handed["pin"], "1")
+
+    def test_asking_for_the_version_the_tree_carries_is_not_a_pin(self):
+        # The retry the fifth direction needs: re-running the 版本 the tree
+        # already carries. Writing that down as a pin would suppress the
+        # upstream direction on every later run, and the pin outlives the run.
+        handed = self.handover("0.1.10", wanted="0.1.10")
+        self.assertEqual(handed["target"], "0.1.10")
+        self.assertEqual(handed["pin"], "0")
+        self.assertEqual(handed["bump"], "1")
+
+    def test_a_scheduled_run_targets_upstream_and_records_no_pin(self):
+        handed = self.handover("0.1.11")
+        self.assertEqual(handed["target"], "0.1.11")
+        self.assertEqual(handed["pin"], "0")
+        self.assertEqual(handed["bump"], "1")
+
+    def test_a_current_tree_does_not_publish(self):
+        handed = self.handover("0.1.10")
+        self.assertEqual(handed["bump"], "0")
+        self.assertEqual(handed["target"], "0.1.10")
+
+
 class TemplatePkgnameTest(unittest.TestCase):
     """A template's literal pkgname= is the inventory key it is filed under."""
 
@@ -1792,7 +1860,7 @@ class TemplatePkgrelTest(unittest.TestCase):
                 ("render", lambda: bump.render("0.1.2", layout=layout, fetch=FetchSpy({}))),
             ):
                 with self.subTest(door=name):
-                    with no_address(), self.assertRaises(bump.BumpError) as caught:
+                    with nothing_declared(), self.assertRaises(bump.BumpError) as caught:
                         call()
                     self.assertIn("pkgrel=2.1", str(caught.exception))
 

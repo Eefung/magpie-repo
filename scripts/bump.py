@@ -1266,15 +1266,22 @@ def behind(
 def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     """Is this tree sound, and is it 落后? The run's answers, as frozen lines.
 
-    The tree is handed in. Two facts are read here, at the questions that need
-    them and before anything is fetched, so a configuration error never waits
-    behind a release nobody can compare against: the 软件源 address (three names
-    in the environment) and the pin (one line at the tree's root). The address
-    is read first, so a run that declares half an address hears about that
-    rather than about a pin.
+    The tree is handed in; three facts about the run are read here, at the
+    questions that need them and before anything is fetched, so a configuration
+    error never waits behind a release nobody can compare against: the 软件源
+    address (three names in the environment), the pin (one line at the tree's
+    root) and `WANTED` (the 版本 a human asked for). The address is read first,
+    so a run that declares half an address hears about that rather than about a
+    pin.
+
+    It answers the run's question, not just the comparison's: `target=` is the
+    版本 to render and `pin=` says whether this run is a rollback. Asking 上游
+    and deciding what to publish are one question here, which is why the caller
+    no longer re-derives either.
     """
     address = served_from_env()
     pinned = pinned_of(layout.root)
+    wanted = os.environ.get("WANTED", "")
     # This repository's own problem first, before anything is fetched: the
     # render does the same, so a tree whose templates and PKGBUILDs disagree
     # fails here rather than being reported as "upstream has no such asset".
@@ -1364,7 +1371,22 @@ def check(*, layout: Layout, fetch: Fetch = http_fetch) -> int:
     )
     for pkg, reason in sorted(reasons.items()):
         log(f"behind {pkg}={reason}")
-    log(f"bump={'1' if reasons else '0'}")
+    # The run's answer, from the comparison it just made. A human naming a
+    # 版本 is a decision, not a comparison: it publishes even when the tree is
+    # current, and it records a pin only when the tree is being held back from
+    # 上游 -- asking for the 版本 the tree already carries is the retry that
+    # fixes a Release, not a rollback.
+    if wanted:
+        target = wanted
+        decision = "1"
+        pin = "0" if wanted == upstream else "1"
+    else:
+        target = upstream
+        decision = "1" if reasons else "0"
+        pin = "0"
+    log(f"target={target}")
+    log(f"pin={pin}")
+    log(f"bump={decision}")
     return 0
 
 

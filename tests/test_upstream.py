@@ -33,16 +33,24 @@ import frozen  # noqa: E402  (the one reader of the frozen lines, as in producti
 
 def stub(*, upstream: str = "0.1.10", packaged: str = "0.1.10", bump: str | None = "0",
          code: int = 0, raw: str | None = None, packages: bool = True,
-         carried: str | None = None) -> str:
-    """A stand-in for bump.py: the frozen lines it would print, and an exit code.
+         carried: str | None = None, target: str | None = None, pin: str = "0") -> str:
+    """A stand-in for bump.py: the lines it would print, and an exit code.
 
     `raw` replaces the check's body when the case is about its shape rather
     than its values (a duplicated line, a value nobody expects). `carried` is
     the 版本 the tree holds; by default it is the one `packaged` carries, which
-    is what production prints.
+    is what production prints. `target` is what a scheduled run renders, so it
+    follows `upstream` unless a case is about a pinned run.
     """
     carried = packaged.split("-", 1)[0] if carried is None else carried
-    lines = [f"upstream={upstream}", f"packaged magpie-bin={packaged}", f"carried={carried}"]
+    target = upstream if target is None else target
+    lines = [
+        f"upstream={upstream}",
+        f"packaged magpie-bin={packaged}",
+        f"carried={carried}",
+        f"target={target}",
+        f"pin={pin}",
+    ]
     if bump is not None:
         lines.append(f"bump={bump}")
     check = raw if raw is not None else "\n".join(lines)
@@ -114,8 +122,8 @@ class UpstreamTest(unittest.TestCase):
         marker = self.root / "asked.txt"
         return marker.read_text() if marker.exists() else None
 
-    def run_script(self, source: str | None = None, *, wanted: str | None = None,
-                   state: str | None = None, repo: str | None = "owner/repo"):
+    def run_script(self, source: str | None = None, *, state: str | None = None,
+                   repo: str | None = "owner/repo"):
         env = dict(os.environ)
         # Both name the run's context, and this machine's must not leak into a
         # test: a real GITHUB_REPOSITORY would reach the real `gh`. The script
@@ -127,8 +135,6 @@ class UpstreamTest(unittest.TestCase):
         env["BUMP"] = str(self.bump(source or stub()))
         env["RELEASE_STATE"] = str(self.state(state or state_stub()))
         env["ASKED"] = str(self.root / "asked.txt")
-        if wanted is not None:
-            env["WANTED"] = wanted
         argv = ["bash", str(SCRIPT), str(self.work)]
         if repo is not None:
             argv.append(repo)
@@ -165,42 +171,16 @@ class UpstreamTest(unittest.TestCase):
         self.assertEqual(handed["target"], "0.1.11")
         self.assertEqual(handed["bump"], "1")
 
-    def test_a_version_a_human_asked_for_wins_over_the_check(self):
-        # The override is a decision, not a comparison: a pinned 版本 publishes
-        # even though --check just said the tree is current.
-        handed = self.handover(self.run_script(wanted="0.1.5"))
+    def test_an_absent_bump_line_is_a_broken_check(self):
+        # A check that exited 0 without its conclusion is a check that never
+        # finished. It has no default here: `line_field` names the line, and
+        # the run stops instead of reading a missing conclusion as "nothing to
+        # do". The fifth direction is not asked about a run nobody concluded.
+        result = self.run_script(stub(bump=None), state=state_stub(verdict="absent"))
 
-        self.assertEqual(handed["target"], "0.1.5")
-        self.assertEqual(handed["bump"], "1")
-        # What 上游 looks like is still reported; it is no longer what decides.
-        self.assertEqual(handed["upstream"], "0.1.10")
-
-    def test_a_scheduled_run_records_no_pin(self):
-        self.assertEqual(self.handover(self.run_script())["pin"], "0")
-
-    def test_asking_for_the_version_the_tree_carries_is_not_a_rollback(self):
-        # The retry the fifth direction needs: a Release that failed after the
-        # branch push is re-run at the 版本 the tree already carries. Writing
-        # that down as a pin would suppress the upstream direction on every
-        # later run, and the pin outlives the run that made it.
-        handed = self.handover(self.run_script(wanted="0.1.10"))
-
-        self.assertEqual(handed["pin"], "0")
-        self.assertEqual(handed["target"], "0.1.10")
-
-    def test_asking_for_another_version_is_a_rollback(self):
-        handed = self.handover(self.run_script(wanted="0.1.5"))
-
-        self.assertEqual(handed["pin"], "1")
-        self.assertEqual(handed["target"], "0.1.5")
-
-    def test_an_absent_bump_line_does_not_mean_publish(self):
-        # A check that exited 0 without its frozen line is a check that never
-        # finished. Reading that as "publish" is exactly the rewiring this
-        # module exists to make impossible to hide.
-        result = self.run_script(stub(bump=None))
-
-        self.assertEqual(self.handover(result)["bump"], "0")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no bump= in", result.stderr)
+        self.assertIsNone(self.asked())
 
     def test_a_check_that_fails_is_named_and_its_log_survives(self):
         result = self.run_script(stub(upstream="0.1.11", bump="1", code=1))
@@ -287,24 +267,34 @@ class UpstreamTest(unittest.TestCase):
         self.assertIn("no repository named", result.stderr)
         self.assertIsNone(self.asked())
 
-    def test_a_check_that_printed_no_conclusion_does_not_ask(self):
-        # The default for an absent `bump=` is 0, and 0 is also what a check
-        # that compared everything prints. Treating the two as one would let a
-        # truncated check plus a missing Release publish a version nobody
-        # compared: `bump=` never arrived, so there are no quiet directions to
-        # be starting from.
-        result = self.run_script(stub(bump=None), state=state_stub(verdict="absent"))
-
-        self.assertEqual(self.handover(result)["bump"], "0")
-        self.assertIn("nothing was compared", result.stderr)
-        self.assertIsNone(self.asked())
-
     def test_an_answer_that_is_neither_present_nor_absent_is_refused(self):
         result = self.run_script(stub(), state=state_stub(raw="release=maybe"))
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("'maybe', not present or absent", result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_a_pinned_run_is_relayed_as_the_check_said_it(self):
+        # A rollback: `target` is the 版本 a human asked for, and `pin=1` is
+        # what the commit step writes to PINNED. The relay carries both; it no
+        # longer works either out.
+        handed = self.handover(
+            self.run_script(stub(bump="1", target="0.1.5", pin="1"), state=state_stub(verdict="absent"))
+        )
+
+        self.assertEqual(handed["target"], "0.1.5")
+        self.assertEqual(handed["pin"], "1")
+        self.assertEqual(handed["bump"], "1")
+        self.assertIsNone(self.asked())
+
+    def test_a_missing_target_line_is_a_broken_check(self):
+        # The relay reads four lines and defaults none of them. `target=` is
+        # what the render takes, so a check that dropped it must stop the run
+        # rather than hand the render an empty 版本.
+        result = self.run_script(stub(raw="upstream=0.1.10\npin=0\nbump=0"))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no target= in", result.stderr)
 
     def test_a_check_that_already_says_publish_does_not_ask(self):
         # The fifth direction is for the quiet runs; an absent Release is about
@@ -316,19 +306,15 @@ class UpstreamTest(unittest.TestCase):
         self.assertEqual(handed["bump"], "1")
         self.assertIsNone(self.asked())
 
-    def test_a_pinned_version_does_not_ask(self):
-        handed = self.handover(self.run_script(wanted="0.1.5", state=state_stub(verdict="absent")))
-
-        self.assertEqual(handed["bump"], "1")
-        self.assertIsNone(self.asked())
-
     def test_a_duplicated_frozen_line_is_a_protocol_break(self):
         # Two `bump=` lines is the producer having written twice, which
         # line_field reports instead of picking one. The workflow would die on
         # the same line; the test job must see it too -- and see it as the
         # reader's complaint, not as "bump= is not 0 or 1", which is what a
         # reader that swallowed the message would leave behind.
-        result = self.run_script(stub(raw="upstream=0.1.10\nbump=0\nbump=1"))
+        result = self.run_script(
+            stub(raw="upstream=0.1.10\ntarget=0.1.10\npin=0\nbump=0\nbump=1")
+        )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("2 bump= lines", result.stderr)

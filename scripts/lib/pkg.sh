@@ -27,9 +27,10 @@
 #
 # A producer writes its line once, so two matches is a protocol break to report,
 # not a value to pick from. A missing line is a failure here too: what "absent"
-# means differs per line (an absent `bump=` is "nothing to do", an absent `ver=`
-# is a broken render), so the caller decides with `|| true` and a default rather
-# than this function guessing.
+# means differs per line (an absent `gates=` means a tree older than the
+# contract, an absent `bump=` is a check that never concluded), so the caller
+# decides with `line_field_or` and a named default rather than this function
+# guessing.
 line_field() {
     local name="$1" file="$2" count value
     [ -r "$file" ] || { echo "no such file: $file" >&2; return 1; }
