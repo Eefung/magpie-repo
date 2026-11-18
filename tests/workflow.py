@@ -24,6 +24,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from live import live, live_lines
+
 WORKFLOW = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "publish.yml"
 
 # A job header at 2 spaces, a step at 6, a step's key at 8.
@@ -79,6 +81,16 @@ def env(source: str | None = None) -> dict[str, str]:
 
     Only the job-level block: a step's ``env:`` is that step's business, and a
     value declared in both places would be two facts wearing one name.
+
+    Each line is read as code first (``live``), so a comment-only line is blank
+    and a trailing comment never reaches ``_value`` -- a ``#`` inside a quoted
+    value is content and survives untouched.
+
+    The rule is bash's, because that is the reader the rest of this suite uses.
+    This block is YAML, where ``#`` starts a comment only after whitespace: the
+    two disagree on a ``;`` before a ``#`` and on a plain scalar holding an
+    unmatched quote. The workflow writes neither, and a second dialect in the
+    reader would buy less than the one width it costs.
     """
     found: dict[str, str] = {}
     inside = False
@@ -88,10 +100,10 @@ def env(source: str | None = None) -> dict[str, str]:
             continue
         if not inside:
             continue
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+        code = live(line)
+        if not code.strip():
             continue
-        match = ENV_KEY_RE.match(line)
+        match = ENV_KEY_RE.match(code)
         if match is None:
             inside = False
             continue
@@ -100,15 +112,25 @@ def env(source: str | None = None) -> dict[str, str]:
 
 
 def _value(raw: str) -> str:
-    """A YAML scalar as this file writes it: maybe quoted, maybe commented."""
-    value = raw.split(" #", 1)[0].strip()
+    """A YAML scalar as this file writes it: maybe quoted.
+
+    The comment is not this function's business: the caller read the line as
+    code, so what arrives here is the whole scalar.
+    """
+    value = raw.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
         value = value[1:-1]
     return value
 
 
 def steps(source: str | None = None) -> list[Step]:
-    """The publish job's steps, in the order they run."""
+    """The publish job's steps, in the order they run.
+
+    A step's ``name:`` and ``if:`` are read as code (``live``). Before that, a
+    comment after ``- name:`` was captured into the name -- ``(.+)`` is greedy
+    -- so every exact-name lookup in the suite missed the step and read it as
+    "moved". A comment after ``if:`` was the same story one key down.
+    """
     lines = job(source=source)
     blocks: list[list[str]] = []
     for line in lines:
@@ -119,13 +141,13 @@ def steps(source: str | None = None) -> list[Step]:
 
     found: list[Step] = []
     for block in blocks:
-        match = STEP_RE.match(block[0])
+        match = STEP_RE.match(live(block[0]))
         assert match is not None, block[0]  # it matched when the block was opened
         name = (match.group(1) or f"uses {match.group(2)}").strip()
         if_ = None
         run = ""
         for index, line in enumerate(block):
-            key = KEY_RE.match(line)
+            key = KEY_RE.match(live(line))
             if key is None:
                 continue
             if key.group(1) == "if":
@@ -215,11 +237,7 @@ def env_writes(source: str | None = None) -> list[str]:
     function has to grow the same two rules.
     """
     text_ = text() if source is None else source
-    return [
-        line.strip()
-        for line in text_.splitlines()
-        if "$GITHUB_ENV" in line and not line.strip().startswith("#")
-    ]
+    return [line for line in live_lines(text_) if "$GITHUB_ENV" in line]
 
 
 def unparsed_output_writes(source: str | None = None) -> list[str]:
@@ -236,7 +254,9 @@ def unparsed_output_writes(source: str | None = None) -> list[str]:
     unparsed: list[str] = []
     offset = 0
     for line in text_.splitlines(keepends=True):
-        if line.strip().startswith("#"):
+        # The walk keeps its own line offsets -- they are what maps a `>>` back
+        # into `spans` -- so only the judgement "is this line code" is `live`'s.
+        if not live(line).strip():
             offset += len(line)
             continue
         if WRITE_RE.search(line):

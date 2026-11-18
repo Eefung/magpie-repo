@@ -77,7 +77,7 @@ class UpstreamHandoverTest(unittest.TestCase):
         """The entry step's code, comments dropped: a note about it is not it."""
         for step in workflow.steps(source=source):
             if step.name == self.STEP:
-                return "\n".join(line.split("#", 1)[0] for line in step.run.splitlines())
+                return live.live(step.run)
         raise AssertionError("the entry step moved; reword this test")
 
     def test_the_step_calls_the_check_itself(self):
@@ -131,6 +131,27 @@ class UpstreamHandoverTest(unittest.TestCase):
         # this line it would only ever say it could not ask.
         self.assertEqual(workflow.env().get("RELEASE_REPO"), "${{ github.repository }}")
         self.assertEqual(self.workflow().count("github.repository"), 1)
+
+    def test_a_trailing_comment_does_not_reach_the_value(self):
+        # The reverse of the quoted case: this one fails if `env()` goes back to
+        # matching the raw line and leaving the comment to `_value`.
+        source = workflow.text().replace(
+            "      ARCH: x86_64\n", "      ARCH: x86_64  # the served arch\n"
+        )
+        self.assertNotEqual(source, workflow.text(), "the env block moved; reword this test")
+        self.assertEqual(workflow.env(source=source)["ARCH"], "x86_64")
+
+    def test_a_quoted_env_value_keeps_its_hash(self):
+        # The comment rule belongs to `live` now. `_value` used to cut at the
+        # first " #", which truncates a quoted scalar carrying one -- no value
+        # in today's workflow does, so this is the reader's own contract, not a
+        # change to what the publish job declares.
+        source = workflow.text().replace(
+            "      GIT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com\n",
+            '      GIT_EMAIL: "a # b"\n',
+        )
+        self.assertNotEqual(source, workflow.text(), "the env block moved; reword this test")
+        self.assertEqual(workflow.env(source=source)["GIT_EMAIL"], "a # b")
 
     def test_the_render_step_takes_the_version_the_check_decided(self):
         workflow = self.workflow()
@@ -457,6 +478,20 @@ class PublishTransactionTest(unittest.TestCase):
         self.assertEqual(writes, [])
         self.assertIn("ver", workflow.output_keys())
         self.assertIn("ver", workflow.output_reads())
+
+    def test_a_comment_after_a_step_name_is_not_part_of_the_name(self):
+        # `steps()` reads header lines as code now. Before that, the name
+        # captured the comment, so every exact-name lookup in this file missed
+        # the step and read it as "moved".
+        text = workflow.text()
+        moved = text.replace(
+            f"      - name: {self.COMMIT}\n",
+            f"      - name: {self.COMMIT}   # last\n",
+        )
+        self.assertNotEqual(moved, text, "the commit step moved; reword this test")
+        # The lookup every consumer here performs, not membership in a list.
+        commit = [step for step in workflow.steps(source=moved) if step.name == self.COMMIT]
+        self.assertEqual([step.name for step in commit], [self.COMMIT])
 
     def test_a_comment_on_the_gate_is_not_a_change(self):
         # The failure the reader exists to end: a behaviour-identical edit that
@@ -830,11 +865,7 @@ class PackageFilePatternTest(unittest.TestCase):
         A comment may name it -- that is how the history is explained -- but a
         line that runs must ask pkg.sh.
         """
-        return [
-            line.strip()
-            for line in text.splitlines()
-            if ".pkg.tar" in line and not line.lstrip().startswith("#")
-        ]
+        return [line for line in live.live_lines(text) if ".pkg.tar" in line]
 
     def sourcing(self) -> list[Path]:
         """The scripts that source pkg.sh, and can therefore ask it."""
@@ -880,6 +911,9 @@ class PackageFilePatternTest(unittest.TestCase):
         )
         # A comment that names it is how the history stays readable.
         self.assertEqual(self.spelling("# used to spell *.pkg.tar.* here\n"), [])
+        # And so is a note at the end of a line: the reader is `live` now, so a
+        # trailing comment stops counting as a line that spells it.
+        self.assertEqual(self.spelling("run  # *.pkg.tar.zst is the suffix\n"), [])
 
 
 class SeedTest(unittest.TestCase):
@@ -1190,7 +1224,7 @@ class PinnedRollbackTest(unittest.TestCase):
         """The commit step's code, comments dropped: a note about it is not it."""
         for step in workflow.steps(source=source):
             if step.name == "Commit the rendered PKGBUILDs":
-                return "\n".join(line.split("#", 1)[0] for line in step.run.splitlines())
+                return live.live(step.run)
         raise AssertionError("the commit step moved; reword this test")
 
     def test_the_step_writes_the_file_the_check_reads(self):
@@ -1236,7 +1270,7 @@ class PublishNamesTest(unittest.TestCase):
         """A step's run block, comments dropped: a note about it is not it."""
         for step in workflow.steps():
             if step.name.startswith(prefix):
-                return "\n".join(line.split("#", 1)[0] for line in step.run.splitlines())
+                return live.live(step.run)
         raise AssertionError(f"no step named {prefix}*")
 
     def test_the_branch_is_declared_once(self):
@@ -1355,11 +1389,9 @@ class WorkflowShellTest(unittest.TestCase):
     def mismounted(self, text: str) -> list[str]:
         """Lines that reach for the container's mount outside a `docker run`."""
         return [
-            line.strip()
-            for line in text.splitlines()
-            if "/src" in line
-            and not line.strip().startswith("#")
-            and "docker run" not in line
+            line
+            for line in live.live_lines(text)
+            if "/src" in line and "docker run" not in line
         ]
 
     def swallowed(self, text: str) -> list[str]:
@@ -1388,6 +1420,12 @@ class WorkflowShellTest(unittest.TestCase):
             moved != self.text(), "the workflow no longer names ./scripts/release.sh"
         )
         self.assertTrue(self.mismounted(moved))
+
+    def test_a_line_end_comment_does_not_reach_the_mount(self):
+        # The mount named in prose is not a line that reaches for it; before
+        # this, a trailing comment made `mismounted` report a step that uses
+        # the mount correctly.
+        self.assertEqual(self.mismounted("run  # /src is mounted here\n"), [])
 
     def test_a_script_that_cannot_run_is_caught(self):
         broken = self.text().replace("./scripts/release.sh", "./scripts/released.sh")
