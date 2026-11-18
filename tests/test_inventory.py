@@ -30,6 +30,7 @@ import bump  # noqa: E402  (the module lives beside the scripts, not on the path
 import fixtures  # noqa: E402  (the one spelling of a 包文件's name in the test tree)
 import frozen  # noqa: E402  (the test-side reader of the frozen lines and their table)
 import install_block  # noqa: E402  (the one reader of the block a user pastes)
+import live  # noqa: E402  (the one reader of where a comment starts)
 import workflow  # noqa: E402  (the reader of .github/workflows/publish.yml)
 
 LIB = REPO / "scripts" / "lib" / "pkg.sh"
@@ -452,8 +453,8 @@ class PublishTransactionTest(unittest.TestCase):
         give the second carrier the same two rules -- not a line to write the
         fact on and hope.
         """
-        live = workflow.env_writes()
-        self.assertEqual(live, [])
+        writes = workflow.env_writes()
+        self.assertEqual(writes, [])
         self.assertIn("ver", workflow.output_keys())
         self.assertIn("ver", workflow.output_reads())
 
@@ -1241,20 +1242,26 @@ class PublishNamesTest(unittest.TestCase):
     def test_the_branch_is_declared_once(self):
         branch = workflow.env()["PAGES_BRANCH"]
         self.assertTrue(branch)
-        live = [
+        declared = [
             line.strip()
             for line in workflow.text().splitlines()
             if branch in line and not line.lstrip().startswith("#")
         ]
-        self.assertEqual(live, [f"PAGES_BRANCH: {branch}"])
+        self.assertEqual(declared, [f"PAGES_BRANCH: {branch}"])
 
     def seed_call(self, source: str | None = None) -> str:
-        """The one live line that hands the branch to scripts/seed-tree.sh."""
+        """The one live line that hands the branch to scripts/seed-tree.sh.
+
+        Live: the comment reader is `live`, so a call that moved behind a `#`
+        is prose, this finds no line to hand back, and it raises "the seed call
+        moved" itself rather than returning something the caller has to check
+        (#15, #18).
+        """
         for step in workflow.steps(source=source):
             if step.name.startswith("Build the packages"):
-                for line in step.run.splitlines():
-                    if "seed-tree.sh" in line and not line.strip().startswith("#"):
-                        return line.strip()
+                for line in live.live_lines(step.run):
+                    if "seed-tree.sh" in line:
+                        return line
         raise AssertionError("the seed call moved; reword this test")
 
     def test_the_seed_is_handed_the_branch(self):
@@ -1265,10 +1272,10 @@ class PublishNamesTest(unittest.TestCase):
         seed = (REPO / "scripts" / "seed-tree.sh").read_text()
         self.assertIn('branch="${3:', seed)
         # Code, not prose: the usage example in the header names a branch.
-        live = "\n".join(
+        seed_live = "\n".join(
             line for line in seed.splitlines() if not line.lstrip().startswith("#")
         )
-        self.assertNotIn(workflow.env()["PAGES_BRANCH"], live)
+        self.assertNotIn(workflow.env()["PAGES_BRANCH"], seed_live)
 
     def test_the_publish_step_hands_it_over(self):
         self.assertIn('"$PAGES_BRANCH"', self.run_of("Publish the pacman repository"))
@@ -1300,6 +1307,18 @@ class PublishNamesTest(unittest.TestCase):
         )
         self.assertNotEqual(moved, workflow.text(), "the seed moved; reword this test")
         self.assertNotIn('"$PAGES_BRANCH"', self.seed_call(source=moved))
+
+    def test_a_commented_out_seed_call_is_not_the_live_line(self):
+        # Behind a `#` the call is prose. The guard has to stop finding a line
+        # to hand the branch to -- otherwise a disabled seed keeps it green,
+        # and the branch it never passes is exactly what goes stale (#15, #18).
+        call = './scripts/seed-tree.sh "$TREE" "$ARCH" "$PAGES_BRANCH"'
+        moved = workflow.text().replace(call, "true  # " + call)
+        self.assertNotEqual(moved, workflow.text(), "the seed moved; reword this test")
+        # The guard names the failure it hands back, so a step renamed under it
+        # fails the same way and not by some other AssertionError.
+        with self.assertRaisesRegex(AssertionError, "the seed call moved"):
+            self.seed_call(source=moved)
 
 
 class WorkflowShellTest(unittest.TestCase):

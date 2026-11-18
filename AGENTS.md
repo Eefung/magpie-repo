@@ -60,11 +60,13 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 | `test_frozen.py` | 测试侧的冻结行读者走同一道门（同措辞）；种类表 ↔ 读点 ↔ 写点的三向对账；`pkg.sh` 之外没有裸读者 |
 | `test_inventory.py` | 包清单 ↔ 目录 ↔ workflow ↔ README 的对账；step 顺序/门/outputs、`run:` 块形状、arch 表、发布树、保留窗口的数字；seed 的三种答案各跑一次真的 |
 | `test_docs.py` | README 里由程序决定的那两句（运行时间、provides/conflicts）各有 reader；测试地图与脚本地图的完整性；文档点名的模块与测试类 |
+| `test_live.py` | `live.py`：注释边界（整行、行尾、引号内、转义、词首），`live` 不改行数，`naming` 按行而不是按出现次数 |
 | `install_block.py` | 不是测试：用户要粘的安装段的唯一读者——README 的块与 Release 说明都过它 |
 | `fixtures.py` | 不是测试：包文件名的唯一拼法，`test_pkg_sh.py` 用 `pkgfile_pkgname`/`pkgfile_version` 反向钉住 |
 | `frozen.py` | 不是测试：冻结行的测试侧读者——表点名的键走同一道门（域、路径、缺行同措辞），表没点名的日志行走裸读者，其余测试都经它 |
 | `workflow.py` | 不是测试：`publish.yml` 的唯一读者（job 的 env、step 列表、cron、push 的 `paths`、`$GITHUB_OUTPUT` 的写与读、它不用的那个载体） |
 | `gate.py` | 不是测试：`check.sh` 的唯一读者（门表、`gate_*` 函数、抬头注释、打印的 note） |
+| `live.py` | 不是测试：活行的读者——注释边界按 bash（词首才算注释，引号内与转义之后不算；那组字符见 `live.py` 的 `_WORD_BREAKS`）；`live` / `live_lines` / `naming` 三个动词。其余读点还在各自切注释，逐批搬过来 |
 
 ## 提交
 
