@@ -126,14 +126,19 @@ package|-|pkglist|required|packages
 TABLE
 }
 
+# Where the cells a gate reads land in the row `frozen_row` hands back, so the
+# gate names them instead of spelling an index. These move with the header above
+# and with nothing else; `frozen_field`'s 1..5 is the other question -- a column
+# number a caller asks for, matching this order but not spelled from it.
+FROZEN_DOMAIN=1 FROZEN_SHAPE=2 FROZEN_REQUIRED=3
+
 # frozen_row <键> <数组名> -- one parse of the table, the key's five cells.
 #
-# `frozen_field` is this reader with one cell taken out of the answer, and it is
-# the only caller today: the gates still read cell by cell, three parses to a
-# `frozen_var`. They move onto this reader in the two slices that follow, which
-# is why it is here before them -- a row reader with no callers is a shape
-# nobody can check, and one with this caller already answers "is the row the
-# columns say it is". The
+# Two callers: `frozen_var`, which takes its three cells out of one row, and
+# `frozen_field`, which is this reader with one cell taken out of the answer.
+# `frozen_write` and `frozen_list` still read cell by cell and move onto it in
+# the slice that follows -- which is why the reader is here before all of them:
+# one with callers already answers "is the row the columns say it is". The
 # answer goes into the caller's array, the way `frozen_list` and `frozen_entries`
 # hand theirs back -- printing it for the caller's `mapfile` would make the
 # swallow this module exists to prevent writable again. The caller declares the
@@ -177,10 +182,10 @@ frozen_field() {
     printf '%s\n' "${_row[$((_column - 1))]}"
 }
 
-# The cells a gate reads, so no caller spells a column number.
+# The two cells a gate still asks for by name -- `frozen_var` reads its whole
+# row, so the 缺行 cell has no accessor left to keep.
 frozen_domain() { frozen_field "$1" 2; }
 frozen_shape() { frozen_field "$1" 3; }
-frozen_required() { frozen_field "$1" 4; }
 
 # frozen_var <键> <文件> <调用方的变量名> [缺省] -- the key's value, assigned.
 #
@@ -198,14 +203,16 @@ frozen_required() { frozen_field "$1" 4; }
 # a default on a required key would hide the absence it exists to report, and an
 # optional key read without one leaves a caller with no answer at all.
 frozen_var() {
-    local _key="$1" _file="$2" _target="$3" _value _shape _required
-    _shape="$(frozen_shape "$_key")" || return 1
+    local _key="$1" _file="$2" _target="$3" _value
+    local -a _row=()
+    frozen_row "$_key" _row || return 1
+    local _domain="${_row[$FROZEN_DOMAIN]}" _shape="${_row[$FROZEN_SHAPE]}"
+    local _required="${_row[$FROZEN_REQUIRED]}"
     case "$_shape" in
         value | path) ;;
-        *) frozen_wrong_door "$_key" value
+        *) frozen_wrong_door "$_key" value "$_shape"
            return 1 ;;
     esac
-    _required="$(frozen_required "$_key")" || return 1
     if [ -n "${4+set}" ] && [ "$_required" != optional ]; then
         echo "${_key}= is required; a default would hide its absence" >&2
         return 1
@@ -216,13 +223,19 @@ frozen_var() {
     fi
     _value="$(frozen_read "$_key" "$_file")" || return 1
     if [ "$_value" = "$FROZEN_ABSENT" ]; then
-        # An absent optional key's default is the caller's judgement, so it is
+        # What an absence means is the row's answer, and the gate is the one
+        # holding it (`frozen_read` no longer asks). A required key's absence is
+        # this gate's complaint; an optional one's is the caller's judgement,
         # handed on as it came -- `pre-contract` is not a 版本, and judging it as
         # one would refuse the sentence the caller meant.
+        if [ "$_required" != optional ]; then
+            echo "no ${_key}= in ${_file}" >&2
+            return 1
+        fi
         _value="$4"
     else
         case "$_shape" in
-            value) frozen_domain_allows "$_key" "$_value" || return 1 ;;
+            value) frozen_domain_allows "$_domain" "$_key" "$_value" || return 1 ;;
             path) frozen_must_be_file "$_key" "$_value" || return 1 ;;
         esac
     fi
@@ -235,20 +248,18 @@ FROZEN_ABSENT="__absent__"
 
 # frozen_read <键> <文件> -- the line's value, or FROZEN_ABSENT.
 #
-# The one place the two readings are told apart: a line that is not there is a
-# fact the table interprets, while a line written twice or written empty is a
-# protocol break and stays `line_field`'s complaint.
+# This answers one question -- what the file says this key is -- and hands the
+# absence back as a value for the caller to interpret: the gate already holds
+# the row's `required` cell, and asking the table again here made "may this key
+# be absent" a second answer point. A line written twice or written empty stays
+# a protocol break, which is `line_field`'s complaint.
 frozen_read() {
     local _key="$1" _file="$2" _count
     [ -r "$_file" ] || { echo "no such file: ${_file}" >&2; return 1; }
     _count="$(frozen_count "$_key" "$_file")"
     if [ "${_count:-0}" -eq 0 ]; then
-        if [ "$(frozen_required "$_key")" = optional ]; then
-            printf '%s\n' "$FROZEN_ABSENT"
-            return 0
-        fi
-        echo "no ${_key}= in ${_file}" >&2
-        return 1
+        printf '%s\n' "$FROZEN_ABSENT"
+        return 0
     fi
     line_field "$_key" "$_file"
 }
@@ -261,11 +272,12 @@ frozen_read() {
 # empty `"${assets[@]}"` as "no assets to upload" and exited 0, so a Release with
 # the checksums and none of the packages was a green run.
 frozen_list() {
-    local _key="$1" _file="$2" _target="$3" _value
-    [ "$(frozen_shape "$_key")" = list ] || {
-        frozen_wrong_door "$_key" list
+    local _key="$1" _file="$2" _target="$3" _value _shape
+    _shape="$(frozen_shape "$_key")" || return 1
+    if [ "$_shape" != list ]; then
+        frozen_wrong_door "$_key" list "$_shape"
         return 1
-    }
+    fi
     _value="$(line_field "$_key" "$_file")" || return 1
     frozen_must_be_file "$_key" "$_value" || return 1
     local -a _entries=()
@@ -303,10 +315,12 @@ frozen_entries() {
     _out=("${_found[@]}")
 }
 
-# frozen_wrong_door <键> <这个门读的形状> -- the refusal a gate gives a key whose
-# shape belongs to another door (the 包清单's rows have `pkglist_field`).
+# frozen_wrong_door <键> <这个门读的形状> <键的形状> -- the refusal a gate gives a
+# key whose shape belongs to another door (the 包清单's rows have
+# `pkglist_field`). The shape is an argument because every caller has read it
+# already: asking the table again here would make a refused call parse it twice.
 frozen_wrong_door() {
-    echo "${1}= is a $(frozen_shape "$1"), not a ${2}; read it through its own door" >&2
+    echo "${1}= is a ${3}, not a ${2}; read it through its own door" >&2
     return 1
 }
 
@@ -324,14 +338,16 @@ frozen_must_be_file() {
 # file, and a list naming no paths are refused where they are produced rather
 # than where a consumer trips over them.
 frozen_write() {
-    local _key="$1" _value="$2" _shape
+    local _key="$1" _value="$2" _shape _domain
     _shape="$(frozen_shape "$_key")" || return 1
     [ -n "$_value" ] || {
         echo "${_key}= needs a value; it would write an empty line" >&2
         return 1
     }
     case "$_shape" in
-        value) frozen_domain_allows "$_key" "$_value" || return 1 ;;
+        value)
+            _domain="$(frozen_domain "$_key")" || return 1
+            frozen_domain_allows "$_domain" "$_key" "$_value" || return 1 ;;
         path) frozen_must_be_file "$_key" "$_value" || return 1 ;;
         list)
             frozen_must_be_file "$_key" "$_value" || return 1
@@ -343,13 +359,15 @@ frozen_write() {
     printf '%s=%s\n' "$_key" "$_value"
 }
 
-# frozen_domain_allows <键> <值> -- does the value fit the 域 the table gives it.
+# frozen_domain_allows <域> <键> <值> -- does the value fit that 域.
 #
 # One interpreter for the table's vocabulary, so the tokens stay data: a token
-# nobody interprets is a refusal here, not a value that slips through.
+# nobody interprets is a refusal here, not a value that slips through. The 域 is
+# an argument because the caller has already read the row it lives in; reading
+# it again here made one gate call parse the table twice. The key stays for the
+# sentence, and the sentence is the interface.
 frozen_domain_allows() {
-    local _key="$1" _value="$2" _domain
-    _domain="$(frozen_domain "$_key")" || return 1
+    local _domain="$1" _key="$2" _value="$3"
     case "$_domain" in
         -) return 0 ;;
         version)

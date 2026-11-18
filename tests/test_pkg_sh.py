@@ -1057,6 +1057,135 @@ class FrozenRowTest(unittest.TestCase):
                 self.assertEqual(result.stdout.splitlines(), list(expected.values()))
 
 
+class FrozenParseCountTest(unittest.TestCase):
+    """How many times one gate call parses the kinds table.
+
+    The count goes into a file, not a variable: a gate called inside `$(…)` runs
+    in a subshell, so `n=$((n+1))` increments a copy and the parent reads zero.
+    The stub wraps the real `frozen_table`, so the counts are of the table being
+    consulted, not of a name appearing in the source.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.log = self.root / "log.txt"
+
+    def count(
+        self, script: str, asked: str = "frozen_table"
+    ) -> tuple[subprocess.CompletedProcess, int]:
+        """Run `script` with the named gate wrapped, and say how often it was asked."""
+        if asked not in ("frozen_table", "frozen_field"):
+            raise ValueError(f"no stub for {asked}")
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "ledger"
+            ledger.write_text("")
+            where = shlex.quote(str(ledger))
+            if asked == "frozen_table":
+                # The real table is captured before the stub shadows the name, so
+                # the stub answers with the same rows; only the asking is counted.
+                stub = (
+                    '_real="$(frozen_table)"\n'
+                    "frozen_table() {\n"
+                    '  printf "asked\\n" >> ' + where + "\n"
+                    '  printf "%s\\n" "$_real"\n'
+                    "}\n"
+                )
+            else:
+                stub = (
+                    "frozen_field() {\n"
+                    '  printf "asked\\n" >> ' + where + "\n"
+                    '  printf "%s\\n" version\n'
+                    "}\n"
+                )
+            result = call(stub + script)
+            return result, len(ledger.read_text().splitlines())
+
+    def test_a_value_key_parses_the_table_once(self):
+        self.log.write_text("upstream=0.1.9\n")
+        result, parses = self.count(
+            f'v=""; frozen_var upstream {shlex.quote(str(self.log))} v'
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(parses, 1)
+
+    def test_an_absent_required_key_parses_the_table_once(self):
+        self.log.write_text("")
+        result, parses = self.count(
+            f'v=""; frozen_var target {shlex.quote(str(self.log))} v'
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no target= in", result.stderr)
+        self.assertEqual(parses, 1)
+
+    def test_the_gate_asks_no_single_cell_after_reading_the_row(self):
+        # The `required` cell used to be asked twice on the absent path -- once
+        # by the gate, once by `frozen_read`. Reading the row means no cell is
+        # asked at all.
+        self.log.write_text("")
+        result, asks = self.count(
+            f'v=""; frozen_var target {shlex.quote(str(self.log))} v || true',
+            asked="frozen_field",
+        )
+
+        self.assertIn("no target= in", result.stderr)
+        self.assertEqual(asks, 0, result.stderr)
+
+    def test_the_write_gate_still_parses_twice(self):
+        # #27 reads this gate's row; until then a value-shaped key's shape and
+        # 域 are two reads, and this case is what says the count did not move
+        # early.
+        result, parses = self.count("frozen_write tests 399")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(parses, 2)
+
+    def test_a_path_shaped_write_asks_once(self):
+        # The path branch asks no 域, so a path-shaped key is one read even
+        # before #27: the two reads above are the value shape's, not the gate's.
+        notes = self.root / "notes.md"
+        notes.write_text("body\n")
+        result, parses = self.count(f"frozen_write notes {shlex.quote(str(notes))}")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(parses, 1)
+
+    def test_a_refused_list_call_asks_once(self):
+        # The double read was on this path: the gate asked the shape, and the
+        # refusal asked it again to name what the key really is.
+        self.log.write_text("upstream=0.1.9\n")
+        result, parses = self.count(
+            f'f=(); frozen_list upstream {shlex.quote(str(self.log))} f'
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("upstream= is a value, not a list", result.stderr)
+        self.assertEqual(parses, 1)
+
+    def test_the_stub_records_its_own_asks(self):
+        # A positive control for the cell stub: a gate that asks cells has to
+        # show up, or "asked nothing" means the stub never ran.
+        result, asks = self.count("frozen_write tests 399", asked="frozen_field")
+
+        self.assertGreater(asks, 0, result.stderr)
+
+    def test_the_list_gate_parses_once(self):
+        entry = self.root / "a.pkg.tar.zst"
+        entry.write_text("x")
+        listing = self.root / "assets.txt"
+        listing.write_text(f"{entry}\n")
+        self.log.write_text(f"assets={listing}\n")
+        result, parses = self.count(
+            f'files=(); frozen_list assets {shlex.quote(str(self.log))} files'
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(parses, 1)
+
+
 class FrozenCountSpellingTest(unittest.TestCase):
     """`<键>=` counting has one home, and a second one reds here.
 
@@ -1064,7 +1193,8 @@ class FrozenCountSpellingTest(unittest.TestCase):
     `frozen_read` spelled the grep itself. Two homes that agree is a rule with
     no signal: changing one leaves the other answering an older question, and
     nothing goes red. This is the static half of that guard -- the other half
-    is `frozen_read`'s messages, which the gates' own cases hold.
+    is the sentence a gate gives when the line is absent, which the gates' own
+    cases hold.
 
     The pattern knows grep's shapes (`-c`, `-cE`, `--count`): a guard that knew
     only `grep -c` stayed green when someone wrote `grep -cE`. It reads the

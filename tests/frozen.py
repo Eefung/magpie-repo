@@ -59,7 +59,8 @@ def field(name: str, log: str) -> str | None:
     A key the table names is read through the gates: the same 域, shape and path
     checks the pipeline applies, and the same sentence when one fails. The
     table also answers what None means here -- a required key's absence is the
-    reader's complaint (it raises), an optional one's is the caller's (None).
+    gate's complaint (this reader raises with its sentence), an optional one's
+    is the caller's (None).
     The 包清单's row is the one the gates refuse by name, and that refusal is
     the right answer here too: this reader hands back one key's value, and a
     `package <dir> <pkgname>` line is read by `pkglist_field`, not by a value.
