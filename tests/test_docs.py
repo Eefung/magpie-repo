@@ -28,7 +28,6 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -40,7 +39,6 @@ sys.path.insert(0, str(REPO / "tests"))
 import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
 import docs_claims  # noqa: E402  (the reader of what a document points at)
 import gate  # noqa: E402  (the reader of scripts/check.sh)
-import live  # noqa: E402  (the one reader of where a comment starts)
 import workflow  # noqa: E402  (the one reader of publish.yml)
 
 
@@ -62,46 +60,6 @@ def template(pkg: str) -> str:
 #
 # ADRs are deliberately not scanned: a decision record quotes the code that was
 # deleted, and "the fix was to delete `scripts/publish.sh`" is its job.
-
-# A module's own name, as the docs write it: `read_template`, `line_field`.
-IDENT = re.compile(r"`([a-z][a-z0-9]*_[a-z0-9_]+)`")
-
-# A test class, as the gate's note names it: `RootAdapterTest`.
-CLASS = re.compile(r"\b([A-Z][A-Za-z]*(?:Test|Reader|Error))\b")
-
-def code_facts(repo: Path = REPO) -> str:
-    """The production tree, for a name the docs point at to exist in.
-
-    `scripts/` only, and comment lines dropped: a doc names what *decides*
-    something -- a module in the pipeline -- so a name kept alive in a comment
-    about a deleted function is exactly the case that must not pass. Including
-    `tests/` would let this file's own fixtures satisfy the claim they exist to
-    falsify.
-    """
-    sources = [*repo.glob("scripts/**/*.sh"), *repo.glob("scripts/**/*.py")]
-    return "\n".join(line for path in sources for line in live.live_lines(path.read_text()))
-
-
-def gone_names(document: str, facts: str) -> list[str]:
-    """Names a document points at that the code no longer carries."""
-    return [
-        name
-        for name in sorted(set(IDENT.findall(document)))
-        if not re.search(rf"\b{re.escape(name)}\b", facts)
-    ]
-
-
-def gone_classes(note: str, repo: Path = REPO) -> list[str]:
-    """Test classes the gate's note names that no test module defines."""
-    defined = "\n".join(
-        path.read_text() for path in (repo / "tests").glob("*.py")
-    )
-    return [
-        name
-        for name in sorted(set(CLASS.findall(note)))
-        if f"class {name}" not in defined
-    ]
-
 
 class ScheduleTest(unittest.TestCase):
     """README says when the run happens; the workflow's cron is the answer."""
@@ -275,6 +233,8 @@ class ScriptsMapTest(unittest.TestCase):
         self.assertEqual(sorted(self.scripts() - self.listed(dropped)), ["scripts/check-range.sh"])
 
 
+
+
 class NamedThingsTest(unittest.TestCase):
     """The names the docs point at exist, because a reader acts on them.
 
@@ -306,22 +266,13 @@ class NamedThingsTest(unittest.TestCase):
     def note(self) -> str:
         return gate.note()
 
-    def test_a_name_in_a_trailing_comment_does_not_keep_it_alive(self):
-        # Facts are code lines: a note naming a reader that was deleted is the
-        # case this guard exists for.
-        with tempfile.TemporaryDirectory() as tmp:
-            tree = Path(tmp)
-            (tree / "scripts").mkdir()
-            (tree / "scripts" / "x.sh").write_text("echo 1  # ghost_name\n")
-            self.assertNotIn("ghost_name", code_facts(tree))
-
-    def test_every_module_glossary_names_is_in_the_tree(self):
-        self.assertEqual(gone_names(self.glossary(), code_facts()), [])
+    def test_every_name_glossary_points_at_is_in_the_tree(self):
+        self.assertEqual(docs_claims.unresolved(self.glossary(), REPO), [])
 
     def test_every_name_the_gates_note_points_at_is_in_the_tree(self):
         # The note is the document that says what a green run does not prove,
         # and it names the module behind each gap (`served_evr`, `bump.py`).
-        self.assertEqual(gone_names(self.note(), code_facts()), [])
+        self.assertEqual(docs_claims.unresolved(self.note(), REPO), [])
 
     def test_every_path_the_documents_name_is_there(self):
         # Existence, not executability: `scripts/lib/pkg.sh` is sourced, not
@@ -337,23 +288,22 @@ class NamedThingsTest(unittest.TestCase):
             ("check.sh", self.note()),
         ):
             with self.subTest(document=label):
-                self.assertEqual(docs_claims.unresolved(document, REPO), [])
+                self.assertEqual(docs_claims.unresolved_paths(document, REPO), [])
 
-    def test_the_note_hands_the_guard_its_paths(self):
-        # The note wrote its paths as bare text, so a path guard fed the note
-        # matched nothing and said so in green. The backticks are the fix; the
-        # count is what says the fix landed. Adding a path means adding one
-        # here too, which is the note's ledger, not a number to live with.
+    def test_the_note_hands_the_guard_its_claims(self):
+        # The note wrote its spans as bare text, so a guard fed the note matched
+        # nothing and said so in green. The backticks are the fix; the count is
+        # what says the fix landed. Adding one means adding one here too, which
+        # is the note's ledger, not a number to live with.
         found = docs_claims.claims(self.note())
-        self.assertEqual(len(found), 12, [claim.span for claim in found])
-
-    def test_every_test_class_the_note_names_is_defined(self):
-        self.assertEqual(gone_classes(self.note()), [])
+        self.assertEqual(len(found), 14, [f"{claim.span} ({claim.kind})" for claim in found])
 
     def test_a_name_the_code_lost_is_caught(self):
         drifted = self.glossary().replace("`read_template`", "`check_arches`", 1)
         self.assertNotEqual(drifted, self.glossary(), "the entry moved; reword this test")
-        self.assertEqual(gone_names(drifted, code_facts()), ["check_arches"])
+        self.assertEqual(
+            [claim.span for claim in docs_claims.unresolved(drifted, REPO)], ["check_arches"]
+        )
 
     def test_a_path_that_moved_is_caught(self):
         drifted = self.glossary().replace("tests/test_templates.py", "tests/test_template.py")
@@ -363,26 +313,13 @@ class NamedThingsTest(unittest.TestCase):
             ["tests/test_template.py"],
         )
 
-    def test_a_comment_does_not_keep_a_name_alive(self):
-        # The tree's text includes the comments, so a function deleted from the
-        # code but still named in a comment about it would pass a whole-text
-        # search. Comment lines are dropped before the search, the same rule the
-        # frozen-line reader applies to its call sites.
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "scripts").mkdir()
-            (root / "scripts" / "a.sh").write_text(
-                "real_fn() { :; }\n# ghost_fn used to live here\n"
-            )
-            facts = code_facts(root)
-        self.assertIn("real_fn", facts)
-        self.assertNotIn("ghost_fn", facts)
-        self.assertEqual(gone_names("`ghost_fn`", facts), ["ghost_fn"])
-
     def test_a_test_class_that_was_renamed_is_caught(self):
         drifted = self.note().replace("RootAdapterTest", "RootAdapterReaderTest")
         self.assertIn("RootAdapterReaderTest", drifted, "the note moved; reword this test")
-        self.assertEqual(gone_classes(drifted), ["RootAdapterReaderTest"])
+        self.assertEqual(
+            [claim.span for claim in docs_claims.unresolved(drifted, REPO)],
+            ["RootAdapterReaderTest"],
+        )
 
 
 class GateDocumentsTest(unittest.TestCase):
@@ -452,7 +389,9 @@ class GateDocumentsTest(unittest.TestCase):
         # prove; the note the run prints is the list that has a reader.
         header = gate.header()
         self.assertEqual(re.findall(r"\btests/[\w./-]+", header), [])
-        self.assertEqual(CLASS.findall(header), [])
+        # Bare text is the question here, not a claim: a class name in the
+        # header counts whether or not someone backticked it.
+        self.assertEqual(docs_claims.CLASS_WORD.findall(header), [])
 
     def test_a_header_that_restates_the_note_is_reported(self):
         first = "# Run every gate CI's test job runs, from any directory."

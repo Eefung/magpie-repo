@@ -147,12 +147,111 @@ class PathClaimTest(unittest.TestCase):
     def test_the_repository_pages_claim_paths_that_all_resolve(self):
         # Not just "nothing is broken": a page whose claims came out empty
         # would pass that too, and an empty reading is a guard that stopped
-        # reading (#24 makes the invariant general).
+        # reading (#24 makes the invariant general). Asked as the path
+        # question, because these pages also name test-side helpers.
         for page in ("README.md", "AGENTS.md", "GLOSSARY.md"):
             with self.subTest(page=page):
                 document = (REPO / page).read_text()
                 self.assertTrue(docs_claims.claims(document), f"{page} made no claim")
-                self.assertEqual(spans(docs_claims.unresolved(document, REPO)), [])
+                self.assertEqual(spans(docs_claims.unresolved_paths(document, REPO)), [])
+
+    def test_a_path_claim_is_asked_apart_from_the_other_kinds(self):
+        # README and AGENTS name test-side helpers (`pkgfile_pkgname` lives in
+        # `tests/`), and the name resolver reads `scripts/` only -- so a
+        # document that is fed for its paths is asked for its paths.
+        document = "`test_helper_fn` and `scripts/build-check.sh`"
+        self.assertEqual(spans(docs_claims.unresolved_paths(document, REPO)), [])
+        self.assertEqual(spans(docs_claims.unresolved(document, REPO)), ["test_helper_fn"])
+
+
+class ModuleClaimTest(unittest.TestCase):
+    """A module claim is a snake_case name the production code still carries."""
+
+    def test_a_name_the_code_has_is_not_reported(self):
+        self.assertEqual(spans(docs_claims.unresolved("`read_template`", REPO)), [])
+        self.assertEqual(spans(docs_claims.unresolved("`frozen_var`", REPO)), [])
+
+    def test_a_name_the_code_lost_is_reported(self):
+        self.assertEqual(spans(docs_claims.unresolved("`gone_function`", REPO)), ["gone_function"])
+
+    def test_a_bare_name_is_not_a_claim(self):
+        # One spelling for a claim: backticks. A class name in prose is prose,
+        # which is why #22 put them around the note's one -- a bare name is
+        # invisible here by decision, not by accident.
+        self.assertEqual(docs_claims.claims("RootAdapterTest drives the root path"), [])
+
+    def test_the_kind_is_named_on_the_claim(self):
+        self.assertEqual(
+            [(claim.span, claim.kind) for claim in docs_claims.claims("`read_template`")],
+            [("read_template", "module")],
+        )
+
+    def test_a_comment_does_not_keep_a_name_alive(self):
+        # Facts are code lines: a name kept in a comment about a deleted
+        # function is exactly the case this guard exists for.
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp)
+            (tree / "scripts").mkdir()
+            (tree / "scripts" / "a.sh").write_text(
+                "real_fn() { :; }\n# ghost_fn used to live here\n"
+            )
+            self.assertEqual(spans(docs_claims.unresolved("`real_fn`", tree)), [])
+            self.assertEqual(spans(docs_claims.unresolved("`ghost_fn`", tree)), ["ghost_fn"])
+
+    def test_a_trailing_comment_does_not_keep_a_name_alive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp)
+            (tree / "scripts").mkdir()
+            (tree / "scripts" / "x.sh").write_text("echo 1  # ghost_name\n")
+            self.assertEqual(spans(docs_claims.unresolved("`ghost_name`", tree)), ["ghost_name"])
+
+
+class CallClaimTest(unittest.TestCase):
+    """A `name()` claim names a function, and the tree's own definition answers it."""
+
+    def test_a_call_the_scripts_define_is_not_reported(self):
+        self.assertEqual(spans(docs_claims.unresolved("`plan()`", REPO)), [])
+
+    def test_a_call_the_tree_defines_is_not_reported(self):
+        # `package()` is defined by the templates *and* by the probe script, so
+        # the real tree cannot say which one answered: the templates half is
+        # proved on a staged tree, in the case below.
+        self.assertEqual(spans(docs_claims.unresolved("`package()`", REPO)), [])
+
+    def test_a_staged_tree_with_the_template_resolves_the_call(self):
+        document = "`package()`"
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp)
+            self.assertEqual(spans(docs_claims.unresolved(document, tree)), ["package()"])
+            (tree / "templates").mkdir()
+            (tree / "templates" / "x.PKGBUILD.in").write_text("package() {\n  :\n}\n")
+            self.assertEqual(spans(docs_claims.unresolved(document, tree)), [])
+
+    def test_a_call_nothing_defines_is_reported(self):
+        self.assertEqual(spans(docs_claims.unresolved("`planx()`", REPO)), ["planx()"])
+
+    def test_a_tree_without_the_definition_reports_the_call(self):
+        # The other half of the rule: not "the name happens to be missing", but
+        # "the definition is gone".
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp)
+            (tree / "scripts").mkdir()
+            (tree / "scripts" / "bump.py").write_text("def render() -> None:\n    pass\n")
+            self.assertEqual(spans(docs_claims.unresolved("`render()`", tree)), [])
+            self.assertEqual(spans(docs_claims.unresolved("`plan()`", tree)), ["plan()"])
+
+
+class TestClassClaimTest(unittest.TestCase):
+    """A test class claim names a class a test module defines."""
+
+    def test_a_class_the_suite_defines_is_not_reported(self):
+        self.assertEqual(spans(docs_claims.unresolved("`RootAdapterTest`", REPO)), [])
+
+    def test_a_class_the_suite_does_not_define_is_reported(self):
+        self.assertEqual(spans(docs_claims.unresolved("`GoneTest`", REPO)), ["GoneTest"])
+
+
+
 
 
 if __name__ == "__main__":
