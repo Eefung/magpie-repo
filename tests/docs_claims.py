@@ -10,6 +10,12 @@ was renamed stayed green for as long as nobody looked.
     unresolved(document, repo)  the ones `repo` does not hold
     unresolved_paths(...)       the same question for the path kind alone
 
+A document that makes no claim of the kind it is asked about is refused, not
+answered: both questions raise `SilentDocumentError`. An empty list from a
+document with nothing to read is the third way a guard fails -- it read nothing
+and said so in green -- and a document cannot be silent by accident when the
+question it is asked is written down.
+
 Three kinds, each a resolver here:
 
 - `path` -- a span starting with one of `PREFIXES`. The claim is the first word
@@ -96,9 +102,21 @@ def claims(document: str) -> list[Claim]:
     return found
 
 
+class SilentDocumentError(AssertionError):
+    """A document that made no claim of the kind it was asked about.
+
+    An `AssertionError` so an unguarded caller reports it as a failure, and
+    named `...Error` so the test-class kind in this module sees it like any
+    other class of this suite.
+    """
+
+
 def unresolved(document: str, repo: Path) -> list[Claim]:
-    """The claims in `document` that `repo` does not hold."""
-    return [claim for claim in claims(document) if not _lands(claim, repo)]
+    """The claims in `document` that `repo` does not hold.
+
+    Raises `SilentDocumentError` when the document makes no claim at all.
+    """
+    return [claim for claim in _required(document, None) if not _lands(claim, repo)]
 
 
 def unresolved_paths(document: str, repo: Path) -> list[Claim]:
@@ -106,9 +124,24 @@ def unresolved_paths(document: str, repo: Path) -> list[Claim]:
 
     README and AGENTS name test-side helpers, which the module kind does not
     read, so those pages are asked for their paths and the name kinds are asked
-    of the two documents that talk about the pipeline.
+    of the two documents that talk about the pipeline. Raises
+    `SilentDocumentError` when the document makes no path claim, which is not
+    the same silence: a page that names only test-side helpers is not a page
+    the path guard read.
     """
-    return [claim for claim in unresolved(document, repo) if claim.kind == "path"]
+    return [claim for claim in _required(document, "path") if not _lands(claim, repo)]
+
+
+def _required(document: str, kind: str | None) -> list[Claim]:
+    """The claims a question needs, or a refusal if the document offers none.
+
+    `kind` of `None` means every kind: that is the whole-document question.
+    """
+    found = [claim for claim in claims(document) if kind is None or claim.kind == kind]
+    if not found:
+        asked = "claim" if kind is None else f"{kind} claim"
+        raise SilentDocumentError(f"this document makes no {asked}: the guard would read nothing")
+    return found
 
 
 def _classify(span: str) -> tuple[str, str] | None:

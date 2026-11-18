@@ -266,6 +266,15 @@ class NamedThingsTest(unittest.TestCase):
     def note(self) -> str:
         return gate.note()
 
+    def documents(self) -> dict[str, str]:
+        """The four documents a reader acts on, and the one the run prints."""
+        return {
+            "README.md": readme(),
+            "AGENTS.md": (REPO / "AGENTS.md").read_text(),
+            "GLOSSARY.md": self.glossary(),
+            "check.sh": self.note(),
+        }
+
     def test_every_name_glossary_points_at_is_in_the_tree(self):
         self.assertEqual(docs_claims.unresolved(self.glossary(), REPO), [])
 
@@ -281,14 +290,25 @@ class NamedThingsTest(unittest.TestCase):
         #
         # Four documents, because a reader acts on all four: README is the
         # command a user copies, AGENTS is where this suite's own maps live.
-        for label, document in (
-            ("README.md", readme()),
-            ("AGENTS.md", (REPO / "AGENTS.md").read_text()),
-            ("GLOSSARY.md", self.glossary()),
-            ("check.sh", self.note()),
-        ):
+        for label, document in self.documents().items():
             with self.subTest(document=label):
                 self.assertEqual(docs_claims.unresolved_paths(document, REPO), [])
+
+    def test_every_document_the_guard_reads_makes_a_claim(self):
+        # Four documents, four ledgers. A page that made no claim would be
+        # refused by the guard now, and this says which page when it is.
+        for label, document in self.documents().items():
+            with self.subTest(document=label):
+                self.assertTrue(docs_claims.claims(document), f"{label} made no claim")
+
+    def test_a_note_without_its_backticks_is_a_silent_document(self):
+        # The note wrote its spans as bare text once, and the guard read
+        # nothing from it. Stripping the backticks puts it back in that state,
+        # and the guard has to say so rather than answer "no problems".
+        stripped = self.note().replace("`", "")
+        self.assertNotEqual(stripped, self.note(), "the note has no backticks; reword this test")
+        with self.assertRaises(docs_claims.SilentDocumentError):
+            docs_claims.unresolved_paths(stripped, REPO)
 
     def test_the_note_hands_the_guard_its_claims(self):
         # The note wrote its spans as bare text, so a guard fed the note matched

@@ -81,7 +81,7 @@ class PathClaimTest(unittest.TestCase):
         # family; nothing is missing when no file is literally called that.
         for span in ("templates/**", "packages/<包名>/", "scripts/**", "scripts/*.sh"):
             with self.subTest(span=span):
-                self.assertEqual(spans(docs_claims.unresolved(f"`{span}`", REPO)), [])
+                self.assertEqual(docs_claims.claims(f"`{span}`"), [])
 
     def test_a_path_that_is_not_this_repository_is_not_a_claim(self):
         # Paths inside a package or on the user's disk. Reading them as claims
@@ -162,6 +162,34 @@ class PathClaimTest(unittest.TestCase):
         document = "`test_helper_fn` and `scripts/build-check.sh`"
         self.assertEqual(spans(docs_claims.unresolved_paths(document, REPO)), [])
         self.assertEqual(spans(docs_claims.unresolved(document, REPO)), ["test_helper_fn"])
+
+
+class SilentDocumentTest(unittest.TestCase):
+    """A guard that read nothing must say so, not hand back an empty list."""
+
+    def test_a_document_of_non_claims_is_refused(self):
+        # `pacman -S magpie` and `SigLevel = Optional` are spans, not claims:
+        # a guard fed a document made only of them would read nothing.
+        document = "`pacman -S magpie` and `SigLevel = Optional`\n"
+        with self.assertRaises(docs_claims.SilentDocumentError) as caught:
+            docs_claims.unresolved(document, REPO)
+        self.assertIn("no claim", str(caught.exception))
+
+    def test_an_empty_document_is_refused(self):
+        with self.assertRaises(docs_claims.SilentDocumentError):
+            docs_claims.unresolved("", REPO)
+
+    def test_prose_without_spans_is_refused(self):
+        with self.assertRaises(docs_claims.SilentDocumentError):
+            docs_claims.unresolved("The repo is served from gh-pages.\n", REPO)
+
+    def test_the_path_question_refuses_a_document_with_no_path_claim(self):
+        # The two questions have their own silence: a page that names only
+        # test-side helpers made no path claim, and the path guard would read
+        # nothing from it. The message says which silence it was.
+        with self.assertRaises(docs_claims.SilentDocumentError) as caught:
+            docs_claims.unresolved_paths("`test_helper_fn` names a helper\n", REPO)
+        self.assertIn("no path claim", str(caught.exception))
 
 
 class ModuleClaimTest(unittest.TestCase):
