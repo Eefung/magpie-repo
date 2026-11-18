@@ -22,6 +22,8 @@ single-context：根目录一个 `GLOSSARY.md`，决定记在 `docs/adr/`。详�
 
 `publish.yml` 的 `paths` 是 `templates/**`、`scripts/**`、`tests/**` 与 `.github/workflows/publish.yml`，所以这些改动推送后会触发一次 publish，可能直接发一版。这类提交与别的工作分开推，相关的几笔一起推：一次推送只跑一次流水线，一笔一推就会发一遍。
 
+在副本里跑单测或门之前先 `git init -q . && git add -A`：有几条用例读 `git ls-files`（中文空格那条就是），没有索引会报错，看起来像别处的缺陷而不是缺索引。
+
 拉远端只拉 main：`git fetch --no-tags origin main`。默认 refspec 里还有 `gh-pages`，那是 150 MB 的一棵树，全量 `git fetch` 会超时。
 
 ## 脚本地图
