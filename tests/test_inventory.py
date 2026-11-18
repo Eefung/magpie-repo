@@ -84,7 +84,7 @@ class UpstreamHandoverTest(unittest.TestCase):
         # No script between them any more: a relay with one caller and no
         # decision is the module ADR-0004 would send back to the YAML, and this
         # one was deleted (ADR-0005).
-        self.assertEqual(self.code().count("scripts/bump.py --check"), 1)
+        self.assertEqual(len(live.naming(self.code(), "scripts/bump.py --check")), 1)
         self.assertFalse((REPO / "scripts" / "upstream.sh").exists())
 
     def test_the_step_reads_the_four_lines_it_was_handed(self):
@@ -113,24 +113,34 @@ class UpstreamHandoverTest(unittest.TestCase):
     def test_the_handover_path_is_declared_once(self):
         # Declared in the job's env, where every step sees it -- a step-level
         # declaration would satisfy a text search while the other two steps
-        # read an unset variable at run time. The count says the path itself is
-        # spelled nowhere else.
+        # read an unset variable at run time. One live line names it, and it is
+        # the declaration.
         self.assertEqual(workflow.env().get("UP"), "/tmp/up")
-        self.assertEqual(self.workflow().count("/tmp/up"), 1)
+        self.assertEqual(declared_lines("UP"), ["UP: /tmp/up"])
+
+    def test_a_comment_naming_the_handover_path_is_not_a_declaration(self):
+        # The count this replaced read the whole text, so a note mentioning the
+        # path made it two declarations (reproduced: 1 -> 2, #21).
+        moved = self.workflow().replace(
+            "      UP: /tmp/up\n",
+            "      UP: /tmp/up\n      # the check's log lands in /tmp/up\n",
+        )
+        self.assertNotEqual(moved, self.workflow(), "the handover path moved; reword this test")
+        self.assertEqual(declared_lines("UP", moved), ["UP: /tmp/up"])
 
     def test_the_package_list_path_is_declared_once(self):
         # It used to ride a frozen line -- `packages=` existed so that a path
         # would not be spelled twice -- whose only job was to name a file. With
         # no script in between, the job env is that one place.
         self.assertEqual(workflow.env().get("PKGS"), "/tmp/packages.txt")
-        self.assertEqual(self.workflow().count("/tmp/packages.txt"), 1)
+        self.assertEqual(declared_lines("PKGS"), ["PKGS: /tmp/packages.txt"])
         self.assertIn('--packages > "$PKGS"', self.code())
 
     def test_the_repository_the_fifth_direction_asks_about_is_declared(self):
         # The check asks GitHub whether this run's build has a Release; without
         # this line it would only ever say it could not ask.
         self.assertEqual(workflow.env().get("RELEASE_REPO"), "${{ github.repository }}")
-        self.assertEqual(self.workflow().count("github.repository"), 1)
+        self.assertEqual(len(live.naming(self.workflow(), "github.repository")), 1)
 
     def test_a_trailing_comment_does_not_reach_the_value(self):
         # The reverse of the quoted case: this one fails if `env()` goes back to
@@ -159,7 +169,7 @@ class UpstreamHandoverTest(unittest.TestCase):
         self.assertIn("TARGET: ${{ steps.upstream.outputs.target }}", workflow)
         # One render invocation, and it always carries a version: a bare
         # `--render` would ask 上游 again and undo the handover.
-        self.assertEqual(workflow.count("scripts/bump.py --render"), 1)
+        self.assertEqual(len(live.naming(workflow, "scripts/bump.py --render")), 1)
 
     def test_the_decision_is_not_made_a_second_time_in_this_file(self):
         # These two are what the step used to decide: `bump` from a default,
@@ -198,6 +208,18 @@ def run_step(name: str, root: Path, **env: str) -> subprocess.CompletedProcess:
         text=True,
         capture_output=True,
     )
+
+
+def declared_lines(key: str, source: str | None = None) -> list[str]:
+    """The live lines that name that job env value: a note about it is not one.
+
+    The three questions that ask this -- the served arch, the pages branch, a
+    path -- differ only in the key, so they ask it once. `naming` answers in
+    lines, not occurrences: a line that spells the value twice is one
+    declaration, and a comment naming it is none.
+    """
+    text = workflow.text() if source is None else source
+    return live.naming(text, workflow.env(source=source)[key])
 
 
 class EntryStepTest(unittest.TestCase):
@@ -606,19 +628,8 @@ class ServedArchTest(unittest.TestCase):
     four steps, so a second arch meant a grep hunt rather than one env.
     """
 
-    def hits(self, source: str | None = None) -> list[str]:
-        """Live lines naming the served arch; comments are not declarations."""
-        arch = workflow.env(source=source)["ARCH"]
-        return [
-            line.strip()
-            for line in (workflow.text() if source is None else source).splitlines()
-            if arch in line and not line.lstrip().startswith("#")
-        ]
-
     def test_the_workflow_declares_the_served_arch_once(self):
-        found = self.hits()
-        self.assertEqual(len(found), 1, found)
-        self.assertTrue(found[0].startswith("ARCH:"), found)
+        self.assertEqual(declared_lines("ARCH"), ["ARCH: x86_64"])
 
     def test_a_comment_naming_the_arch_is_not_a_second_declaration(self):
         # The value is `workflow.env()`'s answer, so a note after the
@@ -632,8 +643,8 @@ class ServedArchTest(unittest.TestCase):
             "      ARCH: x86_64   # the served directory\n",
         )
         self.assertNotEqual(moved, text)
-        self.assertEqual(len(self.hits(moved)), 1, self.hits(moved))
-        self.assertTrue(self.hits(moved)[0].startswith("ARCH:"), self.hits(moved))
+        # The note after the declaration is not part of the line it names.
+        self.assertEqual(declared_lines("ARCH", moved), ["ARCH: x86_64"])
 
     def test_a_second_live_line_naming_the_arch_is_caught(self):
         text = workflow.text()
@@ -641,7 +652,7 @@ class ServedArchTest(unittest.TestCase):
             "      ARCH: x86_64\n", "      ARCH: x86_64\n      EXTRA_ARCH: x86_64\n"
         )
         self.assertNotEqual(moved, text)
-        self.assertEqual(len(self.hits(moved)), 2, self.hits(moved))
+        self.assertEqual(len(declared_lines("ARCH", moved)), 2, declared_lines("ARCH", moved))
 
 
 class PackageListTest(unittest.TestCase):
@@ -833,8 +844,8 @@ class GitIdentityTest(unittest.TestCase):
         # Each identity literal appears only in its env declaration. The name
         # is also a substring of the email, so the email's are counted from
         # their full `GIT_NAME:` / `GIT_EMAIL:` lines, not bare substrings.
-        self.assertEqual(text.count(f"GIT_NAME: {self.name()}"), 1)
-        self.assertEqual(text.count(f"GIT_EMAIL: {self.email()}"), 1)
+        self.assertEqual(len(live.naming(text, f"GIT_NAME: {self.name()}")), 1)
+        self.assertEqual(len(live.naming(text, f"GIT_EMAIL: {self.email()}")), 1)
 
     def test_publish_pages_consumes_the_same_identity(self):
         # The script signs the gh-pages squash as the same env. Holding it to
@@ -1276,14 +1287,19 @@ class PublishNamesTest(unittest.TestCase):
         raise AssertionError(f"no step named {prefix}*")
 
     def test_the_branch_is_declared_once(self):
-        branch = workflow.env()["PAGES_BRANCH"]
-        self.assertTrue(branch)
-        declared = [
-            line.strip()
-            for line in workflow.text().splitlines()
-            if branch in line and not line.lstrip().startswith("#")
-        ]
-        self.assertEqual(declared, [f"PAGES_BRANCH: {branch}"])
+        # The name is pinned here, not read back: it is the branch `seed_tree`
+        # reads, and renaming it is a change to the 软件源's address.
+        self.assertEqual(declared_lines("PAGES_BRANCH"), ["PAGES_BRANCH: gh-pages"])
+
+    def test_a_trailing_comment_is_not_part_of_the_declaration(self):
+        # The line that declares it may carry a note; the note is not part of
+        # what it declares, and not a second declaration either (#21).
+        moved = workflow.text().replace(
+            "      PAGES_BRANCH: gh-pages\n",
+            "      PAGES_BRANCH: gh-pages  # served branch\n",
+        )
+        self.assertNotEqual(moved, workflow.text(), "the branch line moved; reword this test")
+        self.assertEqual(declared_lines("PAGES_BRANCH", moved), ["PAGES_BRANCH: gh-pages"])
 
     def seed_call(self, source: str | None = None) -> str:
         """The one live line that hands the branch to scripts/seed-tree.sh.
