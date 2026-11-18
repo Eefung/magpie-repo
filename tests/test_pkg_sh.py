@@ -32,7 +32,8 @@ sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "tests"))
 
 import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
-import fixtures  # noqa: E402  (the one spelling of a 包文件's name in the test tree)
+import fixtures
+import frozen  # noqa: E402  (the one spelling of a 包文件's name in the test tree)
 import live  # noqa: E402  (the one reader of where a comment starts)
 
 
@@ -991,6 +992,92 @@ class FrozenKindTest(unittest.TestCase):
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn("notes=", refused.stderr)
         self.assertIn("gone.md", refused.stderr)
+
+
+class FrozenRowTest(unittest.TestCase):
+    """The row reader: one parse of the kinds table, five cells to the caller.
+
+    `frozen_field` answered one cell per call, so a gate reading three cells
+    parsed the table three times -- and the table is a heredoc plus an awk plus
+    a cut every time. `frozen_row` is the same handover shape `frozen_list` and
+    `frozen_entries` already use: the answer goes into the caller's array.
+    """
+
+    def row(self, key: str) -> subprocess.CompletedProcess:
+        return call(f'row=(); frozen_row {shlex.quote(key)} row; printf "%s\\n" "${{row[@]}}"')
+
+    def test_a_row_hands_back_its_five_cells(self):
+        result = self.row("upstream")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["upstream", "version", "value", "required", "entry-check"],
+        )
+
+    def test_the_callers_array_is_not_shadowed_by_the_readers_own_locals(self):
+        # The nameref resolves against the reader's scope first, so a caller
+        # whose array is named after one of those locals got an empty array and
+        # a zero exit. `_row` is the name that actually did it.
+        result = call(
+            'f() { local -a _row=(); frozen_row upstream _row; '
+            'printf "%s\\n" "${_row[@]}"; }; f'
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(result.stdout.splitlines()), 5, result.stdout)
+
+    def test_a_key_the_table_does_not_name_is_refused_by_the_row_reader(self):
+        result = self.row("ghost")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no such frozen key: ghost", result.stderr)
+
+    def test_a_column_the_table_has_not_got_is_named_before_the_key(self):
+        # `frozen_field` answers the column question first: a call that is wrong
+        # twice over hears about the one the caller can fix from the message.
+        result = call("frozen_field ghost 9")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("frozen_field: the table has no column 9", result.stderr)
+        self.assertNotIn("no such frozen key", result.stderr)
+
+    def test_the_row_and_the_columns_cannot_drift(self):
+        # The two readers answer the same question, and the table's own reader
+        # is `frozen.table()` -- a second `split("|")` here would be a third
+        # spelling of the format. Held equal row by row, so a column that moves
+        # without its position is caught here rather than by a gate reading the
+        # wrong cell.
+        rows = frozen.table()
+        self.assertTrue(rows, "the table is empty")
+        for expected in rows:
+            with self.subTest(key=expected["key"]):
+                result = self.row(expected["key"])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.splitlines(), list(expected.values()))
+
+
+class FrozenCountSpellingTest(unittest.TestCase):
+    """`<键>=` counting has one home, and a second one reds here.
+
+    `frozen_count` said it was the one place the counting rule lived, and
+    `frozen_read` spelled the grep itself. Two homes that agree is a rule with
+    no signal: changing one leaves the other answering an older question, and
+    nothing goes red. This is the static half of that guard -- the other half
+    is `frozen_read`'s messages, which the gates' own cases hold.
+
+    The pattern knows grep's shapes (`-c`, `-cE`, `--count`): a guard that knew
+    only `grep -c` stayed green when someone wrote `grep -cE`. It reads the
+    file's text, comments included, so a comment naming the spelling has to be
+    reworded -- the conservative direction for a rule about how code is written.
+    """
+
+    def test_the_counting_rule_is_written_in_one_place(self):
+        source = (REPO / "scripts" / "lib" / "pkg.sh").read_text()
+        # The rule's own spelling: a count of lines that start at column one.
+        # `grep -c .` elsewhere in the file counts something else entirely.
+        found = re.findall(r'''grep\s+(?:-[A-Za-z]*c[A-Za-z]*|--count)\s+["\']?\^''', source)
+        self.assertEqual(len(found), 1, found)
 
 
 class FrozenLineJoinTest(unittest.TestCase):

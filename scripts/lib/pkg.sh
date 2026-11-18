@@ -126,22 +126,55 @@ package|-|pkglist|required|packages
 TABLE
 }
 
+# frozen_row <键> <数组名> -- one parse of the table, the key's five cells.
+#
+# `frozen_field` is this reader with one cell taken out of the answer, and it is
+# the only caller today: the gates still read cell by cell, three parses to a
+# `frozen_var`. They move onto this reader in the two slices that follow, which
+# is why it is here before them -- a row reader with no callers is a shape
+# nobody can check, and one with this caller already answers "is the row the
+# columns say it is". The
+# answer goes into the caller's array, the way `frozen_list` and `frozen_entries`
+# hand theirs back -- printing it for the caller's `mapfile` would make the
+# swallow this module exists to prevent writable again. The caller declares the
+# array first (`cells=()`).
+frozen_row() {
+    # Every local here is prefixed `_frozen_`: a nameref resolves against this
+    # function's own scope first, so an internal named after anything a caller
+    # might hand in absorbs the assignment and the call still exits 0. `_row` --
+    # which is exactly what `frozen_field` passes -- did that.
+    local _key="$1" _target="$2" _frozen_line
+    _frozen_line="$(frozen_table | awk -F'|' -v key="$_key" '$1 == key { print; found = 1; exit } END { exit !found }')" || {
+        echo "no such frozen key: ${_key}" >&2
+        return 1
+    }
+    local -a _frozen_cells=()
+    IFS='|' read -r -a _frozen_cells <<<"$_frozen_line"
+    # The nameref is a name on one line and an array on the next, as in
+    # `frozen_entries`: that is what handing an array back through a name looks
+    # like. It is `_frozen_out` rather than the module's usual `_out` because
+    # the linter types a nameref by name, not by target: calling this one `_out`
+    # made the string assignments in `frozen_var` and `frozen_list` read as
+    # arrays (SC2178) in functions this ticket does not touch.
+    # shellcheck disable=SC2178
+    local -n _frozen_out="$_target"
+    _frozen_out=("${_frozen_cells[@]}")
+}
+
 # frozen_field <键> <列> -- one cell of that key's row.
 #
-# The one lookup every reading of the table goes through, so "is this key in the
-# table" is answered once. An unnamed key is refused by name, not treated as a
-# bare name that happens to have no rules.
+# The column is checked before the key, so a call naming both a column the table
+# has not got and a key it never heard of hears about the column. An unnamed key
+# is refused by name, not treated as a bare name that happens to have no rules.
 frozen_field() {
-    local _key="$1" _column="$2" _row
+    local _key="$1" _column="$2"
     case "$_column" in
         1 | 2 | 3 | 4 | 5) ;;
         *) echo "frozen_field: the table has no column ${_column}" >&2; return 1 ;;
     esac
-    _row="$(frozen_table | awk -F'|' -v key="$_key" '$1 == key { print; found = 1; exit } END { exit !found }')" || {
-        echo "no such frozen key: ${_key}" >&2
-        return 1
-    }
-    printf '%s\n' "$_row" | cut -d'|' -f "$_column"
+    local -a _row=()
+    frozen_row "$_key" _row || return 1
+    printf '%s\n' "${_row[$((_column - 1))]}"
 }
 
 # The cells a gate reads, so no caller spells a column number.
@@ -208,7 +241,7 @@ FROZEN_ABSENT="__absent__"
 frozen_read() {
     local _key="$1" _file="$2" _count
     [ -r "$_file" ] || { echo "no such file: ${_file}" >&2; return 1; }
-    _count="$(grep -c "^${_key}=" "$_file" || true)"
+    _count="$(frozen_count "$_key" "$_file")"
     if [ "${_count:-0}" -eq 0 ]; then
         if [ "$(frozen_required "$_key")" = optional ]; then
             printf '%s\n' "$FROZEN_ABSENT"
