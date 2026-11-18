@@ -129,20 +129,16 @@ TABLE
 # Where the cells a gate reads land in the row `frozen_row` hands back, so the
 # gate names them instead of spelling an index. These move with the header above
 # and with nothing else; `frozen_field`'s 1..5 is the other question -- a column
-# number a caller asks for, matching this order but not spelled from it.
+# number the caller names, matching this order but not spelled from it.
 FROZEN_DOMAIN=1 FROZEN_SHAPE=2 FROZEN_REQUIRED=3
 
 # frozen_row <键> <数组名> -- one parse of the table, the key's five cells.
 #
-# Two callers: `frozen_var`, which takes its three cells out of one row, and
-# `frozen_field`, which is this reader with one cell taken out of the answer.
-# `frozen_write` and `frozen_list` still read cell by cell and move onto it in
-# the slice that follows -- which is why the reader is here before all of them:
-# one with callers already answers "is the row the columns say it is". The
-# answer goes into the caller's array, the way `frozen_list` and `frozen_entries`
-# hand theirs back -- printing it for the caller's `mapfile` would make the
-# swallow this module exists to prevent writable again. The caller declares the
-# array first (`cells=()`).
+# The three gates read their row from here -- `frozen_var` takes three cells,
+# `frozen_write` two, `frozen_list` one. The answer goes into the caller's
+# array, the way `frozen_list` and `frozen_entries` hand theirs back -- printing
+# it for the caller's `mapfile` would make the swallow this module exists to
+# prevent writable again. The caller declares the array first (`cells=()`).
 frozen_row() {
     # Every local here is prefixed `_frozen_`: a nameref resolves against this
     # function's own scope first, so an internal named after anything a caller
@@ -168,6 +164,12 @@ frozen_row() {
 
 # frozen_field <键> <列> -- one cell of that key's row.
 #
+# No gate calls this any more: every gate reads its row, and this is the reader
+# for a question about one column -- the suite's table assertions, and a caller
+# that wants to name a cell without taking a row. Kept because it is that
+# question's only answer, the way `line_field_or` is kept for the one test-side
+# reader that asks a key no gate names.
+#
 # The column is checked before the key, so a call naming both a column the table
 # has not got and a key it never heard of hears about the column. An unnamed key
 # is refused by name, not treated as a bare name that happens to have no rules.
@@ -181,11 +183,6 @@ frozen_field() {
     frozen_row "$_key" _row || return 1
     printf '%s\n' "${_row[$((_column - 1))]}"
 }
-
-# The two cells a gate still asks for by name -- `frozen_var` reads its whole
-# row, so the 缺行 cell has no accessor left to keep.
-frozen_domain() { frozen_field "$1" 2; }
-frozen_shape() { frozen_field "$1" 3; }
 
 # frozen_var <键> <文件> <调用方的变量名> [缺省] -- the key's value, assigned.
 #
@@ -272,8 +269,10 @@ frozen_read() {
 # empty `"${assets[@]}"` as "no assets to upload" and exited 0, so a Release with
 # the checksums and none of the packages was a green run.
 frozen_list() {
-    local _key="$1" _file="$2" _target="$3" _value _shape
-    _shape="$(frozen_shape "$_key")" || return 1
+    local _key="$1" _file="$2" _target="$3" _value
+    local -a _row=()
+    frozen_row "$_key" _row || return 1
+    local _shape="${_row[$FROZEN_SHAPE]}"
     if [ "$_shape" != list ]; then
         frozen_wrong_door "$_key" list "$_shape"
         return 1
@@ -338,16 +337,16 @@ frozen_must_be_file() {
 # file, and a list naming no paths are refused where they are produced rather
 # than where a consumer trips over them.
 frozen_write() {
-    local _key="$1" _value="$2" _shape _domain
-    _shape="$(frozen_shape "$_key")" || return 1
+    local _key="$1" _value="$2"
+    local -a _row=()
+    frozen_row "$_key" _row || return 1
+    local _domain="${_row[$FROZEN_DOMAIN]}" _shape="${_row[$FROZEN_SHAPE]}"
     [ -n "$_value" ] || {
         echo "${_key}= needs a value; it would write an empty line" >&2
         return 1
     }
     case "$_shape" in
-        value)
-            _domain="$(frozen_domain "$_key")" || return 1
-            frozen_domain_allows "$_domain" "$_key" "$_value" || return 1 ;;
+        value) frozen_domain_allows "$_domain" "$_key" "$_value" || return 1 ;;
         path) frozen_must_be_file "$_key" "$_value" || return 1 ;;
         list)
             frozen_must_be_file "$_key" "$_value" || return 1

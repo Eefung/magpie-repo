@@ -1134,14 +1134,12 @@ class FrozenParseCountTest(unittest.TestCase):
         self.assertIn("no target= in", result.stderr)
         self.assertEqual(asks, 0, result.stderr)
 
-    def test_the_write_gate_still_parses_twice(self):
-        # #27 reads this gate's row; until then a value-shaped key's shape and
-        # 域 are two reads, and this case is what says the count did not move
-        # early.
+    def test_the_write_gate_parses_once(self):
+        # A value-shaped key's shape and 域 come out of one row now.
         result, parses = self.count("frozen_write tests 399")
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(parses, 2)
+        self.assertEqual(parses, 1)
 
     def test_a_path_shaped_write_asks_once(self):
         # The path branch asks no 域, so a path-shaped key is one read even
@@ -1165,12 +1163,36 @@ class FrozenParseCountTest(unittest.TestCase):
         self.assertIn("upstream= is a value, not a list", result.stderr)
         self.assertEqual(parses, 1)
 
-    def test_the_stub_records_its_own_asks(self):
-        # A positive control for the cell stub: a gate that asks cells has to
-        # show up, or "asked nothing" means the stub never ran.
-        result, asks = self.count("frozen_write tests 399", asked="frozen_field")
+    def test_no_gate_asks_a_single_cell(self):
+        # The row is the only way a gate reads the table now: `frozen_shape` and
+        # `frozen_domain` are gone, so a `frozen_field` call from any gate would
+        # be a second reading path. Each call below succeeds, so an early exit
+        # cannot pass for "asked nothing".
+        entry = self.root / "a.pkg.tar.zst"
+        entry.write_text("x")
+        listing = self.root / "assets.txt"
+        listing.write_text(f"{entry}\n")
+        self.log.write_text(f"upstream=0.1.9\nassets={listing}\n")
+        calls = {
+            "frozen_var": f'v=""; frozen_var upstream {shlex.quote(str(self.log))} v',
+            "frozen_write": "frozen_write tests 399",
+            "frozen_list": f'f=(); frozen_list assets {shlex.quote(str(self.log))} f',
+        }
+        for label, script in calls.items():
+            with self.subTest(gate=label):
+                result, asks = self.count(script, asked="frozen_field")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(asks, 0, result.stderr)
 
-        self.assertGreater(asks, 0, result.stderr)
+    def test_the_stub_records_its_own_asks(self):
+        # A positive control for the cell stub: the no-cell cases above are only
+        # evidence if the stub would have counted a cell. `frozen_field` is the
+        # one caller left, so ask it directly.
+        result, asks = self.count("frozen_field upstream 3", asked="frozen_field")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "version\n", result.stderr)
+        self.assertEqual(asks, 1, result.stderr)
 
     def test_the_list_gate_parses_once(self):
         entry = self.root / "a.pkg.tar.zst"
