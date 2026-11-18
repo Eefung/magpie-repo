@@ -279,13 +279,14 @@ heading "not covered here"
 cat <<'EOF'
 - what `BUILD_AS=root` calls: useradd, chown, su and pacman themselves. The
   adapter and the order it runs in are driven offline against stubs
-  (tests/test_build_check.py, RootAdapterTest, plus a srcinfo-shaped fixture in
-  tests/test_pkg_sh.py), so what a publish run still proves is only that the
-  real tools do what their stubs pretend. tests/test_build_repo.py drives the
-  real build-repo.sh the same way, and the probe gate above runs the real
-  makepkg and repo-add -- on a machine that has them, which the runner has not.
-- the entry check's own read of the 软件源: bump.py's `served_evr` against the
-  database pacman reads. tests/test_bump.py drives it against a synthesized
+  (`tests/test_build_check.py`, `RootAdapterTest`, plus a srcinfo-shaped
+  fixture in `tests/test_pkg_sh.py`), so what a publish run still proves is only
+  that the real tools do what their stubs pretend. `tests/test_build_repo.py`
+  drives the real `build-repo.sh` the same way, and the probe gate above runs
+  the real makepkg and repo-add -- on a machine that has them, which the runner
+  has not.
+- the entry check's own read of the 软件源: `bump.py`'s `served_evr` against the
+  database pacman reads. `tests/test_bump.py` drives it against a synthesized
   database in repo-add's format, but the bytes a real Pages response carries --
   and what Pages serves *during* a deploy -- are what a publish run proves. A
   read that fails says so and falls back to comparing against 上游 alone, which
@@ -293,18 +294,18 @@ cat <<'EOF'
 - the publish job's own plumbing -- `git ls-remote` and `git fetch` of the
   branch, `gh release create`, and the commit and push back to main: they only
   exist in the publish job, and a real publish is what proves them. The branch
-  push is no longer in this list: scripts/publish-pages.sh owns the tree it
+  push is no longer in this list: `scripts/publish-pages.sh` owns the tree it
   publishes (`.nojekyll`, one squashed commit per release, the force push) and
-  tests/test_publish_pages.py drives it against a local bare repository, so what
-  a publish run still proves there is the token URL and Pages itself. The seed
-  is not in this list either: scripts/seed-tree.sh owns the decision, and
-  tests/test_inventory.py drives all three of its answers -- branch there,
+  `tests/test_publish_pages.py` drives it against a local bare repository, so
+  what a publish run still proves there is the token URL and Pages itself. The
+  seed is not in this list either: `scripts/seed-tree.sh` owns the decision, and
+  `tests/test_inventory.py` drives all three of its answers -- branch there,
   branch absent, remote unreadable -- against a local bare repository, so what
   stays unproven about it is the real previous tree it fetches. The
-  Release's rules are scripts/release.sh's, driven offline by
-  tests/test_release.py. Which of create/update to run is
-  scripts/release-state.sh's answer, driven offline against a stub `gh` by
-  tests/test_release_state.py -- what a publish run still proves there is that
+  Release's rules are `scripts/release.sh`'s, driven offline by
+  `tests/test_release.py`. Which of create/update to run is
+  `scripts/release-state.sh`'s answer, driven offline against a stub `gh` by
+  `tests/test_release_state.py` -- what a publish run still proves there is that
   the real gh answers the status line this script reads.
 EOF
 

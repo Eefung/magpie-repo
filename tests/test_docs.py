@@ -15,7 +15,10 @@ the table a checked claim rather than a hope.
 GLOSSARY and check.sh's blind-spot list are the same shape one step removed:
 they point at modules, test classes and paths with the code's own names, and
 nothing checked that those names still exist -- GLOSSARY had named
-`check_arches` for a check that is inline in `read_template`.
+`check_arches` for a check that is inline in `read_template`. A path claim is
+read by `docs_claims` now, for all four documents: README and AGENTS point at
+pages a reader opens, and nothing was asking whether those pages were still
+there.
 
     python3 -m unittest discover -s tests
 """
@@ -35,6 +38,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "tests"))
 
 import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
+import docs_claims  # noqa: E402  (the reader of what a document points at)
 import gate  # noqa: E402  (the reader of scripts/check.sh)
 import live  # noqa: E402  (the one reader of where a comment starts)
 import workflow  # noqa: E402  (the one reader of publish.yml)
@@ -62,9 +66,6 @@ def template(pkg: str) -> str:
 # A module's own name, as the docs write it: `read_template`, `line_field`.
 IDENT = re.compile(r"`([a-z][a-z0-9]*_[a-z0-9_]+)`")
 
-# A path in this repository, as the docs write it: `scripts/build-check.sh`.
-PATH = re.compile(r"`((?:scripts|tests)/[\w./-]+)`")
-
 # A test class, as the gate's note names it: `RootAdapterTest`.
 CLASS = re.compile(r"\b([A-Z][A-Za-z]*(?:Test|Reader|Error))\b")
 
@@ -88,17 +89,6 @@ def gone_names(document: str, facts: str) -> list[str]:
         for name in sorted(set(IDENT.findall(document)))
         if not re.search(rf"\b{re.escape(name)}\b", facts)
     ]
-
-
-def gone_paths(document: str, repo: Path = REPO) -> list[str]:
-    """Paths a document points at that are not there.
-
-    Existence, not executability: `scripts/lib/pkg.sh` is sourced, not run, so
-    "every script the docs name can run" is a claim about the workflow's own
-    steps -- which `test_inventory.WorkflowShellTest` already makes for the
-    scripts a step invokes.
-    """
-    return [path for path in sorted(set(PATH.findall(document))) if not (repo / path).is_file()]
 
 
 def gone_classes(note: str, repo: Path = REPO) -> list[str]:
@@ -295,10 +285,12 @@ class NamedThingsTest(unittest.TestCase):
     check was inline in `read_template`, so the one sentence that tells a reader
     where to look named nothing at all.
 
-    The scope is those two documents, not the ADRs. A decision record is
-    allowed to quote the code it deleted -- ADR-0001 names `scripts/publish.sh`
-    to say it was removed -- and scanning them would make a history its own
-    failure.
+    The path claims are read in all four documents; names and test classes are
+    still read in the two that carry them (GLOSSARY, the note), and they move
+    into the same reader with #23. The ADRs are never scanned: a decision record
+    is allowed to quote the code it deleted -- ADR-0001 names
+    `scripts/publish.sh` to say it was removed -- and scanning them would make a
+    history its own failure.
 
     The identifiers are the ones this repository *owns*: lowercase snake_case
     module names, which is what a shell function and a python function are. Env
@@ -335,9 +327,25 @@ class NamedThingsTest(unittest.TestCase):
         # Existence, not executability: `scripts/lib/pkg.sh` is sourced, not
         # run, and executability of what a *step* runs is the workflow's own
         # guard (`test_inventory.WorkflowShellTest`).
-        for label, document in (("GLOSSARY.md", self.glossary()), ("check.sh", self.note())):
+        #
+        # Four documents, because a reader acts on all four: README is the
+        # command a user copies, AGENTS is where this suite's own maps live.
+        for label, document in (
+            ("README.md", readme()),
+            ("AGENTS.md", (REPO / "AGENTS.md").read_text()),
+            ("GLOSSARY.md", self.glossary()),
+            ("check.sh", self.note()),
+        ):
             with self.subTest(document=label):
-                self.assertEqual(gone_paths(document), [])
+                self.assertEqual(docs_claims.unresolved(document, REPO), [])
+
+    def test_the_note_hands_the_guard_its_paths(self):
+        # The note wrote its paths as bare text, so a path guard fed the note
+        # matched nothing and said so in green. The backticks are the fix; the
+        # count is what says the fix landed. Adding a path means adding one
+        # here too, which is the note's ledger, not a number to live with.
+        found = docs_claims.claims(self.note())
+        self.assertEqual(len(found), 12, [claim.span for claim in found])
 
     def test_every_test_class_the_note_names_is_defined(self):
         self.assertEqual(gone_classes(self.note()), [])
@@ -350,7 +358,10 @@ class NamedThingsTest(unittest.TestCase):
     def test_a_path_that_moved_is_caught(self):
         drifted = self.glossary().replace("tests/test_templates.py", "tests/test_template.py")
         self.assertNotEqual(drifted, self.glossary(), "the entry moved; reword this test")
-        self.assertEqual(gone_paths(drifted), ["tests/test_template.py"])
+        self.assertEqual(
+            [claim.span for claim in docs_claims.unresolved(drifted, REPO)],
+            ["tests/test_template.py"],
+        )
 
     def test_a_comment_does_not_keep_a_name_alive(self):
         # The tree's text includes the comments, so a function deleted from the
