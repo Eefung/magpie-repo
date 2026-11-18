@@ -14,6 +14,13 @@
 #
 # The gate is scripts/check.sh as committed in that tree, so a commit from
 # before the gate existed fails here loudly instead of being skipped silently.
+#
+# Each commit's count is also compared with the commit before it: a deleted test
+# does not fail, so a slice that removes cases and adds none is green with a
+# smaller `tests=`, and the number moving down is the only signal there is. A
+# commit that means to drop cases says `test-drop: <why>` on a line of its
+# message. The first commit in the range has no count to compare against, so the
+# guard reads the range's interior -- which is where a batch's slices sit.
 set -euo pipefail
 
 spec="${1:?usage: check-range.sh <base>..<ref> (a bare revision means <base>..HEAD)}"
@@ -42,6 +49,7 @@ mapfile -t commits <<<"$listing"
 workroot="$(mktemp -d)"
 declare -a trees=()
 failures=0
+previous=""
 cleanup() {
     local wt
     for wt in "${trees[@]}"; do
@@ -97,13 +105,34 @@ for commit in "${commits[@]}"; do
         continue
     fi
     if [ "$code" -eq 0 ]; then
-        printf '%s ok   tests=%s gates=%s\n' "${commit:0:7}" "$tests" "$gates"
+        # A drop is a failure unless the commit says why. Both numbers must be
+        # counts: `none` is a tree older than the contract, and comparing it
+        # with a number would read as a drop of everything.
+        drop=""
+        case "$tests" in
+            '' | *[!0-9]*) ;;
+            *)
+                if [ -n "$previous" ] && [ "$tests" -lt "$previous" ] \
+                    && ! git log -1 --format=%B "$commit" | grep -q '^test-drop:'; then
+                    drop="tests=${tests}, down from ${previous}; say test-drop: <why> in the commit message"
+                fi ;;
+        esac
+        if [ -n "$drop" ]; then
+            printf '%s FAIL %s\n' "${commit:0:7}" "$drop" >&2
+            failures=$((failures + 1))
+        else
+            printf '%s ok   tests=%s gates=%s\n' "${commit:0:7}" "$tests" "$gates"
+        fi
     else
         printf '%s FAIL tests=%s gates=%s\n' "${commit:0:7}" "$tests" "$gates" >&2
         sed -n '/^FAILED/p' "$log" >&2 || true
         tail -3 "$log" >&2
         failures=$((failures + 1))
     fi
+    case "$tests" in
+        '' | *[!0-9]*) ;;
+        *) previous="$tests" ;;
+    esac
 done
 
 if [ "$failures" -ne 0 ]; then

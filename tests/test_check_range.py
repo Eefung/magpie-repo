@@ -102,6 +102,11 @@ class RangeTest(unittest.TestCase):
     NO_CONTRACT_BAD_COUNT = '#!/usr/bin/env bash\necho "tests=seven"\nexit 0\n'
     GATES_NOT_A_COUNT = '#!/usr/bin/env bash\necho "tests=7"\necho "gates=bogus"\nexit 0\n'
 
+    @staticmethod
+    def counted_as(count: int) -> str:
+        """A gate that reports that many tests, for the count-comparison cases."""
+        return f'#!/usr/bin/env bash\necho "tests={count}"\necho "gates=1/1"\nexit 0\n'
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -191,6 +196,34 @@ class RangeTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"{commit} ok   tests=none gates=none", result.stdout)
         self.assertIn("its gate prints no gates= line", result.stderr)
+
+    def test_a_commit_that_loses_tests_is_caught(self):
+        # A deleted test does not fail: the suite is green without it, and the
+        # count still goes up in a slice that also adds cases. The count moving
+        # down is the one signal, so it is compared against the commit before.
+        self.commit("a gate that counts nine", self.counted_as(9))
+        lost = self.commit("a gate that lost two of them", self.counted_as(7))
+
+        result = self.run_range("main~2..main")
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn(f"{lost} FAIL tests=7, down from 9", result.stderr)
+        self.assertIn("1 of 2 commit(s) failed their own tree", result.stderr)
+
+    def test_a_commit_that_says_it_dropped_tests_passes(self):
+        # The escape hatch is a line in the message, not a lower count nobody
+        # explains: a feature's tests go with the feature, and that is a fact
+        # the commit can state.
+        self.commit("a gate that counts nine", self.counted_as(9))
+        dropped = self.commit(
+            "removed the feature\n\ntest-drop: its two cases went with it",
+            self.counted_as(7),
+        )
+
+        result = self.run_range("main~2..main")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"{dropped} ok   tests=7 gates=1/1", result.stdout)
 
     def test_a_green_range_says_so(self):
         self.commit("a gate that counts", self.COUNTED)
