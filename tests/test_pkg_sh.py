@@ -33,6 +33,24 @@ sys.path.insert(0, str(REPO / "tests"))
 
 import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
 import fixtures  # noqa: E402  (the one spelling of a 包文件's name in the test tree)
+import live  # noqa: E402  (the one reader of where a comment starts)
+
+
+def ignore_lines(text: str) -> list[str]:
+    """The patterns a .gitignore declares: a `#` is a comment only in column one.
+
+    This is the one reader that does not go through `live`, and the reason is
+    the file's format, not a second shell width: `gitignore(5)` has no trailing
+    comments, so `packages/*/magpie-*  # note` is a pattern that matches nothing
+    (checked: `git check-ignore` refuses it). Reading it with the bash reader
+    would cut the line there and let the guard pass on an ignore file that
+    ignores nothing -- the false green this guard exists to catch.
+    """
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
 
 
 def call(script: str) -> subprocess.CompletedProcess:
@@ -136,16 +154,11 @@ class SrcinfoFieldTest(unittest.TestCase):
 
     def offenders(self, needle: str) -> list[str]:
         """Scripts whose live lines mention `needle`: a note about it is not it."""
-        found = []
-        for path in sorted((REPO / "scripts").rglob("*.sh")):
-            live = "\n".join(
-                line
-                for line in path.read_text().splitlines()
-                if not line.lstrip().startswith("#")
-            )
-            if needle in live:
-                found.append(path.name)
-        return found
+        return [
+            path.name
+            for path in sorted((REPO / "scripts").rglob("*.sh"))
+            if live.naming(path.read_text(), needle)
+        ]
 
     def test_the_shell_parses_no_pkgbuild(self):
         # The reader that pulled `pkgname=`/`pkgver=` out of a PKGBUILD is
@@ -157,16 +170,28 @@ class SrcinfoFieldTest(unittest.TestCase):
         # same parse under another name, which the name guard above cannot see.
         self.assertEqual(self.parsers(), [])
 
+    def test_a_trailing_comment_is_not_a_mention(self):
+        # A note that names the old reader, or shows a text tool at work, is
+        # prose: before this the two readers dropped whole-line comments only,
+        # so the note counted against the script that carried it.
+        self.assertEqual(live.naming("x  # pkg_field is gone\n", "pkg_field"), [])
+        self.assertEqual(self.parsing("x  # grep PKGBUILD\n"), [])
+
+    def parsing(self, text: str) -> list[str]:
+        """The live lines of one text that read a PKGBUILD with a text tool."""
+        return [
+            line
+            for line in live.naming(text, "PKGBUILD")
+            if re.search(r"\b(sed|grep|awk|cut)\b", line)
+        ]
+
     def parsers(self) -> list[str]:
-        """Live lines that read a PKGBUILD with a text tool."""
-        found = []
-        for path in sorted((REPO / "scripts").rglob("*.sh")):
-            for line in path.read_text().splitlines():
-                if line.lstrip().startswith("#"):
-                    continue
-                if "PKGBUILD" in line and re.search(r"\b(sed|grep|awk|cut)\b", line):
-                    found.append(f"{path.name}: {line.strip()}")
-        return found
+        """Every script's live lines that reach into a PKGBUILD, named."""
+        return [
+            f"{path.name}: {line.strip()}"
+            for path in sorted((REPO / "scripts").rglob("*.sh"))
+            for line in self.parsing(path.read_text())
+        ]
 
     def test_two_answers_are_refused_not_chosen(self):
         result = self.field("pkgver", "pkgver = 0.1.1\npkgver = 0.1.2\n")
@@ -479,17 +504,24 @@ class PackageResidueTest(unittest.TestCase):
         # the inventory's prefixes spelled a second time, with nothing holding
         # the two together. A package whose prefix no line covers would leave
         # a 30 MB binary for `git add packages` to pick up.
-        lines = [
-            line.strip()
-            for line in (REPO / ".gitignore").read_text().splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        ]
+        lines = ignore_lines((REPO / ".gitignore").read_text())
         for prefix in sorted(set(bump.PACKAGES.values())):
             with self.subTest(prefix=prefix):
                 self.assertTrue(
                     any(fnmatch.fnmatch(f"packages/x/{prefix}-0.1.9-amd64", line) for line in lines),
                     f"no .gitignore line covers packages/*/{prefix}-*",
                 )
+
+    def test_a_line_end_comment_is_not_a_gitignore_comment(self):
+        # `gitignore(5)`: only a line starting with `#` is a comment. A note
+        # after a pattern is part of the pattern, which then matches nothing --
+        # so the reader keeps it, and the prefix guard reddens the line. This
+        # case is what keeps someone from "fixing" it with the bash reader.
+        self.assertEqual(
+            ignore_lines("packages/*/magpie-*  # the desktop assets\n"),
+            ["packages/*/magpie-*  # the desktop assets"],
+        )
+        self.assertEqual(ignore_lines("# packages/*/magpie-*\n"), [])
 
 
 class PkgfilesAllTest(RepoDirectory):

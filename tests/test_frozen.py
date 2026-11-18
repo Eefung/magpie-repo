@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import frozen  # noqa: E402  (the reader the other tests use)
+import live  # noqa: E402  (the one reader of where a comment starts)
 
 REPO = Path(__file__).resolve().parent.parent
 GLOSSARY = REPO / "GLOSSARY.md"
@@ -64,8 +65,8 @@ def keys_in(text: str) -> set[str]:
     reading it.
     """
     names: set[str] = set()
-    for line in text.splitlines():
-        names.update(READ.findall(line.split("#", 1)[0]))
+    for line in live.live_lines(text):
+        names.update(READ.findall(line))
     return names
 
 
@@ -79,8 +80,8 @@ def writes_in(text: str) -> set[str]:
     step that reads them.
     """
     names: set[str] = set()
-    for line in text.splitlines():
-        names.update(WRITE.findall(line.split("#", 1)[0]))
+    for line in live.live_lines(text):
+        names.update(WRITE.findall(line))
     return names
 
 
@@ -125,7 +126,7 @@ def pkglist_readers() -> list[str]:
         path.name
         for path in sources()
         if path.name != "pkg.sh"
-        and PKGLIST.search("\n".join(l.split("#", 1)[0] for l in path.read_text().splitlines()))
+        and PKGLIST.search(live.live(path.read_text()))
     ]
 
 
@@ -149,7 +150,7 @@ def writes_key(text: str, key: str) -> bool:
     writes anything, and a guard satisfied by the prose above it is the shape
     this repository has removed twice.
     """
-    code = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+    code = live.live(text)
     if key == "package":
         return 'f"package ' in code
     return f"frozen_write {key} " in code or f'f"{key}=' in code
@@ -167,7 +168,7 @@ def leftovers(repo: Path = REPO) -> list[str]:
     for path in sources(repo):
         if path.name == "pkg.sh":
             continue
-        code = "\n".join(line.split("#", 1)[0] for line in path.read_text().splitlines())
+        code = live.live(path.read_text())
         if re.search(r"\bline_field(?:_or)?\s", code):
             found.append(path.name)
     return found

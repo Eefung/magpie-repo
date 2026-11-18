@@ -36,6 +36,7 @@ sys.path.insert(0, str(REPO / "tests"))
 
 import bump  # noqa: E402  (the module lives beside the scripts, not on the path)
 import gate  # noqa: E402  (the reader of scripts/check.sh)
+import live  # noqa: E402  (the one reader of where a comment starts)
 import workflow  # noqa: E402  (the one reader of publish.yml)
 
 
@@ -77,12 +78,7 @@ def code_facts(repo: Path = REPO) -> str:
     falsify.
     """
     sources = [*repo.glob("scripts/**/*.sh"), *repo.glob("scripts/**/*.py")]
-    return "\n".join(
-        line
-        for path in sources
-        for line in path.read_text().splitlines()
-        if not line.lstrip().startswith("#")
-    )
+    return "\n".join(line for path in sources for line in live.live_lines(path.read_text()))
 
 
 def gone_names(document: str, facts: str) -> list[str]:
@@ -317,6 +313,15 @@ class NamedThingsTest(unittest.TestCase):
 
     def note(self) -> str:
         return gate.note()
+
+    def test_a_name_in_a_trailing_comment_does_not_keep_it_alive(self):
+        # Facts are code lines: a note naming a reader that was deleted is the
+        # case this guard exists for.
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp)
+            (tree / "scripts").mkdir()
+            (tree / "scripts" / "x.sh").write_text("echo 1  # ghost_name\n")
+            self.assertNotIn("ghost_name", code_facts(tree))
 
     def test_every_module_glossary_names_is_in_the_tree(self):
         self.assertEqual(gone_names(self.glossary(), code_facts()), [])

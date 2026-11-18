@@ -867,17 +867,23 @@ class PackageFilePatternTest(unittest.TestCase):
         """
         return [line for line in live.live_lines(text) if ".pkg.tar" in line]
 
-    def sourcing(self) -> list[Path]:
+    def sourcing(self, directory: Path = REPO / "scripts") -> list[Path]:
         """The scripts that source pkg.sh, and can therefore ask it."""
         return [
             path
-            for path in sorted((REPO / "scripts").glob("*.sh"))
+            for path in sorted(directory.glob("*.sh"))
             if any(
                 "lib/pkg.sh" in line and "source" in line
-                for line in path.read_text().splitlines()
-                if not line.lstrip().startswith("#")
+                for line in live.live_lines(path.read_text())
             )
         ]
+
+    def test_a_trailing_comment_does_not_make_a_script_a_sourcer(self):
+        # The mention has to be live code: a note saying "this used to source
+        # pkg.sh" is exactly the prose the guard must not take for a call.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "x.sh").write_text("x  # source lib/pkg.sh\n")
+            self.assertEqual(self.sourcing(Path(tmp)), [])
 
     def test_the_seed_asks_pkg_sh_for_the_pattern(self):
         # The seed owns the decision and the tar call now, so it is the script
@@ -1003,12 +1009,8 @@ class SeedTest(unittest.TestCase):
         return sorted(str(path.relative_to(tree)) for path in tree.rglob("*") if path.is_file())
 
     def seed_source(self) -> str:
-        """The script's live lines: the usage example names a branch, and prose is not code."""
-        return "\n".join(
-            line
-            for line in (REPO / "scripts" / "seed-tree.sh").read_text().splitlines()
-            if not line.lstrip().startswith("#")
-        )
+        """The script as code: the usage example names a branch, and prose is not code."""
+        return live.live((REPO / "scripts" / "seed-tree.sh").read_text())
 
     def missing_flags(self, source: str) -> list[str]:
         """The probe flags `source` is missing: branch-not-tag, and one commit."""
@@ -1306,9 +1308,7 @@ class PublishNamesTest(unittest.TestCase):
         seed = (REPO / "scripts" / "seed-tree.sh").read_text()
         self.assertIn('branch="${3:', seed)
         # Code, not prose: the usage example in the header names a branch.
-        seed_live = "\n".join(
-            line for line in seed.splitlines() if not line.lstrip().startswith("#")
-        )
+        seed_live = live.live(seed)
         self.assertNotIn(workflow.env()["PAGES_BRANCH"], seed_live)
 
     def test_the_publish_step_hands_it_over(self):
